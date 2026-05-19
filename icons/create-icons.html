@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>アイコン生成ツール</title>
+  <style>
+    body { font-family: sans-serif; background: #1e1e2e; color: #cdd6f4; padding: 24px; }
+    h1 { font-size: 16px; margin-bottom: 16px; color: #89b4fa; }
+    .row { display: flex; gap: 16px; align-items: center; margin-bottom: 12px; }
+    canvas { border-radius: 8px; }
+    a { color: #a6e3a1; font-size: 13px; }
+    p { font-size: 12px; color: #6c7086; margin-bottom: 16px; }
+  </style>
+</head>
+<body>
+  <h1>アイコン生成ツール</h1>
+  <p>このファイルをブラウザで開き、各リンクを右クリック→「名前を付けて保存」で icons/ フォルダに保存してください。</p>
+  <div id="output"></div>
+  <script>
+    const sizes = [16, 48, 128];
+
+    function drawIcon(size) {
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      const r = size / 2;
+
+      // Background circle
+      ctx.beginPath();
+      ctx.arc(r, r, r, 0, Math.PI * 2);
+      ctx.fillStyle = '#89b4fa';
+      ctx.fill();
+
+      // Database stack icon (3 ellipses)
+      ctx.fillStyle = '#1e1e2e';
+      const ew = size * 0.52;
+      const eh = size * 0.12;
+      const gap = size * 0.18;
+      const cx = r;
+      const topY = r - gap;
+
+      for (let i = 0; i < 3; i++) {
+        const cy = topY + i * gap;
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, ew / 2, eh / 2, 0, 0, Math.PI * 2);
+        ctx.fill();
+        if (i < 2) {
+          ctx.fillRect(cx - ew / 2, cy, ew, gap);
+        }
+      }
+
+      // Redraw top ellipse on top
+      ctx.fillStyle = '#89b4fa';
+      ctx.beginPath();
+      ctx.ellipse(cx, topY, ew / 2, eh / 2, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#1e1e2e';
+      ctx.beginPath();
+      ctx.ellipse(cx, topY, ew / 2, eh / 2, 0, 0, Math.PI * 2);
+      ctx.stroke();
+
+      return canvas;
+    }
+
+    function drawIconClean(size) {
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = size;
+      const ctx = canvas.getContext('2d');
+      const r = size / 2;
+      const pad = size * 0.1;
+
+      // Background
+      ctx.beginPath();
+      ctx.arc(r, r, r - 0.5, 0, Math.PI * 2);
+      ctx.fillStyle = '#313244';
+      ctx.fill();
+
+      // Draw "S" letter
+      ctx.font = `bold ${Math.round(size * 0.58)}px -apple-system, sans-serif`;
+      ctx.fillStyle = '#89b4fa';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('S', r, r + size * 0.03);
+
+      return canvas;
+    }
+
+    const output = document.getElementById('output');
+    for (const size of sizes) {
+      const canvas = drawIconClean(size);
+      canvas.toBlob(blob => {
+        const url = URL.createObjectURL(blob);
+        const row = document.createElement('div');
+        row.className = 'row';
+        const preview = canvas.cloneNode();
+        preview.getContext('2d').drawImage(canvas, 0, 0);
+        row.appendChild(preview);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `icon${size}.png`;
+        link.textContent = `icon${size}.png をダウンロード`;
+        row.appendChild(link);
+        output.appendChild(row);
+      });
+    }
+  </script>
+</body>
+</html>

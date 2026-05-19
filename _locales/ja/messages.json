@@ -1,0 +1,8 @@
+{
+  "name": {
+    "message": "Switch Browser Data"
+  },
+  "description": {
+    "message": "ログイン状態などCookie, LocalStorageなどのブラウザデータをスナップショット保存し、ワンクリックでドメインごとに切り替えます。"
+  }
+}

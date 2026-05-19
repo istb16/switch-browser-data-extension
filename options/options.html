@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>Settings - Switch Browser Data</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <div class="container">
+    <h1 data-i18n="options_title">設定</h1>
+
+    <section class="section">
+      <h2 data-i18n="section_language">言語</h2>
+      <select id="langSelect" class="lang-select">
+        <option value="auto" data-i18n-option="lang_auto">ブラウザに合わせる</option>
+        <option value="ja"   data-i18n-option="lang_ja">日本語</option>
+        <option value="en"   data-i18n-option="lang_en">English</option>
+      </select>
+    </section>
+
+    <section class="section">
+      <h2 data-i18n="section_data_types">保存するデータ種別</h2>
+      <div class="toggle-list">
+        <label class="toggle-item">
+          <span>Cookie</span>
+          <input type="checkbox" id="toggleCookies">
+        </label>
+        <label class="toggle-item">
+          <span>localStorage</span>
+          <input type="checkbox" id="toggleLocalStorage">
+        </label>
+        <label class="toggle-item">
+          <span>sessionStorage</span>
+          <input type="checkbox" id="toggleSessionStorage">
+        </label>
+        <label class="toggle-item">
+          <span>IndexedDB</span>
+          <input type="checkbox" id="toggleIndexedDB">
+        </label>
+      </div>
+      <button id="saveSettingsBtn" class="btn btn-primary" style="margin-top:12px" data-i18n="btn_save_settings">設定を保存</button>
+    </section>
+
+    <section class="section">
+      <h2 data-i18n="section_snapshots">保存済みスナップショット</h2>
+      <p class="hint" data-i18n="hint_snapshots">ポップアップは現在のタブのドメインを自動検出します。ここでは保存済みデータの確認と削除ができます。</p>
+      <div id="domainList" class="domain-list"></div>
+    </section>
+
+    <section class="section">
+      <h2 data-i18n="section_data_management">データ管理</h2>
+      <div class="data-actions">
+        <button id="exportBtn"  class="btn btn-secondary" data-i18n="btn_export">全データをエクスポート</button>
+        <button id="importBtn"  class="btn btn-secondary" data-i18n="btn_import">データをインポート</button>
+        <input type="file" id="importFile" accept=".json" class="hidden">
+        <button id="clearAllBtn" class="btn btn-danger"   data-i18n="btn_clear_all">全データを削除</button>
+      </div>
+    </section>
+
+    <div id="statusMsg" class="status-msg hidden"></div>
+  </div>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

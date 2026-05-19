@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>Switch Browser Data</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="domain-info">
+        <span class="domain-label" data-i18n="domain_label">ドメイン</span>
+        <span id="currentDomain" class="domain-value" data-i18n="loading">読み込み中...</span>
+      </div>
+      <button id="settingsBtn" class="icon-btn" data-i18n-title="btn_settings" title="設定">⚙</button>
+    </header>
+
+    <main id="mainContent" class="hidden">
+      <div class="snapshot-section">
+        <label for="snapshotSelect" data-i18n="snapshot_label">スナップショット</label>
+        <select id="snapshotSelect">
+          <option value=""></option>
+        </select>
+      </div>
+
+      <div id="snapshotMeta" class="snapshot-meta"></div>
+
+      <div class="actions">
+        <button id="loadBtn" class="btn btn-primary" disabled data-i18n="btn_load">読み込み</button>
+        <button id="saveBtn" class="btn btn-secondary" data-i18n="btn_save">保存</button>
+        <button id="deleteBtn" class="btn btn-danger" disabled data-i18n="btn_delete">削除</button>
+      </div>
+
+      <div id="savePanel" class="panel hidden">
+        <div class="panel-header" data-i18n="save_panel_title">保存先を選択</div>
+        <div class="save-options">
+          <label>
+            <input type="radio" name="saveMode" value="new" checked>
+            <span data-i18n="save_mode_new">新規作成</span>
+          </label>
+          <label>
+            <input type="radio" name="saveMode" value="overwrite">
+            <span data-i18n="save_mode_overwrite">上書き</span>
+          </label>
+        </div>
+        <div id="newNameArea">
+          <input type="text" id="newSnapshotName" class="text-input"
+            data-i18n-placeholder="new_name_placeholder" placeholder="スナップショット名">
+        </div>
+        <div id="overwriteArea" class="hidden">
+          <select id="overwriteSelect">
+            <option value=""></option>
+          </select>
+        </div>
+        <div class="panel-actions">
+          <button id="cancelSaveBtn" class="btn btn-ghost" data-i18n="btn_cancel">キャンセル</button>
+          <button id="confirmSaveBtn" class="btn btn-primary" data-i18n="btn_confirm_save">保存する</button>
+        </div>
+      </div>
+    </main>
+
+    <div id="unavailableMsg" class="unavailable hidden" data-i18n="unavailable">
+      このページでは使用できません
+    </div>
+
+    <div id="statusMsg" class="status-msg hidden"></div>
+  </div>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>
