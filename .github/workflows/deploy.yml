@@ -12,17 +12,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Create extension zip
-        run: |
-          zip -r extension.zip \
-            manifest.json \
-            popup/ \
-            options/ \
-            content/ \
-            lib/ \
-            _locales/ \
-            icons/icon16.png \
-            icons/icon48.png \
-            icons/icon128.png
+        run: bash deploy/build.sh
 
       - name: Upload & Publish to Chrome Web Store
         uses: fregante/chrome-webstore-upload-action@v2
@@ -31,4 +21,4 @@ jobs:
           client-id: ${{ secrets.CHROME_CLIENT_ID }}
           client-secret: ${{ secrets.CHROME_CLIENT_SECRET }}
           refresh-token: ${{ secrets.CHROME_REFRESH_TOKEN }}
-          zip-file: extension.zip
+          zip-file: manifest.zip
