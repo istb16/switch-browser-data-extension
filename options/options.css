@@ -179,7 +179,29 @@ h2 {
 .snapshot-name {
   font-size: 13px;
   color: #cdd6f4;
+  cursor: text;
 }
+
+.snapshot-name:hover {
+  text-decoration: underline dotted #6c7086;
+}
+
+.snapshot-name-input {
+  font-size: 13px;
+  color: #cdd6f4;
+  background: #1e1e2e;
+  border: 1px solid #89b4fa;
+  border-radius: 4px;
+  padding: 2px 6px;
+  outline: none;
+  width: 100%;
+}
+
+.rename-error {
+  font-size: 11px;
+  color: #f38ba8;
+}
+
 
 .snapshot-date {
   font-size: 11px;

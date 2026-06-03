@@ -1,6 +1,6 @@
 import { initI18n, t, applyI18n, setLanguage, getSavedLangSetting } from '../lib/i18n.js';
 import { getSnapshots, setSnapshots, getSettings, setSettings, getSnapshotOrders } from '../lib/storage.js';
-import { deleteSnapshot, setSnapshotOrder } from '../lib/snapshot.js';
+import { deleteSnapshot, renameSnapshot, setSnapshotOrder } from '../lib/snapshot.js';
 import { showConfirm } from '../lib/dialog.js';
 import { $, escHtml, showStatus } from '../lib/ui.js';
 
@@ -101,20 +101,98 @@ function buildSnapshotRow(name, savedAt, domain, snapshotList) {
   row.className = 'snapshot-row';
   row.draggable = true;
   row.dataset.name = name;
-  row.innerHTML = `
-    <span class="drag-handle">⠿</span>
-    <div class="snapshot-info">
-      <span class="snapshot-name">${escHtml(name)}</span>
-      <span class="snapshot-date">${new Date(savedAt).toLocaleString()}</span>
-    </div>
-    <button class="btn-icon" title="${escHtml(t('btn_delete_title'))}">✕</button>
-  `;
-  row.querySelector('.btn-icon').addEventListener('click', async () => {
-    if (!await showConfirm(t('confirm_delete_snapshot', { name }))) return;
-    await deleteSnapshot(domain, name);
+
+  const handle = document.createElement('span');
+  handle.className = 'drag-handle';
+  handle.textContent = '⠿';
+
+  const info = document.createElement('div');
+  info.className = 'snapshot-info';
+
+  const nameSpan = document.createElement('span');
+  nameSpan.className = 'snapshot-name';
+  nameSpan.textContent = name;
+
+  const dateSpan = document.createElement('span');
+  dateSpan.className = 'snapshot-date';
+  dateSpan.textContent = new Date(savedAt).toLocaleString();
+
+  info.appendChild(nameSpan);
+  info.appendChild(dateSpan);
+
+  const deleteBtn = document.createElement('button');
+  deleteBtn.className = 'btn-icon';
+  deleteBtn.title = t('btn_delete_title');
+  deleteBtn.textContent = '✕';
+
+  row.appendChild(handle);
+  row.appendChild(info);
+  row.appendChild(deleteBtn);
+
+  nameSpan.addEventListener('dblclick', startRename);
+  deleteBtn.addEventListener('click', async () => {
+    const currentName = row.dataset.name;
+    if (!await showConfirm(t('confirm_delete_snapshot', { name: currentName }))) return;
+    await deleteSnapshot(domain, currentName);
     await renderDomainList();
-    showStatus($('statusMsg'), t('status_snapshot_deleted', { name }), 'success');
+    showStatus($('statusMsg'), t('status_snapshot_deleted', { name: currentName }), 'success');
   });
+
+  function startRename() {
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'snapshot-name-input';
+    input.value = row.dataset.name;
+    info.replaceChild(input, nameSpan);
+    row.draggable = false;
+    input.focus();
+    input.select();
+    input.addEventListener('keydown', async e => {
+      if (e.key === 'Enter') { e.preventDefault(); await commitRename(); }
+      else if (e.key === 'Escape') cancelRename();
+    });
+    input.addEventListener('blur', commitRename);
+  }
+
+  async function commitRename() {
+    const input = info.querySelector('.snapshot-name-input');
+    if (!input) return;
+    const newName = input.value.trim();
+    const oldName = row.dataset.name;
+    clearRenameError();
+    if (!newName) { showRenameError(t('error_empty_name')); return; }
+    if (newName === oldName) { cancelRename(); return; }
+    const allSnapshots = await getSnapshots();
+    if (allSnapshots[domain]?.[newName]) { showRenameError(t('error_duplicate_name', { name: newName })); return; }
+    input.removeEventListener('blur', commitRename);
+    await renameSnapshot(domain, oldName, newName);
+    await renderDomainList();
+    showStatus($('statusMsg'), t('status_snapshot_renamed', { old: oldName, new: newName }), 'success');
+  }
+
+  function cancelRename() {
+    const input = info.querySelector('.snapshot-name-input');
+    if (!input) return;
+    input.removeEventListener('blur', commitRename);
+    info.replaceChild(nameSpan, input);
+    clearRenameError();
+    row.draggable = true;
+  }
+
+  function showRenameError(msg) {
+    let errorSpan = info.querySelector('.rename-error');
+    if (!errorSpan) {
+      errorSpan = document.createElement('span');
+      errorSpan.className = 'rename-error';
+      info.appendChild(errorSpan);
+    }
+    errorSpan.textContent = msg;
+  }
+
+  function clearRenameError() {
+    info.querySelector('.rename-error')?.remove();
+  }
+
   return row;
 }
 

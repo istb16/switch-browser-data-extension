@@ -93,6 +93,9 @@ function setupListeners() {
     });
   });
 
+  $('newSnapshotName').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); handleSave(); }
+  });
   $('confirmSaveBtn').addEventListener('click', handleSave);
   $('loadBtn').addEventListener('click', handleLoad);
   $('deleteBtn').addEventListener('click', handleDelete);
