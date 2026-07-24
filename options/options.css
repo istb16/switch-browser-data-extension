@@ -317,6 +317,15 @@ h2 {
   background: #313244;
 }
 
+.version-footer {
+  margin-top: 32px;
+  padding-top: 12px;
+  border-top: 1px solid #313244;
+  font-size: 11px;
+  color: #6c7086;
+  text-align: center;
+}
+
 .hidden {
   display: none !important;
 }

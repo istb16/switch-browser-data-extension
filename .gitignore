@@ -1,2 +1,6 @@
 .claude/settings.local.json
 manifest.zip
+
+node_modules/
+test-results/
+playwright-report/

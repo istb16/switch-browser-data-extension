@@ -7,6 +7,7 @@ import { $, escHtml, showStatus } from '../lib/ui.js';
 async function init() {
   await initI18n();
   applyI18n();
+  renderVersionFooter();
 
   $('langSelect').value = await getSavedLangSetting();
   $('langSelect').addEventListener('change', handleLanguageChange);
@@ -29,7 +30,12 @@ async function init() {
 async function handleLanguageChange() {
   await setLanguage($('langSelect').value);
   applyI18n();
+  renderVersionFooter();
   await renderDomainList();
+}
+
+function renderVersionFooter() {
+  $('versionFooter').textContent = t('footer_version', { version: chrome.runtime.getManifest().version });
 }
 
 async function handleSaveSettings() {
@@ -84,7 +90,7 @@ async function renderDomainList() {
     snapshotList.className = 'domain-snapshots';
 
     for (const name of names) {
-      const row = buildSnapshotRow(name, domainSnapshots[name].savedAt, domain, snapshotList);
+      const row = buildSnapshotRow(name, domainSnapshots[name].savedAt, domain, snapshotList, header);
       snapshotList.appendChild(row);
     }
 
@@ -96,7 +102,7 @@ async function renderDomainList() {
   }
 }
 
-function buildSnapshotRow(name, savedAt, domain, snapshotList) {
+function buildSnapshotRow(name, savedAt, domain, snapshotList, header) {
   const row = document.createElement('div');
   row.className = 'snapshot-row';
   row.draggable = true;
@@ -134,7 +140,9 @@ function buildSnapshotRow(name, savedAt, domain, snapshotList) {
     const currentName = row.dataset.name;
     if (!await showConfirm(t('confirm_delete_snapshot', { name: currentName }))) return;
     await deleteSnapshot(domain, currentName);
-    await renderDomainList();
+    row.remove();
+    const countEl = header.querySelector('.domain-count');
+    if (countEl) countEl.textContent = t('count_format', { n: snapshotList.querySelectorAll('.snapshot-row').length });
     showStatus($('statusMsg'), t('status_snapshot_deleted', { name: currentName }), 'success');
   });
 
@@ -166,7 +174,10 @@ function buildSnapshotRow(name, savedAt, domain, snapshotList) {
     if (allSnapshots[domain]?.[newName]) { showRenameError(t('error_duplicate_name', { name: newName })); return; }
     input.removeEventListener('blur', commitRename);
     await renameSnapshot(domain, oldName, newName);
-    await renderDomainList();
+    row.dataset.name = newName;
+    nameSpan.textContent = newName;
+    info.replaceChild(nameSpan, input);
+    row.draggable = true;
     showStatus($('statusMsg'), t('status_snapshot_renamed', { old: oldName, new: newName }), 'success');
   }
 

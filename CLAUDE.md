@@ -86,6 +86,12 @@ graph TD
   icons --> i16["icon16.png"]
   icons --> i48["icon48.png"]
   icons --> i128["icon128.png"]
+
+  root --> tests["tests/"]
+  tests --> unit["unit/｜Vitest ユニットテスト"]
+  tests --> e2e["e2e/｜Playwright E2Eテスト"]
+  tests --> support["support/｜chromeモック・テストヘルパー"]
+  root --> pkg["package.json｜devDependencies（テストツールのみ）"]
 ```
 
 ## manifest.json の主要設定
@@ -129,7 +135,7 @@ graph TD
 
 ## 技術方針
 
-- **フレームワーク**: バニラ JS（TypeScript は使わない）。依存ライブラリなし
+- **フレームワーク**: バニラ JS（TypeScript は使わない）。依存ライブラリなし（`lib/` `popup/` `options/` `background/` `content/` などランタイムコードに限る。テストツールは devDependencies として許可。「自動テスト」節を参照）
 - **スタイル**: CSS のみ（外部 CSS フレームワーク不使用）
 - **モジュール**: ES Modules（`type="module"`）
 - **非同期**: すべて `async/await` で統一
@@ -156,5 +162,22 @@ graph TD
 # edge://extensions/ → 同様の手順
 ```
 
-- ユニットテストは導入しない（拡張機能 API のモックが複雑なため）
 - 手動テストは Chrome の DevTools → Application タブで各ストレージの状態を確認しながら行う
+
+### 自動テスト
+
+- **ユニットテスト**: [Vitest](https://vitest.dev/)。`tests/unit/` に配置。対象は `lib/` 配下のロジックに加え、`popup/popup.js` `options/options.js`（jsdomにHTMLを読み込み、DOM操作込みで検証）。`chrome.*` API は `tests/support/chrome-mock.js` のインメモリモックを使う。`var` グローバルとして書かれた非モジュールスクリプト（`lib/web-storage-handlers.js` `lib/indexeddb-handler.js` `content/content-script.js`）は `import` できないため、`tests/support/load-script.js` でソースを読み込み `Function` コンストラクタでスコープを分離しつつ実行し、生成されたハンドラを取り出してテストする
+- **E2Eテスト**: [Playwright](https://playwright.dev/)。`launchPersistentContext` に `--load-extension` を渡して本拡張機能を実際の Chromium に読み込み、ポップアップ・設定画面の操作を検証する
+- テスト用の依存関係（Vitest, Playwright, jsdom, fake-indexeddb など）は devDependencies としてのみ追加可。拡張機能本体のランタイムコードに外部ライブラリを追加することは引き続き禁止
+
+```powershell
+npm install                      # 初回のみ。devDependencies をインストール
+npm test                         # ユニットテスト (Vitest)
+npx playwright install chromium  # 初回のみ。E2E 用ブラウザを取得
+npm run test:e2e                 # E2Eテスト (Playwright)
+```
+
+## コミット運用ルール
+
+- コミットを作成する前に `manifest.json` の `version` を patch バージョンで 0.0.1 加算する（例: `1.0.1` → `1.0.2`）
+- バージョン加算とコミット対象の変更は同一コミットに含める
