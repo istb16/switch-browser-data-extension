@@ -8,6 +8,9 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # CHROME_CLIENT_ID / CHROME_CLIENT_SECRET are environment secrets, so the
+    # job has to opt into the environment or they resolve to empty strings.
+    environment: Chrome Web Store
     steps:
       - uses: actions/checkout@v7
 
