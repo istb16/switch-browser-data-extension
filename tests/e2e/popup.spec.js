@@ -1,4 +1,4 @@
-import { test, expect, openPopupFor } from './fixtures.js';
+import { test, expect, openPopupFor, waitForReady } from './fixtures.js';
 import { TEST_PAGE_URL } from './test-page.js';
 
 async function disableCookieCollection(context, extensionId) {
@@ -9,6 +9,7 @@ async function disableCookieCollection(context, extensionId) {
   // to exercise the localStorage/sessionStorage path end to end.
   const options = await context.newPage();
   await options.goto(`chrome-extension://${extensionId}/options/options.html`);
+  await waitForReady(options);
   await options.locator('#toggleCookies').uncheck();
   await options.locator('#saveSettingsBtn').click();
   await expect(options.locator('#statusMsg')).toHaveClass(/success/);

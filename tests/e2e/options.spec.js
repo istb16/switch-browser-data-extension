@@ -1,4 +1,4 @@
-import { test, expect } from './fixtures.js';
+import { test, expect, reloadAndWait } from './fixtures.js';
 
 async function openOptions(context, extensionId) {
   const page = await context.newPage();
@@ -6,7 +6,7 @@ async function openOptions(context, extensionId) {
   // Force Japanese regardless of the test machine's browser locale, so
   // assertions on rendered text are deterministic.
   await page.evaluate(() => chrome.storage.local.set({ language: 'ja' }));
-  await page.reload();
+  await reloadAndWait(page);
   return page;
 }
 
@@ -30,7 +30,7 @@ test.describe('options page', () => {
         'b.example.com': { other: { savedAt: new Date().toISOString() } },
       },
     }));
-    await page.reload();
+    await reloadAndWait(page);
 
     const domainItems = page.locator('.domain-item');
     await domainItems.nth(0).locator('.domain-header').click();
@@ -54,7 +54,7 @@ test.describe('options page', () => {
     await page.evaluate(() => chrome.storage.local.set({
       snapshots: { 'a.example.com': { first: { savedAt: new Date().toISOString() }, second: { savedAt: new Date().toISOString() } } },
     }));
-    await page.reload();
+    await reloadAndWait(page);
     await page.locator('.domain-header').click();
 
     // An attribute selector rather than hasText:'first' — once editing
@@ -77,7 +77,7 @@ test.describe('options page', () => {
         'b.example.com': { other: { savedAt: new Date().toISOString() } },
       },
     }));
-    await page.reload();
+    await reloadAndWait(page);
 
     const domainItems = page.locator('.domain-item');
     await domainItems.nth(0).locator('.domain-header').click();
@@ -99,7 +99,7 @@ test.describe('options page', () => {
     await page.locator('#saveSettingsBtn').click();
     await expect(page.locator('#statusMsg')).toHaveClass(/success/);
 
-    await page.reload();
+    await reloadAndWait(page);
     await expect(page.locator('#toggleCookies')).not.toBeChecked();
   });
 
@@ -108,7 +108,7 @@ test.describe('options page', () => {
     await page.evaluate(() => chrome.storage.local.set({
       snapshots: { 'a.example.com': { first: { savedAt: new Date().toISOString(), localStorage: { a: '1' } } } },
     }));
-    await page.reload();
+    await reloadAndWait(page);
 
     const [download] = await Promise.all([
       page.waitForEvent('download'),
@@ -125,7 +125,7 @@ test.describe('options page', () => {
     await page.evaluate(() => chrome.storage.local.set({
       snapshots: { 'a.example.com': { first: { savedAt: new Date().toISOString() } } },
     }));
-    await page.reload();
+    await reloadAndWait(page);
 
     await page.locator('#clearAllBtn').click();
     await page.locator('.tk3-btn-confirm').click();

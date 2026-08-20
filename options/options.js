@@ -280,4 +280,7 @@ async function handleClearAll() {
   showStatus($('statusMsg'), t('status_cleared'), 'success');
 }
 
-init();
+// init() attaches the click listeners partway through, after several awaits, so
+// a click that lands before then hits a live-looking button and silently does
+// nothing. E2E tests wait on this flag before touching the static buttons.
+init().finally(() => document.body.setAttribute('data-ready', 'true'));

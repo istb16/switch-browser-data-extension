@@ -37,6 +37,19 @@ export const test = base.extend({
 
 export const expect = test.expect;
 
+// popup.js / options.js attach their listeners partway through an async init(),
+// so buttons present in the static HTML are clickable before they do anything.
+// Playwright's auto-waiting can't see that, so wait for the init-done flag
+// before any one-shot interaction (click, uncheck, fill) with those buttons.
+export async function waitForReady(page) {
+  await page.locator('body[data-ready="true"]').waitFor();
+}
+
+export async function reloadAndWait(page) {
+  await page.reload();
+  await waitForReady(page);
+}
+
 // The popup's "current domain" logic reads chrome.tabs.query({active,
 // currentWindow}) — but opening popup.html as its own tab makes THAT tab
 // active, not the page we actually want to test against. Rather than fake
@@ -59,5 +72,6 @@ export async function openPopupFor(context, extensionId, targetPage) {
     };
   }, targetPage.url());
   await popup.goto(`chrome-extension://${extensionId}/popup/popup.html`);
+  await waitForReady(popup);
   return popup;
 }
