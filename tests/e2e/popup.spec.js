@@ -1,6 +1,5 @@
 import { test, expect, openPopupFor } from './fixtures.js';
-
-const TEST_PAGE_URL = 'http://localhost:58173/';
+import { TEST_PAGE_URL } from './test-page.js';
 
 async function disableCookieCollection(context, extensionId) {
   // Collecting cookies triggers chrome.permissions.request(), which shows a

@@ -1,4 +1,5 @@
 import { defineConfig } from '@playwright/test';
+import { TEST_PAGE_ORIGIN } from './tests/e2e/test-page.js';
 
 export default defineConfig({
   testDir: './tests/e2e',
@@ -8,7 +9,7 @@ export default defineConfig({
   timeout: 30_000,
   webServer: {
     command: 'node tests/e2e/test-server.js',
-    url: 'http://localhost:58173',
+    url: TEST_PAGE_ORIGIN,
     // Never reuse an already-running server on this port: it may belong to
     // an unrelated project on the developer's machine (this bit us once —
     // a SvelteKit dev server happened to be on the more obvious 5173).

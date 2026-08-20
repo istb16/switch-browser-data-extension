@@ -1,6 +1,5 @@
 import { createServer } from 'node:http';
-
-const PORT = 58173;
+import { TEST_PAGE_PORT } from './test-page.js';
 
 const html = `<!doctype html>
 <html>
@@ -17,6 +16,6 @@ const html = `<!doctype html>
 createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/html' });
   res.end(html);
-}).listen(PORT, () => {
-  console.log(`e2e test server listening on http://localhost:${PORT}`);
+}).listen(TEST_PAGE_PORT, () => {
+  console.log(`e2e test server listening on http://localhost:${TEST_PAGE_PORT}`);
 });
