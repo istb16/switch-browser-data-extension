@@ -8,9 +8,9 @@
     "test:e2e": "playwright test"
   },
   "devDependencies": {
-    "@playwright/test": "^1.65.0",
+    "@playwright/test": "^1.65.1",
     "fake-indexeddb": "^6.2.8",
-    "jsdom": "^30.1.3",
+    "jsdom": "^31.0.1",
     "vitest": "^5.1.0"
   }
 }
