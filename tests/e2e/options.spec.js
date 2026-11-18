@@ -134,4 +134,47 @@ test.describe('options page', () => {
     const stored = await page.evaluate(() => chrome.storage.local.get('snapshots'));
     expect(stored.snapshots ?? {}).toEqual({});
   });
+
+  test('the confirm dialog is a native modal that Esc and clicking outside both cancel', async ({ context, extensionId }) => {
+    const page = await openOptions(context, extensionId);
+    await page.evaluate(() => chrome.storage.local.set({
+      snapshots: { 'a.example.com': { first: { savedAt: new Date().toISOString() } } },
+    }));
+    await reloadAndWait(page);
+
+    const dialog = page.locator('dialog.tk3-dialog');
+
+    await page.locator('#clearAllBtn').click();
+    await expect(dialog).toBeVisible();
+    expect(await dialog.evaluate(d => d.matches(':modal'))).toBe(true);
+    await expect(page.locator('.tk3-btn-cancel')).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+
+    await page.locator('#clearAllBtn').click();
+    await expect(dialog).toBeVisible();
+    await page.mouse.click(5, 5);
+    await expect(dialog).toHaveCount(0);
+
+    const stored = await page.evaluate(() => chrome.storage.local.get('snapshots'));
+    expect(Object.keys(stored.snapshots)).toEqual(['a.example.com']);
+  });
+
+  test('the Enter that confirms an IME conversion does not commit a rename', async ({ context, extensionId }) => {
+    const page = await openOptions(context, extensionId);
+    await page.evaluate(() => chrome.storage.local.set({
+      snapshots: { 'a.example.com': { first: { savedAt: new Date().toISOString() } } },
+    }));
+    await reloadAndWait(page);
+
+    await page.locator('.domain-item .domain-header').click();
+    await page.locator('.snapshot-row .snapshot-name').dblclick();
+    const input = page.locator('.snapshot-name-input');
+    await input.fill('へんかん');
+    await input.dispatchEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true });
+
+    await expect(input).toBeVisible();
+    const stored = await page.evaluate(() => chrome.storage.local.get('snapshots'));
+    expect(Object.keys(stored.snapshots['a.example.com'])).toEqual(['first']);
+  });
 });

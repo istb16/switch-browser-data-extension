@@ -53,7 +53,7 @@ async function handleSaveSettings() {
 async function renderDomainList() {
   const [allSnapshots, allOrders] = await Promise.all([getSnapshots(), getSnapshotOrders()]);
   const container = $('domainList');
-  container.innerHTML = '';
+  container.replaceChildren();
 
   const domains = Object.keys(allSnapshots).sort();
 
@@ -156,7 +156,13 @@ function buildSnapshotRow(name, savedAt, domain, snapshotList, header) {
     input.focus();
     input.select();
     input.addEventListener('keydown', async e => {
-      if (e.key === 'Enter') { e.preventDefault(); await commitRename(); }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        // The Enter that confirms an IME conversion (Japanese input) must not commit.
+        // keyCode 229 covers Safari, which reports isComposing too late.
+        if (e.isComposing || e.keyCode === 229) return;
+        await commitRename();
+      }
       else if (e.key === 'Escape') cancelRename();
     });
     input.addEventListener('blur', commitRename);
