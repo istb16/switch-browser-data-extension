@@ -121,6 +121,29 @@ describe('popup/popup.js', () => {
     expect(row('first').querySelector('.badge--modified').classList.contains('hidden')).toBe(false);
   });
 
+  it('discards a change check that finishes after a load started', async () => {
+    await setSnapshots({ 'example.com': {
+      first:  snap('2024-01-01T00:00:00.000Z', { localStorage: { current: '1' } }),
+      second: snap('2024-01-01T00:00:00.000Z', { localStorage: { b: '2' } }),
+    } });
+    await setActiveSnapshots({ 'example.com': 'first' });
+    let releaseCheck;
+    const plain = chrome.tabs.sendMessage;
+    chrome.tabs.sendMessage = vi.fn((tabId, message) => {
+      if (message.summary) return new Promise(resolve => { releaseCheck = () => resolve({ localStorage: { stale: 'x' } }); });
+      return plain(tabId, message);
+    });
+    await loadPopup('https://example.com/');
+
+    row('second').querySelector('.snapshot__main').click();
+    await settle();
+    releaseCheck();
+    await settle();
+
+    expect(row('second').classList.contains('is-active')).toBe(true);
+    expect(row('second').querySelector('.badge--modified').classList.contains('hidden')).toBe(true);
+  });
+
   it('settings button opens the options page', async () => {
     await loadPopup('https://example.com/');
     chrome.runtime.openOptionsPage = vi.fn();
@@ -225,6 +248,7 @@ describe('popup/popup.js', () => {
       $('undoBtn').click();
       await settle();
       expect(pageData.localStorage).toEqual({ current: '1' });
+      expect(document.activeElement).toBe($('undoBtn'));
       expect((await getActiveSnapshots())['example.com']).toBeUndefined();
 
       $('undoBtn').click();
@@ -294,6 +318,7 @@ describe('popup/popup.js', () => {
       expect(Object.keys((await getSnapshots())['example.com'])).toEqual(['second']);
       expect(rowNames()).toEqual(['second']);
       expect((await getActiveSnapshots())['example.com']).toBeUndefined();
+      expect(document.activeElement).toBe(row('second').querySelector('.snapshot__main'));
     });
 
     it('renames a snapshot inline, keeping it active', async () => {
@@ -302,12 +327,16 @@ describe('popup/popup.js', () => {
       row('first').querySelector('[data-action="rename"]').click();
       const input = row('first').querySelector('.snapshot__rename');
       expect(document.activeElement).toBe(input);
+      expect(row('first').querySelector('.snapshot__more').disabled).toBe(true);
+      row('first').querySelector('[data-action="rename"]').click();
+      expect(row('first').querySelectorAll('.snapshot__rename')).toHaveLength(1);
       input.value = 'renamed';
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
       await settle();
 
       expect(rowNames()).toEqual(['renamed', 'second']);
       expect((await getActiveSnapshots())['example.com']).toBe('renamed');
+      expect(document.activeElement).toBe(row('renamed').querySelector('.snapshot__main'));
     });
 
     it('refuses to rename to an existing name, and Escape cancels', async () => {

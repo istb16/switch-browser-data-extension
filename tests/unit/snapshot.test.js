@@ -149,3 +149,17 @@ describe('lib/snapshot — active snapshot and backup', () => {
     expect(await getSnapshots()).toEqual({});
   });
 });
+
+describe('lib/snapshot — clearAllData', () => {
+  it('empties snapshots, their order, the active snapshots and the backups', async () => {
+    const { clearAllData, setActiveSnapshot, saveBackup } = await import('../../lib/snapshot.js');
+    await saveSnapshot('a.com', 'x', {});
+    await setActiveSnapshot('a.com', 'x');
+    await saveBackup('a.com', {}, 'x');
+
+    await clearAllData();
+
+    expect(await chrome.storage.local.get(['snapshots', 'snapshotOrder', 'activeSnapshots', 'backups']))
+      .toEqual({ snapshots: {}, snapshotOrder: {}, activeSnapshots: {}, backups: {} });
+  });
+});

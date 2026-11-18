@@ -8,6 +8,7 @@ import { collectData, applyData, requestHostPermission } from '../lib/data-bridg
 import { hasChanges } from '../lib/data-compare.js';
 import { showConfirm } from '../lib/dialog.js';
 import { setupMenu } from '../lib/menu.js';
+import { bindInlineRename } from '../lib/inline-rename.js';
 import { formatRelative } from '../lib/time.js';
 import { $, showStatus } from '../lib/ui.js';
 
@@ -23,6 +24,9 @@ let names = [];
 let activeName = null;
 let modified = false;
 let busy = false;
+// Bumped by every action that changes the page data or the active snapshot, so a
+// change check that started before it can tell its result is stale.
+let dataVersion = 0;
 
 async function init() {
   await initI18n();
@@ -54,7 +58,8 @@ async function init() {
   settings = await getSettings();
   await refresh();
   setupListeners();
-  await detectChanges();
+  // Not awaited: the check reads the page, and the list is usable without it.
+  detectChanges().catch(e => console.error(e));
 }
 
 function showUnavailable() {
@@ -77,9 +82,12 @@ async function refresh() {
 }
 
 async function detectChanges() {
-  if (!activeName) return;
-  const current = await collectData(activeTab.id, currentDomain, settings.enabledTypes, { interactive: false });
-  modified = hasChanges(snapshots[activeName], current, settings.enabledTypes);
+  const name = activeName;
+  if (!name) return;
+  const version = dataVersion;
+  const current = await collectData(activeTab.id, currentDomain, settings.enabledTypes, { interactive: false, summary: true });
+  if (version !== dataVersion || name !== activeName) return;
+  modified = hasChanges(snapshots[name], current, settings.enabledTypes);
   if (modified) renderList();
 }
 
@@ -156,16 +164,25 @@ function focusRow(name) {
   row?.querySelector('.snapshot__main')?.focus();
 }
 
+// After a row disappears, keep keyboard users in the list: the row that took its
+// place, else the one above, else the save button.
+function focusRowAt(index) {
+  const mains = visibleMains();
+  (mains[index] ?? mains.at(-1) ?? $('saveBtn')).focus();
+}
+
 // Every action runs alone: a double click or a key held down would otherwise
 // start a second load while the first is still writing.
 async function exclusive(action) {
-  if (busy) return;
+  if (busy) return false;
+  dataVersion++;
   setBusy(true);
   try {
     await action();
   } finally {
     setBusy(false);
   }
+  return true;
 }
 
 function setBusy(value) {
@@ -295,12 +312,13 @@ async function handleSaveNew() {
   else $('newSnapshotName').focus();
 }
 
-function handleOverwrite(name) {
-  return exclusive(async () => {
+async function handleOverwrite(name) {
+  await exclusive(async () => {
     await ensureCookiePermission();
     if (!await showConfirm(t('confirm_overwrite', { name }))) return;
     await saveCurrentAs(name);
   });
+  focusRow(name);
 }
 
 async function saveCurrentAs(name) {
@@ -350,8 +368,8 @@ function handleLoad(name) {
 
 // Restoring the backup first backs up what it replaces, so pressing it again
 // swaps back.
-function handleUndo() {
-  return exclusive(async () => {
+async function handleUndo() {
+  await exclusive(async () => {
     await ensureCookiePermission();
     const backup = await getBackup(currentDomain);
     if (!backup) return;
@@ -372,18 +390,25 @@ function handleUndo() {
     }
     await refresh();
   });
+  if (!$('undoBar').classList.contains('hidden')) $('undoBtn').focus();
 }
 
-function handleDelete(name) {
-  return exclusive(async () => {
+async function handleDelete(name) {
+  const index = visibleMains().findIndex(main => main.closest('.snapshot').dataset.name === name);
+  let deleted = false;
+  await exclusive(async () => {
     if (!await showConfirm(t('confirm_delete_snapshot', { name }))) return;
     await deleteSnapshot(currentDomain, name);
     await refresh();
     showStatus($('statusMsg'), t('status_deleted', { name }), 'success');
+    deleted = true;
   });
+  if (deleted) focusRowAt(index);
+  else focusRow(name);
 }
 
 function startRename(row, name) {
+  if (busy || row.querySelector('.snapshot__rename')) return;
   const main = row.querySelector('.snapshot__main');
   const input = document.createElement('input');
   input.type = 'text';
@@ -391,56 +416,37 @@ function startRename(row, name) {
   input.value = name;
   input.setAttribute('aria-label', t('rename_label'));
   main.querySelector('.snapshot__text').replaceChildren(input);
-  // The input now sits where the button's label was; a button may not contain
-  // interactive content, so the row trades the button for a plain container.
+  // A button may not contain interactive content, so while the name is edited
+  // the row trades its button for a plain container.
   const container = document.createElement('div');
   container.className = main.className;
   container.append(...main.childNodes);
   main.replaceWith(container);
+  // The row's menu would act on the old name while it is being changed.
+  row.querySelector('.snapshot__more').disabled = true;
+
+  bindInlineRename(input, {
+    oldName: name,
+    exists: newName => Boolean(snapshots[newName]),
+    onError: msg => {
+      if (msg) showStatus($('statusMsg'), msg, 'error');
+    },
+    onCancel: () => {
+      renderList();
+      focusRow(name);
+    },
+    onCommit: async newName => {
+      const ran = await exclusive(async () => {
+        await renameSnapshot(currentDomain, name, newName);
+        await refresh();
+        showStatus($('statusMsg'), t('status_snapshot_renamed', { old: name, new: newName }), 'success');
+      });
+      if (!ran) renderList();
+      focusRow(ran ? newName : name);
+    },
+  });
   input.focus();
   input.select();
-
-  let done = false;
-  const finish = async commit => {
-    if (done) return;
-    if (commit) {
-      const newName = input.value.trim();
-      if (!newName) {
-        showStatus($('statusMsg'), t('error_empty_name'), 'error');
-        return;
-      }
-      if (newName !== name && snapshots[newName]) {
-        showStatus($('statusMsg'), t('error_duplicate_name', { name: newName }), 'error');
-        return;
-      }
-      done = true;
-      if (newName !== name) {
-        await renameSnapshot(currentDomain, name, newName);
-        showStatus($('statusMsg'), t('status_snapshot_renamed', { old: name, new: newName }), 'success');
-      }
-      await refresh();
-      focusRow(newName);
-      return;
-    }
-    done = true;
-    renderList();
-    focusRow(name);
-  };
-
-  input.addEventListener('keydown', e => {
-    e.stopPropagation();
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      // The Enter that confirms an IME conversion (Japanese input) must not commit.
-      // keyCode 229 covers Safari, which reports isComposing too late.
-      if (e.isComposing || e.keyCode === 229) return;
-      finish(true);
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      finish(false);
-    }
-  });
-  input.addEventListener('blur', () => finish(true));
 }
 
 // setupListeners() runs partway through init(), after several awaits, so a click

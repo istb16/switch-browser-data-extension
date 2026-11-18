@@ -44,6 +44,11 @@ describe('content/content-script (non-module message router)', () => {
     expect(result).toEqual({ indexedDB: {} });
   });
 
+  it('getStorageData with summary returns IndexedDB as counts under indexedDBSummary', async () => {
+    const result = await sendAndAwait({ type: 'getStorageData', summary: true, types: { localStorage: false, sessionStorage: false, indexedDB: true } });
+    expect(result).toEqual({ indexedDBSummary: {} });
+  });
+
   it('setStorageData writes only the requested + present storage types', async () => {
     localStorage.setItem('stale', 'x');
 

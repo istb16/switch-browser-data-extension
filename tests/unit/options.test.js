@@ -315,7 +315,8 @@ describe('options/options.js', () => {
       await flush();
 
       expect(await getSnapshots()).toEqual({});
-      expect(await chrome.storage.local.get(['activeSnapshots', 'backups'])).toEqual({ activeSnapshots: {}, backups: {} });
+      expect(await chrome.storage.local.get(['snapshotOrder', 'activeSnapshots', 'backups']))
+        .toEqual({ snapshotOrder: {}, activeSnapshots: {}, backups: {} });
       expect(document.querySelector('.empty-state')).not.toBeNull();
     });
 

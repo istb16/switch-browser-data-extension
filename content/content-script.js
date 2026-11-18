@@ -6,7 +6,7 @@
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message.type === 'getStorageData') {
-      handleGet(message.types).then(sendResponse).catch(e => sendResponse({ error: e.message }));
+      handleGet(message.types, message.summary).then(sendResponse).catch(e => sendResponse({ error: e.message }));
       return true;
     }
     if (message.type === 'setStorageData') {
@@ -15,11 +15,14 @@
     }
   });
 
-  async function handleGet(types) {
+  async function handleGet(types, summary) {
     const data = {};
     if (types.localStorage)  data.localStorage  = localStorageHandler.read();
     if (types.sessionStorage) data.sessionStorage = sessionStorageHandler.read();
-    if (types.indexedDB)     data.indexedDB      = await indexedDBHandler.readAll();
+    if (types.indexedDB) {
+      if (summary) data.indexedDBSummary = await indexedDBHandler.summarize();
+      else         data.indexedDB        = await indexedDBHandler.readAll();
+    }
     return data;
   }
 

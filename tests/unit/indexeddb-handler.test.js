@@ -48,6 +48,16 @@ describe('lib/indexeddb-handler (non-module content script)', () => {
     expect(snapshot.mydb.stores.items.records).toEqual([{ id: 1, name: 'a' }, { id: 2, name: 'b' }]);
   });
 
+  it('summarize() returns the version and record count of every store, matching summarizeIndexedDB', async () => {
+    await createDb('mydb', 3, 'items', 'id', [{ id: 1 }, { id: 2 }, { id: 3 }]);
+
+    const summary = await indexedDBHandler.summarize();
+
+    expect(summary).toEqual({ mydb: { version: 3, stores: { items: 3 } } });
+    const { summarizeIndexedDB } = await import('../../lib/data-compare.js');
+    expect(summarizeIndexedDB(await indexedDBHandler.readAll())).toEqual(summary);
+  });
+
   it('writeAll() recreates a database from a snapshot, replacing any existing one', async () => {
     await createDb('mydb', 1, 'items', 'id', [{ id: 1, name: 'stale' }]);
 

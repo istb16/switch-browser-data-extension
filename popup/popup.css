@@ -291,7 +291,7 @@ kbd {
   color: var(--tk-ink);
   border: 1px solid var(--tk-line);
   border-radius: var(--tk-radius-sm);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 0.16);
+  box-shadow: var(--tk-shadow);
 }
 
 @supports (position-area: block-end) {

@@ -1,8 +1,7 @@
 import { initI18n, t, applyI18n, setLanguage, getSavedLangSetting } from '../lib/i18n.js';
-import {
-  getSnapshots, setSnapshots, getSettings, setSettings, getSnapshotOrders, setActiveSnapshots, setBackups,
-} from '../lib/storage.js';
-import { deleteSnapshot, renameSnapshot, setSnapshotOrder } from '../lib/snapshot.js';
+import { getSnapshots, setSnapshots, getSettings, setSettings, getSnapshotOrders } from '../lib/storage.js';
+import { deleteSnapshot, renameSnapshot, setSnapshotOrder, clearAllData } from '../lib/snapshot.js';
+import { bindInlineRename } from '../lib/inline-rename.js';
 import { showConfirm } from '../lib/dialog.js';
 import { $, escHtml, showStatus } from '../lib/ui.js';
 
@@ -157,53 +156,34 @@ function buildSnapshotRow(name, savedAt, domain, snapshotList, header) {
   });
 
   function startRename() {
+    if (info.querySelector('.snapshot-name-input')) return;
+    const oldName = row.dataset.name;
     const input = document.createElement('input');
     input.type = 'text';
     input.className = 'snapshot-name-input';
-    input.value = row.dataset.name;
+    input.value = oldName;
     info.replaceChild(input, nameSpan);
     row.draggable = false;
+
+    const restore = () => {
+      info.replaceChild(nameSpan, input);
+      row.draggable = true;
+    };
+    bindInlineRename(input, {
+      oldName,
+      exists: async newName => Boolean((await getSnapshots())[domain]?.[newName]),
+      onError: msg => (msg ? showRenameError(msg) : clearRenameError()),
+      onCancel: restore,
+      onCommit: async newName => {
+        await renameSnapshot(domain, oldName, newName);
+        row.dataset.name = newName;
+        nameSpan.textContent = newName;
+        restore();
+        showStatus($('statusMsg'), t('status_snapshot_renamed', { old: oldName, new: newName }), 'success');
+      },
+    });
     input.focus();
     input.select();
-    input.addEventListener('keydown', async e => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        // The Enter that confirms an IME conversion (Japanese input) must not commit.
-        // keyCode 229 covers Safari, which reports isComposing too late.
-        if (e.isComposing || e.keyCode === 229) return;
-        await commitRename();
-      }
-      else if (e.key === 'Escape') cancelRename();
-    });
-    input.addEventListener('blur', commitRename);
-  }
-
-  async function commitRename() {
-    const input = info.querySelector('.snapshot-name-input');
-    if (!input) return;
-    const newName = input.value.trim();
-    const oldName = row.dataset.name;
-    clearRenameError();
-    if (!newName) { showRenameError(t('error_empty_name')); return; }
-    if (newName === oldName) { cancelRename(); return; }
-    const allSnapshots = await getSnapshots();
-    if (allSnapshots[domain]?.[newName]) { showRenameError(t('error_duplicate_name', { name: newName })); return; }
-    input.removeEventListener('blur', commitRename);
-    await renameSnapshot(domain, oldName, newName);
-    row.dataset.name = newName;
-    nameSpan.textContent = newName;
-    info.replaceChild(nameSpan, input);
-    row.draggable = true;
-    showStatus($('statusMsg'), t('status_snapshot_renamed', { old: oldName, new: newName }), 'success');
-  }
-
-  function cancelRename() {
-    const input = info.querySelector('.snapshot-name-input');
-    if (!input) return;
-    input.removeEventListener('blur', commitRename);
-    info.replaceChild(nameSpan, input);
-    clearRenameError();
-    row.draggable = true;
   }
 
   function showRenameError(msg) {
@@ -291,7 +271,7 @@ async function handleImport(e) {
 
 async function handleClearAll() {
   if (!await showConfirm(t('confirm_clear_all'))) return;
-  await Promise.all([setSnapshots({}), setActiveSnapshots({}), setBackups({})]);
+  await clearAllData();
   await renderDomainList();
   showStatus($('statusMsg'), t('status_cleared'), 'success');
 }
