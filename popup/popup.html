@@ -2,18 +2,29 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
+  <meta name="color-scheme" content="light dark">
   <title>Switch Browser Data</title>
+  <link rel="icon" href="../icons/icon.svg" type="image/svg+xml">
+  <link rel="icon" href="../icons/icon32.png" type="image/png" sizes="32x32">
+  <link rel="stylesheet" href="../lib/tk-base.css">
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <div class="container">
-    <header>
-      <div class="domain-info">
-        <span class="domain-label" data-i18n="domain_label">ドメイン</span>
-        <span id="currentDomain" class="domain-value" data-i18n="loading">読み込み中...</span>
-      </div>
+  <header class="tk-header">
+    <span class="tk-header__home">
+      <img class="tk-header__icon" src="../icons/icon.svg" alt="">
+      <span class="tk-header__name">SWITCH BROWSER DATA</span>
+    </span>
+    <div class="tk-header__end">
       <button id="settingsBtn" class="icon-btn" data-i18n-title="btn_settings" title="設定">⚙</button>
-    </header>
+    </div>
+  </header>
+
+  <div class="container">
+    <div class="domain-info">
+      <span class="domain-label" data-i18n="domain_label">ドメイン</span>
+      <span id="currentDomain" class="domain-value" data-i18n="loading">読み込み中...</span>
+    </div>
 
     <main id="mainContent" class="hidden">
       <div class="snapshot-section">

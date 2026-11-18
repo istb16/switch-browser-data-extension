@@ -81,9 +81,12 @@ graph TD
   lib --> storage_js["storage.js｜chrome.storage.local ラッパー"]
   lib --> snapshot_js["snapshot.js｜スナップショット CRUD"]
   lib --> cookie_js["cookie-handler.js｜Cookie 保存・復元"]
+  lib --> tk_base["tk-base.css｜tk3 apps の共通デザインの土台（手を加えない）"]
 
   root --> icons["icons/"]
+  icons --> isvg["icon.svg｜ヘッダー・favicon"]
   icons --> i16["icon16.png"]
+  icons --> i32["icon32.png"]
   icons --> i48["icon48.png"]
   icons --> i128["icon128.png"]
 
@@ -136,7 +139,7 @@ graph TD
 ## 技術方針
 
 - **フレームワーク**: バニラ JS（TypeScript は使わない）。依存ライブラリなし（`lib/` `popup/` `options/` `background/` `content/` などランタイムコードに限る。テストツールは devDependencies として許可。「自動テスト」節を参照）
-- **スタイル**: CSS のみ（外部 CSS フレームワーク不使用）
+- **スタイル**: CSS のみ（外部 CSS フレームワーク不使用）。tk3 apps の共通デザインの土台 `lib/tk-base.css` を各画面の CSS より先に読み込み、色は `--tk-*` の変数を使う（直に色の値を書かない）。明暗は端末の設定（`prefers-color-scheme`）に従う。アクセントは `--tk-blue`。`lib/tk-base.css` は手を加えずに写したもので、直すときは元（tk3-biz-html の `design/tk3-apps/tk-base.css`）を直して写し直す
 - **モジュール**: ES Modules（`type="module"`）
 - **非同期**: すべて `async/await` で統一
 - **エラー処理**: ユーザー操作起点の処理にのみ try/catch を置く。内部ライブラリは例外を上位に伝播させる

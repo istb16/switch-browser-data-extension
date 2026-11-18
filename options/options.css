@@ -1,3 +1,7 @@
+:root {
+  --tk-accent: var(--tk-blue);
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -5,26 +9,27 @@
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 14px;
-  background: #1e1e2e;
-  color: #cdd6f4;
   min-height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
 .container {
+  width: 100%;
   max-width: 640px;
   margin: 0 auto;
-  padding: 32px 24px;
+  padding: 32px 24px 0;
+  flex: 1;
 }
 
 h1 {
   font-size: 20px;
   font-weight: 700;
-  color: #cdd6f4;
+  color: var(--tk-ink);
   margin-bottom: 28px;
   padding-bottom: 12px;
-  border-bottom: 1px solid #313244;
+  border-bottom: 1px solid var(--tk-line);
 }
 
 .section {
@@ -34,7 +39,7 @@ h1 {
 h2 {
   font-size: 11px;
   font-weight: 600;
-  color: #89b4fa;
+  color: var(--tk-accent);
   margin-bottom: 12px;
   text-transform: uppercase;
   letter-spacing: 0.8px;
@@ -42,7 +47,7 @@ h2 {
 
 .hint {
   font-size: 12px;
-  color: #6c7086;
+  color: var(--tk-muted);
   margin-bottom: 14px;
   line-height: 1.5;
 }
@@ -58,20 +63,20 @@ h2 {
   align-items: center;
   justify-content: space-between;
   padding: 10px 14px;
-  background: #313244;
-  border-radius: 8px;
+  background: var(--tk-surface);
+  border: 1px solid var(--tk-line);
+  border-radius: var(--tk-radius-sm);
   cursor: pointer;
   transition: background 0.15s;
 }
 
 .toggle-item:hover {
-  background: #3a3a55;
+  background: var(--tk-surface-2);
 }
 
 .toggle-item input[type='checkbox'] {
   width: 17px;
   height: 17px;
-  accent-color: #89b4fa;
   cursor: pointer;
 }
 
@@ -82,8 +87,9 @@ h2 {
 }
 
 .domain-item {
-  background: #313244;
-  border-radius: 8px;
+  background: var(--tk-surface);
+  border: 1px solid var(--tk-line);
+  border-radius: var(--tk-radius-sm);
   overflow: hidden;
 }
 
@@ -98,7 +104,7 @@ h2 {
 }
 
 .domain-header:hover {
-  background: #3a3a55;
+  background: var(--tk-surface-2);
 }
 
 .domain-header-left {
@@ -109,19 +115,19 @@ h2 {
 
 .domain-name {
   font-weight: 600;
-  color: #89b4fa;
+  color: var(--tk-accent);
 }
 
 .domain-count {
   font-size: 11px;
-  color: #6c7086;
-  background: #45475a;
+  color: var(--tk-body);
+  background: var(--tk-surface-2);
   padding: 1px 7px;
-  border-radius: 10px;
+  border-radius: var(--tk-radius-pill);
 }
 
 .chevron {
-  color: #6c7086;
+  color: var(--tk-muted);
   font-size: 12px;
   transition: transform 0.2s;
 }
@@ -132,7 +138,7 @@ h2 {
 
 .domain-snapshots {
   display: none;
-  border-top: 1px solid #45475a;
+  border-top: 1px solid var(--tk-line);
 }
 
 .domain-item.open .domain-snapshots {
@@ -143,7 +149,7 @@ h2 {
   display: flex;
   align-items: center;
   padding: 8px 14px;
-  border-bottom: 1px solid #45475a;
+  border-bottom: 1px solid var(--tk-line);
   gap: 8px;
 }
 
@@ -152,7 +158,7 @@ h2 {
 }
 
 .drag-handle {
-  color: #6c7086;
+  color: var(--tk-muted);
   font-size: 15px;
   cursor: grab;
   user-select: none;
@@ -178,41 +184,40 @@ h2 {
 
 .snapshot-name {
   font-size: 13px;
-  color: #cdd6f4;
+  color: var(--tk-ink);
   cursor: text;
 }
 
 .snapshot-name:hover {
-  text-decoration: underline dotted #6c7086;
+  text-decoration: underline dotted var(--tk-muted);
 }
 
 .snapshot-name-input {
+  font: inherit;
   font-size: 13px;
-  color: #cdd6f4;
-  background: #1e1e2e;
-  border: 1px solid #89b4fa;
+  color: var(--tk-ink);
+  background: var(--tk-bg);
+  border: 1px solid var(--tk-accent);
   border-radius: 4px;
   padding: 2px 6px;
-  outline: none;
   width: 100%;
 }
 
 .rename-error {
   font-size: 11px;
-  color: #f38ba8;
+  color: var(--tk-danger);
 }
-
 
 .snapshot-date {
   font-size: 11px;
-  color: #6c7086;
+  color: var(--tk-muted);
 }
 
 .btn-icon {
   background: none;
   border: none;
   cursor: pointer;
-  color: #f38ba8;
+  color: var(--tk-danger);
   font-size: 13px;
   padding: 4px 8px;
   border-radius: 4px;
@@ -221,16 +226,17 @@ h2 {
 }
 
 .btn-icon:hover {
-  background: #45475a;
+  background: var(--tk-surface-2);
 }
 
 .empty-state {
-  color: #6c7086;
+  color: var(--tk-muted);
   font-size: 13px;
   text-align: center;
   padding: 24px 0;
-  background: #313244;
-  border-radius: 8px;
+  background: var(--tk-surface);
+  border: 1px solid var(--tk-line);
+  border-radius: var(--tk-radius-sm);
 }
 
 .data-actions {
@@ -241,89 +247,85 @@ h2 {
 
 .btn {
   padding: 8px 18px;
-  border: none;
-  border-radius: 6px;
+  border: 1px solid transparent;
+  border-radius: var(--tk-radius-pill);
   cursor: pointer;
+  font: inherit;
   font-size: 13px;
   font-weight: 600;
-  transition: filter 0.15s;
+  transition: filter 0.15s, background-color 0.15s, border-color 0.15s;
+}
+
+.btn:hover {
+  filter: brightness(1.08);
+}
+
+#saveSettingsBtn {
+  margin-top: 12px;
 }
 
 .btn-primary {
-  background: #89b4fa;
-  color: #1e1e2e;
-}
-
-.btn-primary:hover {
-  filter: brightness(1.1);
+  background: var(--tk-accent);
+  color: var(--tk-on-accent);
 }
 
 .btn-secondary {
-  background: #313244;
-  color: #cdd6f4;
-  border: 1px solid #45475a;
+  background: transparent;
+  color: var(--tk-accent);
+  border-color: var(--tk-line);
 }
 
 .btn-secondary:hover {
-  background: #45475a;
+  border-color: var(--tk-accent);
+  filter: none;
 }
 
 .btn-danger {
-  background: #f38ba8;
-  color: #1e1e2e;
-}
-
-.btn-danger:hover {
-  filter: brightness(1.1);
+  background: var(--tk-danger);
+  color: var(--tk-on-accent);
 }
 
 .status-msg {
   margin-top: 16px;
   padding: 10px 14px;
-  border-radius: 8px;
+  border-radius: var(--tk-radius-sm);
   font-size: 13px;
+  border: 1px solid currentColor;
 }
 
 .status-msg.success {
-  background: #1e3a2f;
-  color: #a6e3a1;
-  border: 1px solid #a6e3a1;
+  color: var(--tk-green);
+  background: color-mix(in srgb, var(--tk-green) 8%, var(--tk-surface));
 }
 
 .status-msg.error {
-  background: #3a1e1e;
-  color: #f38ba8;
-  border: 1px solid #f38ba8;
+  color: var(--tk-danger);
+  background: color-mix(in srgb, var(--tk-danger) 8%, var(--tk-surface));
 }
 
 .lang-select {
-  background: #313244;
-  border: 1px solid #45475a;
-  color: #cdd6f4;
+  background: var(--tk-surface);
+  border: 1px solid var(--tk-line);
+  color: var(--tk-ink);
   padding: 8px 10px;
   border-radius: 6px;
+  font: inherit;
   font-size: 13px;
-  outline: none;
   width: 200px;
   cursor: pointer;
   transition: border-color 0.15s;
 }
 
 .lang-select:focus {
-  border-color: #89b4fa;
+  border-color: var(--tk-accent);
 }
 
-.lang-select option {
-  background: #313244;
-}
-
-.version-footer {
+.tk-footer {
   margin-top: 32px;
-  padding-top: 12px;
-  border-top: 1px solid #313244;
-  font-size: 11px;
-  color: #6c7086;
-  text-align: center;
+  border-top: 1px solid var(--tk-line);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .hidden {
