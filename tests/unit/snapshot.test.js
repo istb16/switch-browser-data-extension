@@ -106,3 +106,46 @@ describe('lib/snapshot', () => {
     expect(await loadSnapshot('example.com', 'missing')).toBeNull();
   });
 });
+
+describe('lib/snapshot — active snapshot and backup', () => {
+  it('records the active snapshot per domain and clears it with null', async () => {
+    const { getActiveSnapshot, setActiveSnapshot } = await import('../../lib/snapshot.js');
+    expect(await getActiveSnapshot('a.com')).toBeNull();
+    await setActiveSnapshot('a.com', 'x');
+    expect(await getActiveSnapshot('a.com')).toBe('x');
+    await setActiveSnapshot('a.com', null);
+    expect(await getActiveSnapshot('a.com')).toBeNull();
+  });
+
+  it('deleting the active snapshot clears it; deleting another one keeps it', async () => {
+    const { setActiveSnapshot, getActiveSnapshot } = await import('../../lib/snapshot.js');
+    await saveSnapshot('a.com', 'x', {});
+    await saveSnapshot('a.com', 'y', {});
+    await setActiveSnapshot('a.com', 'x');
+
+    await deleteSnapshot('a.com', 'y');
+    expect(await getActiveSnapshot('a.com')).toBe('x');
+    await deleteSnapshot('a.com', 'x');
+    expect(await getActiveSnapshot('a.com')).toBeNull();
+  });
+
+  it('renaming the active snapshot keeps it active under the new name', async () => {
+    const { setActiveSnapshot, getActiveSnapshot } = await import('../../lib/snapshot.js');
+    await saveSnapshot('a.com', 'x', {});
+    await setActiveSnapshot('a.com', 'x');
+    await renameSnapshot('a.com', 'x', 'z');
+    expect(await getActiveSnapshot('a.com')).toBe('z');
+  });
+
+  it('keeps one backup per domain, apart from the snapshots', async () => {
+    const { saveBackup, getBackup } = await import('../../lib/snapshot.js');
+    expect(await getBackup('a.com')).toBeNull();
+    await saveBackup('a.com', { localStorage: { a: '1' } }, 'x');
+    await saveBackup('a.com', { localStorage: { a: '2' } }, null);
+    const backup = await getBackup('a.com');
+    expect(backup.localStorage).toEqual({ a: '2' });
+    expect(backup.activeName).toBeNull();
+    expect(typeof backup.savedAt).toBe('string');
+    expect(await getSnapshots()).toEqual({});
+  });
+});

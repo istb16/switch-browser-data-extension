@@ -21,11 +21,12 @@ Chrome / Edge 向けブラウザ拡張機能。ドメインごとに Cookie・lo
 
 ### スナップショット操作
 
-- **保存**: 現在のデータをスナップショットとして保存する
-  - 既存スナップショット名を選択 → 上書き確認後に上書き保存
-  - 新規名称を入力 → 新しいスナップショットとして保存
-- **読み込み**: 保存済みスナップショットを選択 → 現在のデータをそのスナップショットに丸ごと置き換え
-- **削除**: 保存済みスナップショットを選択して削除
+- **保存**: 「現在の状態を保存」から名前を入力して保存する。既存の名前なら上書き確認後に上書き。各行のメニューの「現在の状態で上書き」でも上書きできる
+- **読み込み**: 一覧の行をクリック（または数字キー・`Enter`）→ 現在のデータをそのスナップショットに丸ごと置き換え
+  - 自動バックアップが有効なら、読み込む直前の状態をドメインごとに1件だけ残し、確認なしで読み込む（「戻す」で復元。戻すと置き換えた状態が新しいバックアップになるので、もう一度押すと元に戻る）。無効なら読み込み前に確認する
+  - 自動リロードが有効なら、読み込み後にタブを再読み込みする
+- **適用中の表示**: 最後に読み込み・保存したスナップショットをドメインごとに記録し、一覧に「適用中」、拡張機能アイコンのバッジに名前の先頭2文字を表示する。ポップアップを開いたときに今のデータと比べ、違えば「変更あり」を表示する（Cookie は名前・値・ドメイン・パスだけを比べる）
+- **名前の変更・削除**: 各行のメニューから行う（削除は確認あり）
 
 ### ドメイン管理
 
@@ -39,16 +40,17 @@ Chrome / Edge 向けブラウザ拡張機能。ドメインごとに Cookie・lo
 graph TD
   popup["ポップアップ"]
   popup --> domain["現在のドメイン表示"]
-  popup --> list["スナップショット一覧（ドロップダウン）"]
-  popup --> save["保存ボタン"]
-  save --> save_sub["サブパネル: 新規名称入力 or 既存名選択 → 保存実行"]
-  popup --> load["読み込みボタン｜選択中スナップショットを適用"]
-  popup --> del["削除ボタン｜選択中スナップショットを削除（確認あり）"]
+  popup --> search["検索ボックス｜5件以上のとき表示。/ でフォーカス"]
+  popup --> list["スナップショット一覧｜行クリックで読み込み、適用中・変更ありのバッジ"]
+  list --> row_menu["行メニュー｜現在の状態で上書き / 名前を変更 / 削除"]
+  popup --> undo["切り替え前の状態に戻す"]
+  popup --> save["現在の状態を保存｜名前を入力して保存"]
   popup --> settings_btn["設定ボタン"]
   settings_btn --> options["設定画面 options.html"]
 
   options --> domain_list["ドメイン一覧（削除）"]
   options --> toggles["データ種別トグル｜Cookie / localStorage / sessionStorage / IndexedDB"]
+  options --> behavior["動作トグル｜自動バックアップ / 自動リロード / アイコンのバッジ"]
   options --> export_import["一括エクスポート / インポート"]
   options --> clear["全データ削除"]
 ```
@@ -72,7 +74,7 @@ graph TD
   options --> options_js["options.js"]
 
   root --> background["background/"]
-  background --> sw["service-worker.js｜Cookie 操作"]
+  background --> sw["service-worker.js｜アイコンのバッジ更新"]
 
   root --> content["content/"]
   content --> cs["content-script.js｜localStorage / sessionStorage / IndexedDB 操作"]
@@ -81,6 +83,10 @@ graph TD
   lib --> storage_js["storage.js｜chrome.storage.local ラッパー"]
   lib --> snapshot_js["snapshot.js｜スナップショット CRUD"]
   lib --> cookie_js["cookie-handler.js｜Cookie 保存・復元"]
+  lib --> bridge_js["data-bridge.js｜データの収集・適用"]
+  lib --> compare_js["data-compare.js｜スナップショットと現在のデータの比較"]
+  lib --> menu_js["menu.js｜行メニュー（popover + focusgroup）"]
+  lib --> etc_js["badge.js / time.js / dialog.js / i18n.js / ui.js"]
   lib --> tk_base["tk-base.css｜tk3 apps の共通デザインの土台（手を加えない）"]
 
   root --> icons["icons/"]
@@ -104,7 +110,8 @@ graph TD
   "manifest_version": 3,
   "permissions": ["cookies", "storage", "scripting", "activeTab", "tabs"],
   "host_permissions": ["<all_urls>"],
-  "background": { "service_worker": "background/service-worker.js" },
+  "background": { "service_worker": "background/service-worker.js", "type": "module" },
+  "commands": { "_execute_action": { "suggested_key": { "default": "Alt+Shift+S" } } },
   "action": { "default_popup": "popup/popup.html" },
   "options_page": "options/options.html",
   "content_scripts": [
@@ -132,6 +139,19 @@ graph TD
         "indexedDB": { "dbName": { "storeName": [ /* records */ ] } }
       }
     }
+  },
+  "snapshotOrder": { "example.com": ["スナップショット名", ...] },
+  "activeSnapshots": { "example.com": "スナップショット名" },
+  // 読み込み直前の状態。ドメインごとに1件。スナップショット一覧・エクスポートには含めない
+  "backups": {
+    "example.com": { "savedAt": "...", "activeName": "スナップショット名 | null", "cookies": [], ... }
+  },
+  // 保存されていないキーは既定値（すべて true）で補う。トグルを変えたらその場で保存する
+  "settings": {
+    "enabledTypes": { "cookies": true, "localStorage": true, "sessionStorage": true, "indexedDB": true },
+    "autoBackup": true,
+    "autoReload": true,
+    "showBadge": true
   }
 }
 ```

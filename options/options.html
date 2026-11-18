@@ -50,7 +50,24 @@
           <input type="checkbox" id="toggleIndexedDB">
         </label>
       </div>
-      <button id="saveSettingsBtn" class="btn btn-primary" data-i18n="btn_save_settings">設定を保存</button>
+    </section>
+
+    <section class="section">
+      <h2 data-i18n="section_behavior">動作</h2>
+      <div class="toggle-list">
+        <label class="toggle-item">
+          <span data-i18n="toggle_auto_backup">読み込む前に今の状態を自動で残す</span>
+          <input type="checkbox" id="toggleAutoBackup">
+        </label>
+        <label class="toggle-item">
+          <span data-i18n="toggle_auto_reload">読み込んだ後にページを再読み込みする</span>
+          <input type="checkbox" id="toggleAutoReload">
+        </label>
+        <label class="toggle-item">
+          <span data-i18n="toggle_show_badge">アイコンに適用中のスナップショットを表示する</span>
+          <input type="checkbox" id="toggleShowBadge">
+        </label>
+      </div>
     </section>
 
     <section class="section">

@@ -68,19 +68,26 @@ describe('options/options.js', () => {
     expect(item.classList.contains('open')).toBe(false);
   });
 
-  it('reflects saved settings in the data-type toggles and persists changes on save', async () => {
-    await setSettings({ enabledTypes: { cookies: false, localStorage: true, sessionStorage: false, indexedDB: true } });
+  it('reflects saved settings in the toggles and saves a change as soon as a toggle changes', async () => {
+    await setSettings({ enabledTypes: { cookies: false, localStorage: true, sessionStorage: false, indexedDB: true }, autoReload: false });
     await loadOptions();
 
     expect(document.getElementById('toggleCookies').checked).toBe(false);
     expect(document.getElementById('toggleLocalStorage').checked).toBe(true);
+    expect(document.getElementById('toggleAutoBackup').checked).toBe(true);
+    expect(document.getElementById('toggleAutoReload').checked).toBe(false);
+    expect(document.getElementById('toggleShowBadge').checked).toBe(true);
 
-    document.getElementById('toggleCookies').checked = true;
-    document.getElementById('saveSettingsBtn').click();
+    document.getElementById('toggleCookies').click();
+    await flush();
+    document.getElementById('toggleShowBadge').click();
     await flush();
 
     const { getSettings } = await import('../../lib/storage.js');
-    expect((await getSettings()).enabledTypes.cookies).toBe(true);
+    const settings = await getSettings();
+    expect(settings.enabledTypes.cookies).toBe(true);
+    expect(settings.showBadge).toBe(false);
+    expect(settings.autoReload).toBe(false);
     expect(document.getElementById('statusMsg').className).toContain('success');
   });
 
@@ -308,6 +315,7 @@ describe('options/options.js', () => {
       await flush();
 
       expect(await getSnapshots()).toEqual({});
+      expect(await chrome.storage.local.get(['activeSnapshots', 'backups'])).toEqual({ activeSnapshots: {}, backups: {} });
       expect(document.querySelector('.empty-state')).not.toBeNull();
     });
 

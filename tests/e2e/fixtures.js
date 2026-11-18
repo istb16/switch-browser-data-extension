@@ -20,10 +20,9 @@ export const test = base.extend({
   },
 
   extensionId: async ({ context }, use) => {
-    // This extension has no background service worker (cookie access
-    // happens directly from extension pages), so there's no
-    // `serviceworker` event to read the id off. Instead read it straight
-    // out of chrome://extensions — Playwright's locator engine pierces the
+    // The service worker may already be running before this fixture
+    // subscribes, so its `serviceworker` event can't be relied on for the
+    // id. Instead read it straight out of chrome://extensions — Playwright's locator engine pierces the
     // (open) shadow roots of <extensions-manager>/<extensions-item-list>
     // automatically, and each <extensions-item>'s `id` attribute IS the
     // extension's id.

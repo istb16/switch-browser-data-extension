@@ -1,5 +1,7 @@
 import { initI18n, t, applyI18n, setLanguage, getSavedLangSetting } from '../lib/i18n.js';
-import { getSnapshots, setSnapshots, getSettings, setSettings, getSnapshotOrders } from '../lib/storage.js';
+import {
+  getSnapshots, setSnapshots, getSettings, setSettings, getSnapshotOrders, setActiveSnapshots, setBackups,
+} from '../lib/storage.js';
 import { deleteSnapshot, renameSnapshot, setSnapshotOrder } from '../lib/snapshot.js';
 import { showConfirm } from '../lib/dialog.js';
 import { $, escHtml, showStatus } from '../lib/ui.js';
@@ -12,13 +14,18 @@ async function init() {
   $('langSelect').value = await getSavedLangSetting();
   $('langSelect').addEventListener('change', handleLanguageChange);
 
-  const { enabledTypes } = await getSettings();
-  $('toggleCookies').checked        = enabledTypes.cookies;
-  $('toggleLocalStorage').checked   = enabledTypes.localStorage;
-  $('toggleSessionStorage').checked = enabledTypes.sessionStorage;
-  $('toggleIndexedDB').checked      = enabledTypes.indexedDB;
+  const settings = await getSettings();
+  $('toggleCookies').checked        = settings.enabledTypes.cookies;
+  $('toggleLocalStorage').checked   = settings.enabledTypes.localStorage;
+  $('toggleSessionStorage').checked = settings.enabledTypes.sessionStorage;
+  $('toggleIndexedDB').checked      = settings.enabledTypes.indexedDB;
+  $('toggleAutoBackup').checked     = settings.autoBackup;
+  $('toggleAutoReload').checked     = settings.autoReload;
+  $('toggleShowBadge').checked      = settings.showBadge;
 
-  $('saveSettingsBtn').addEventListener('click', handleSaveSettings);
+  for (const toggle of document.querySelectorAll('.toggle-item input[type="checkbox"]')) {
+    toggle.addEventListener('change', handleSaveSettings);
+  }
   $('exportBtn').addEventListener('click', handleExport);
   $('importBtn').addEventListener('click', () => $('importFile').click());
   $('importFile').addEventListener('change', handleImport);
@@ -46,6 +53,9 @@ async function handleSaveSettings() {
     sessionStorage: $('toggleSessionStorage').checked,
     indexedDB:      $('toggleIndexedDB').checked,
   };
+  settings.autoBackup = $('toggleAutoBackup').checked;
+  settings.autoReload = $('toggleAutoReload').checked;
+  settings.showBadge  = $('toggleShowBadge').checked;
   await setSettings(settings);
   showStatus($('statusMsg'), t('status_settings_saved'), 'success');
 }
@@ -281,7 +291,7 @@ async function handleImport(e) {
 
 async function handleClearAll() {
   if (!await showConfirm(t('confirm_clear_all'))) return;
-  await setSnapshots({});
+  await Promise.all([setSnapshots({}), setActiveSnapshots({}), setBackups({})]);
   await renderDomainList();
   showStatus($('statusMsg'), t('status_cleared'), 'success');
 }

@@ -8,6 +8,8 @@ export function createChromeMock() {
     cookies: [],
     tabs: [],
     messageHandlers: [],
+    reloadedTabs: [],
+    badges: {},
     grantedOrigins: new Set(),
     uiLanguage: 'ja',
     manifest: { version: '1.0.1' },
@@ -68,6 +70,9 @@ export function createChromeMock() {
       async query() {
         return clone(state.tabs);
       },
+      async reload(tabId) {
+        state.reloadedTabs.push(tabId);
+      },
       // Overridden per-test with vi.fn() where message round-tripping matters.
       sendMessage: async () => {
         throw new Error('Could not establish connection. Receiving end does not exist.');
@@ -81,6 +86,12 @@ export function createChromeMock() {
       },
       openOptionsPage() {},
       getManifest() { return clone(state.manifest); },
+    },
+
+    action: {
+      async setBadgeText({ tabId, text }) { state.badges[tabId] = text; },
+      async setBadgeBackgroundColor() {},
+      async setBadgeTextColor() {},
     },
 
     i18n: {

@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { getSnapshots, setSnapshots, getSettings, setSettings, getSnapshotOrders, setSnapshotOrders } from '../../lib/storage.js';
+import {
+  getSnapshots, setSnapshots, getSettings, setSettings, getSnapshotOrders, setSnapshotOrders,
+  getActiveSnapshots, setActiveSnapshots, getBackups, setBackups,
+} from '../../lib/storage.js';
 
 describe('lib/storage', () => {
   it('returns an empty object when no snapshots are stored', async () => {
@@ -12,16 +15,42 @@ describe('lib/storage', () => {
     expect(await getSnapshots()).toEqual(snapshots);
   });
 
-  it('returns default enabledTypes when no settings are stored', async () => {
+  it('returns the default settings when none are stored', async () => {
     expect(await getSettings()).toEqual({
       enabledTypes: { cookies: true, localStorage: true, sessionStorage: true, indexedDB: true },
+      autoBackup: true,
+      autoReload: true,
+      showBadge:  true,
     });
   });
 
   it('round-trips settings', async () => {
-    const settings = { enabledTypes: { cookies: false, localStorage: true, sessionStorage: false, indexedDB: true } };
+    const settings = {
+      enabledTypes: { cookies: false, localStorage: true, sessionStorage: false, indexedDB: true },
+      autoBackup: false,
+      autoReload: true,
+      showBadge:  false,
+    };
     await setSettings(settings);
     expect(await getSettings()).toEqual(settings);
+  });
+
+  it('fills keys missing from settings saved by an older version with the defaults', async () => {
+    await setSettings({ enabledTypes: { cookies: false } });
+    const settings = await getSettings();
+    expect(settings.enabledTypes).toEqual({ cookies: false, localStorage: true, sessionStorage: true, indexedDB: true });
+    expect(settings.autoBackup).toBe(true);
+    expect(settings.autoReload).toBe(true);
+    expect(settings.showBadge).toBe(true);
+  });
+
+  it('round-trips active snapshots and backups', async () => {
+    expect(await getActiveSnapshots()).toEqual({});
+    expect(await getBackups()).toEqual({});
+    await setActiveSnapshots({ 'a.com': 'x' });
+    await setBackups({ 'a.com': { savedAt: '2024-01-01T00:00:00.000Z' } });
+    expect(await getActiveSnapshots()).toEqual({ 'a.com': 'x' });
+    expect(await getBackups()).toEqual({ 'a.com': { savedAt: '2024-01-01T00:00:00.000Z' } });
   });
 
   it('returns an empty object when no snapshot order is stored', async () => {

@@ -96,7 +96,6 @@ test.describe('options page', () => {
     const page = await openOptions(context, extensionId);
 
     await page.locator('#toggleCookies').uncheck();
-    await page.locator('#saveSettingsBtn').click();
     await expect(page.locator('#statusMsg')).toHaveClass(/success/);
 
     await reloadAndWait(page);

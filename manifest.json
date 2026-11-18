@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "__MSG_name__",
-  "version": "1.0.13",
+  "version": "1.0.14",
   "default_locale": "ja",
   "description": "__MSG_description__",
   "permissions": ["cookies", "storage", "scripting", "activeTab", "tabs"],
@@ -16,6 +16,17 @@
     }
   },
   "options_page": "options/options.html",
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Alt+Shift+S"
+      }
+    }
+  },
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
