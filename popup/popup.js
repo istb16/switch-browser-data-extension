@@ -52,8 +52,8 @@ async function refreshSnapshots() {
   const snapshotSelect  = $('snapshotSelect');
   const overwriteSelect = $('overwriteSelect');
 
-  snapshotSelect.innerHTML  = '';
-  overwriteSelect.innerHTML = '';
+  snapshotSelect.replaceChildren();
+  overwriteSelect.replaceChildren();
   snapshotSelect.appendChild(new Option(t('snapshot_placeholder'), ''));
   overwriteSelect.appendChild(new Option(t('overwrite_placeholder'), ''));
 
@@ -94,7 +94,13 @@ function setupListeners() {
   });
 
   $('newSnapshotName').addEventListener('keydown', e => {
-    if (e.key === 'Enter') { e.preventDefault(); handleSave(); }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      // The Enter that confirms an IME conversion (Japanese input) must not save.
+      // keyCode 229 covers Safari, which reports isComposing too late.
+      if (e.isComposing || e.keyCode === 229) return;
+      handleSave();
+    }
   });
   $('confirmSaveBtn').addEventListener('click', handleSave);
   $('loadBtn').addEventListener('click', handleLoad);
