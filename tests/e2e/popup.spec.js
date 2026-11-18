@@ -79,8 +79,9 @@ test('deleting the selected snapshot removes it from the dropdown', async ({ con
 
   await popup.locator('#deleteBtn').click();
   await popup.locator('.tk3-btn-confirm').click();
-  await expect(popup.locator('#statusMsg')).toHaveClass(/success/);
 
-  const options = [...await popup.locator('#snapshotSelect option').allTextContents()];
-  expect(options.join('')).not.toContain('to-delete');
+  // The dialog's close event (and so the delete) runs after the click returns, and
+  // #statusMsg is still "success" from the save, so wait on the dropdown itself.
+  await expect(popup.locator('#snapshotSelect')).not.toContainText('to-delete');
+  await expect(popup.locator('#statusMsg')).toHaveClass(/success/);
 });
