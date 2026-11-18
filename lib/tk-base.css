@@ -1,0 +1,209 @@
+/*
+ * tk3 apps base — v1.2
+ *
+ * The shared design base of the tk3.biz apps (everything except tk3.biz itself).
+ * Canonical copy: tk3-biz-html/design/tk3-apps/tk-base.css. Each app keeps an
+ * unmodified copy of this file; change the canonical copy and copy it again.
+ *
+ * What it gives an app:
+ *   - color tokens (--tk-*) for light and dark, switched by prefers-color-scheme
+ *   - the font stacks, radii and shadow
+ *   - body defaults
+ *   - opt-in parts: .tk-header, .tk-footer, .tk-panel, .tk-btn, .tk-visually-hidden
+ *
+ * An app picks its accent by setting --tk-accent to one of --tk-blue / --tk-green /
+ * --tk-red / --tk-amber (the main color of its icon), after this file:
+ *   :root { --tk-accent: var(--tk-green); }
+ * The accent values already flip for dark mode, and --tk-on-accent is the text color
+ * on an accent background in both schemes.
+ *
+ * light-dark() is not used: it is only newly available. The media query works everywhere.
+ */
+
+:root {
+  /* accents (text-safe on --tk-surface / --tk-bg) */
+  --tk-blue: #1F63D8;
+  --tk-green: #1E7E45;
+  --tk-red: #C5221F;
+  --tk-amber: #9A5200;
+
+  /* the icon palette, for fills only (not for text) */
+  --tk-icon-blue: #3B7CF0;
+  --tk-icon-red: #E5483B;
+  --tk-icon-yellow: #F6B820;
+  --tk-icon-green: #2FA25A;
+
+  --tk-bg: #F6F7F9;
+  --tk-surface: #FFFFFF;
+  --tk-surface-2: #EEF0F4;
+  --tk-ink: #1B1C20;
+  --tk-body: #44474F;
+  --tk-muted: #676B76;
+  --tk-line: #D9DCE3;
+  /* borders that must be seen to use a control (inputs, selects, textareas): 3:1 on --tk-surface, --tk-bg and --tk-surface-2 */
+  --tk-line-strong: #868B95;
+  --tk-danger: #B3261E;
+  --tk-on-accent: #FFFFFF;
+
+  --tk-accent: var(--tk-blue);
+
+  --tk-radius: 12px;
+  --tk-radius-sm: 8px;
+  --tk-radius-pill: 999px;
+  --tk-shadow: 0 1px 2px rgb(0 0 0 / 0.06), 0 2px 8px rgb(0 0 0 / 0.06);
+
+  --tk-font: system-ui, -apple-system, 'Segoe UI', 'Hiragino Sans', 'Hiragino Kaku Gothic ProN',
+    'Yu Gothic UI', Meiryo, 'Noto Sans JP', sans-serif;
+  --tk-font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, 'Cascadia Mono', monospace;
+
+  /* native controls, scrollbars and the canvas follow the scheme */
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --tk-blue: #8AB4F8;
+    --tk-green: #6DD58C;
+    --tk-red: #F28B82;
+    --tk-amber: #FDD663;
+
+    --tk-bg: #131417;
+    --tk-surface: #1C1D21;
+    --tk-surface-2: #26282D;
+    --tk-ink: #E7E8EC;
+    --tk-body: #C3C6CF;
+    --tk-muted: #9599A4;
+    --tk-line: #3A3D44;
+    --tk-line-strong: #737884;
+    --tk-danger: #F2B8B5;
+    --tk-on-accent: #131417;
+
+    --tk-shadow: none;
+  }
+}
+
+body {
+  margin: 0;
+  background: var(--tk-bg);
+  color: var(--tk-ink);
+  font-family: var(--tk-font);
+  accent-color: var(--tk-accent);
+}
+
+/* ---- header: app icon + app name, optional controls on the right ---- */
+.tk-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  background: var(--tk-surface);
+  border-block-end: 1px solid var(--tk-line);
+}
+
+.tk-header__home {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: inherit;
+  text-decoration: none;
+  min-inline-size: 0;
+}
+
+.tk-header__icon {
+  inline-size: 32px;
+  block-size: 32px;
+  flex: none;
+}
+
+.tk-header__name {
+  font-size: 1.125rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tk-header__end {
+  margin-inline-start: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ---- footer: a quiet link back to tk3.biz ---- */
+.tk-footer {
+  padding: 24px 16px;
+  text-align: center;
+  font-size: 0.8125rem;
+  color: var(--tk-muted);
+}
+
+.tk-footer a {
+  color: inherit;
+}
+
+/* ---- panel ---- */
+.tk-panel {
+  background: var(--tk-surface);
+  border: 1px solid var(--tk-line);
+  border-radius: var(--tk-radius);
+  box-shadow: var(--tk-shadow);
+  padding: 16px;
+}
+
+/* ---- buttons ---- */
+.tk-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-block-size: 40px;
+  padding: 0 20px;
+  border: 1px solid var(--tk-accent);
+  border-radius: var(--tk-radius-pill);
+  background: var(--tk-accent);
+  color: var(--tk-on-accent);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 0.15s, background-color 0.15s, border-color 0.15s;
+}
+
+.tk-btn:hover {
+  filter: brightness(1.08);
+}
+
+.tk-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+  filter: none;
+}
+
+.tk-btn--quiet {
+  background: transparent;
+  color: var(--tk-accent);
+  border-color: var(--tk-line);
+}
+
+.tk-btn--quiet:hover {
+  border-color: var(--tk-accent);
+  filter: none;
+}
+
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--tk-accent);
+  outline-offset: 2px;
+}
+
+.tk-visually-hidden {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}

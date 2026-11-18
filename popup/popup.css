@@ -1,3 +1,7 @@
+:root {
+  --tk-accent: var(--tk-blue);
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -6,23 +10,29 @@
 
 body {
   width: 320px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 13px;
-  background: #1e1e2e;
-  color: #cdd6f4;
+}
+
+/* The popup is small, so the shared header is made more compact here. */
+.tk-header {
+  padding: 8px 8px 8px 12px;
+}
+
+.tk-header__home {
+  gap: 8px;
+}
+
+.tk-header__icon {
+  inline-size: 22px;
+  block-size: 22px;
+}
+
+.tk-header__name {
+  font-size: 13px;
 }
 
 .container {
   padding: 12px;
-}
-
-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding-bottom: 10px;
-  border-bottom: 1px solid #313244;
-  margin-bottom: 12px;
 }
 
 .domain-info {
@@ -30,18 +40,18 @@ header {
   align-items: center;
   gap: 6px;
   min-width: 0;
-  flex: 1;
+  margin-bottom: 12px;
 }
 
 .domain-label {
-  color: #6c7086;
+  color: var(--tk-muted);
   font-size: 11px;
   white-space: nowrap;
 }
 
 .domain-value {
   font-weight: 600;
-  color: #89b4fa;
+  color: var(--tk-accent);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -52,7 +62,7 @@ header {
   border: none;
   cursor: pointer;
   font-size: 16px;
-  color: #6c7086;
+  color: var(--tk-muted);
   padding: 4px 6px;
   border-radius: 4px;
   transition: color 0.15s, background 0.15s;
@@ -60,8 +70,8 @@ header {
 }
 
 .icon-btn:hover {
-  color: #cdd6f4;
-  background: #313244;
+  color: var(--tk-ink);
+  background: var(--tk-surface-2);
 }
 
 .snapshot-section {
@@ -71,7 +81,7 @@ header {
 .snapshot-section label {
   display: block;
   font-size: 11px;
-  color: #6c7086;
+  color: var(--tk-muted);
   margin-bottom: 4px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
@@ -80,28 +90,28 @@ header {
 select,
 .text-input {
   width: 100%;
-  background: #313244;
-  border: 1px solid #45475a;
-  color: #cdd6f4;
+  background: var(--tk-surface);
+  /* Control borders must reach 3:1 against the page; --tk-line is for separators only. */
+  border: 1px solid var(--tk-line-strong);
+  color: var(--tk-ink);
   padding: 6px 8px;
   border-radius: 6px;
-  font-size: 13px;
-  outline: none;
+  font: inherit;
   transition: border-color 0.15s;
 }
 
 select:focus,
 .text-input:focus {
-  border-color: #89b4fa;
+  border-color: var(--tk-accent);
 }
 
-select option {
-  background: #313244;
+.text-input::placeholder {
+  color: var(--tk-muted);
 }
 
 .snapshot-meta {
   font-size: 11px;
-  color: #6c7086;
+  color: var(--tk-muted);
   margin-bottom: 10px;
   min-height: 16px;
 }
@@ -115,60 +125,56 @@ select option {
 .btn {
   flex: 1;
   padding: 7px 10px;
-  border: none;
-  border-radius: 6px;
+  border: 1px solid transparent;
+  border-radius: var(--tk-radius-sm);
   cursor: pointer;
+  font: inherit;
   font-size: 12px;
   font-weight: 600;
-  transition: opacity 0.15s, filter 0.15s;
+  transition: filter 0.15s, background-color 0.15s, border-color 0.15s;
 }
 
 .btn:disabled {
-  opacity: 0.4;
+  opacity: 0.45;
   cursor: not-allowed;
 }
 
-.btn-primary {
-  background: #89b4fa;
-  color: #1e1e2e;
+.btn:hover:not(:disabled) {
+  filter: brightness(1.08);
 }
 
-.btn-primary:hover:not(:disabled) {
-  filter: brightness(1.15);
+.btn-primary {
+  background: var(--tk-accent);
+  color: var(--tk-on-accent);
 }
 
 .btn-secondary {
-  background: #a6e3a1;
-  color: #1e1e2e;
-}
-
-.btn-secondary:hover:not(:disabled) {
-  filter: brightness(1.1);
+  background: var(--tk-green);
+  color: var(--tk-on-accent);
 }
 
 .btn-danger {
-  background: #f38ba8;
-  color: #1e1e2e;
-}
-
-.btn-danger:hover:not(:disabled) {
-  filter: brightness(1.1);
+  background: var(--tk-danger);
+  color: var(--tk-on-accent);
 }
 
 .btn-ghost {
-  background: #313244;
-  color: #cdd6f4;
+  background: transparent;
+  color: var(--tk-ink);
+  border-color: var(--tk-line);
   flex: none;
 }
 
-.btn-ghost:hover {
-  background: #45475a;
+.btn-ghost:hover:not(:disabled) {
+  background: var(--tk-surface-2);
+  filter: none;
 }
 
 .panel {
-  background: #181825;
-  border: 1px solid #313244;
-  border-radius: 8px;
+  background: var(--tk-surface);
+  border: 1px solid var(--tk-line);
+  border-radius: var(--tk-radius-sm);
+  box-shadow: var(--tk-shadow);
   padding: 12px;
   margin-top: 4px;
 }
@@ -176,7 +182,7 @@ select option {
 .panel-header {
   font-size: 12px;
   font-weight: 600;
-  color: #cdd6f4;
+  color: var(--tk-ink);
   margin-bottom: 10px;
 }
 
@@ -192,10 +198,6 @@ select option {
   gap: 6px;
   cursor: pointer;
   font-size: 12px;
-}
-
-.save-options input[type='radio'] {
-  accent-color: #89b4fa;
 }
 
 #newNameArea,
@@ -216,7 +218,7 @@ select option {
 
 .unavailable {
   font-size: 12px;
-  color: #6c7086;
+  color: var(--tk-muted);
   text-align: center;
   padding: 16px 0;
 }
@@ -227,18 +229,17 @@ select option {
   font-size: 12px;
   margin-top: 8px;
   text-align: center;
+  border: 1px solid currentColor;
 }
 
 .status-msg.success {
-  background: #1e3a2f;
-  color: #a6e3a1;
-  border: 1px solid #a6e3a1;
+  color: var(--tk-green);
+  background: color-mix(in srgb, var(--tk-green) 8%, var(--tk-surface));
 }
 
 .status-msg.error {
-  background: #3a1e1e;
-  color: #f38ba8;
-  border: 1px solid #f38ba8;
+  color: var(--tk-danger);
+  background: color-mix(in srgb, var(--tk-danger) 8%, var(--tk-surface));
 }
 
 .hidden {

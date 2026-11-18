@@ -2,11 +2,23 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
   <title>Settings - Switch Browser Data</title>
+  <link rel="icon" href="../icons/icon.svg" type="image/svg+xml">
+  <link rel="icon" href="../icons/icon32.png" type="image/png" sizes="32x32">
+  <link rel="stylesheet" href="../lib/tk-base.css">
   <link rel="stylesheet" href="options.css">
 </head>
 <body>
-  <div class="container">
+  <header class="tk-header">
+    <span class="tk-header__home">
+      <img class="tk-header__icon" src="../icons/icon.svg" alt="">
+      <span class="tk-header__name">SWITCH BROWSER DATA</span>
+    </span>
+  </header>
+
+  <main class="container">
     <h1 data-i18n="options_title">設定</h1>
 
     <section class="section">
@@ -38,7 +50,7 @@
           <input type="checkbox" id="toggleIndexedDB">
         </label>
       </div>
-      <button id="saveSettingsBtn" class="btn btn-primary" style="margin-top:12px" data-i18n="btn_save_settings">設定を保存</button>
+      <button id="saveSettingsBtn" class="btn btn-primary" data-i18n="btn_save_settings">設定を保存</button>
     </section>
 
     <section class="section">
@@ -58,9 +70,12 @@
     </section>
 
     <div id="statusMsg" class="status-msg hidden"></div>
+  </main>
 
-    <footer id="versionFooter" class="version-footer"></footer>
-  </div>
+  <footer class="tk-footer">
+    <p id="versionFooter"></p>
+    <p><a href="https://tk3.biz/" target="_blank" rel="noopener">tk3.biz</a></p>
+  </footer>
   <script type="module" src="options.js"></script>
 </body>
 </html>
