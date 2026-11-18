@@ -305,7 +305,8 @@ h2 {
 
 .lang-select {
   background: var(--tk-surface);
-  border: 1px solid var(--tk-line);
+  /* Control borders must reach 3:1 against the page; --tk-line is for separators only. */
+  border: 1px solid var(--tk-line-strong);
   color: var(--tk-ink);
   padding: 8px 10px;
   border-radius: 6px;

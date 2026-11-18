@@ -1,5 +1,5 @@
 /*
- * tk3 apps base — v1
+ * tk3 apps base — v1.1
  *
  * The shared design base of the tk3.biz apps (everything except tk3.biz itself).
  * Canonical copy: tk3-biz-html/design/tk3-apps/tk-base.css. Each app keeps an
@@ -40,6 +40,8 @@
   --tk-body: #44474F;
   --tk-muted: #676B76;
   --tk-line: #D9DCE3;
+  /* borders that must be seen to use a control (inputs, selects, textareas): 3:1 on the surface and the page */
+  --tk-line-strong: #8B909A;
   --tk-danger: #B3261E;
   --tk-on-accent: #FFFFFF;
 
@@ -72,6 +74,7 @@
     --tk-body: #C3C6CF;
     --tk-muted: #9599A4;
     --tk-line: #3A3D44;
+    --tk-line-strong: #737884;
     --tk-danger: #F2B8B5;
     --tk-on-accent: #131417;
 
