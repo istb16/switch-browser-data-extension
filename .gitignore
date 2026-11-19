@@ -1,5 +1,5 @@
 .claude/settings.local.json
-manifest.zip
+store/manifest.zip
 
 node_modules/
 test-results/

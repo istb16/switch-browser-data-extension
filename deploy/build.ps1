@@ -4,9 +4,10 @@ try {
         Where-Object { Test-Path $_ }
     if (Test-Path "background") { $targets += "background" }
 
-    if (Test-Path "manifest.zip") { Remove-Item "manifest.zip" }
-    Compress-Archive -Path $targets -DestinationPath "manifest.zip"
-    Write-Host "Created manifest.zip"
+    $zip = "store/manifest.zip"
+    if (Test-Path $zip) { Remove-Item $zip }
+    Compress-Archive -Path $targets -DestinationPath $zip
+    Write-Host "Created $zip"
 } finally {
     Pop-Location
 }

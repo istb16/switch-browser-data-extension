@@ -3,10 +3,11 @@ setlocal
 
 cd /d "%~dp0.."
 
-if exist manifest.zip del manifest.zip
+set ZIP=store\manifest.zip
+if exist %ZIP% del %ZIP%
 
 set TARGETS=manifest.json popup options lib icons content _locales
 if exist background set TARGETS=%TARGETS% background
 
-zip -r manifest.zip %TARGETS%
-echo Created manifest.zip
+zip -r %ZIP% %TARGETS%
+echo Created %ZIP%

@@ -6,6 +6,7 @@ cd "$(dirname "$0")/.."
 TARGETS=(manifest.json popup options lib icons content _locales)
 [ -d background ] && TARGETS+=(background)
 
-rm -f manifest.zip
-zip -r manifest.zip "${TARGETS[@]}"
-echo "Created manifest.zip"
+ZIP=store/manifest.zip
+rm -f "$ZIP"
+zip -r "$ZIP" "${TARGETS[@]}"
+echo "Created $ZIP"
