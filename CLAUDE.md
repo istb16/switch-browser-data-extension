@@ -15,7 +15,7 @@ Chrome / Edge 向けブラウザ拡張機能。ドメインごとに Cookie・lo
 | 種別           | API                                                                      |
 | -------------- | ------------------------------------------------------------------------ |
 | Cookie         | `chrome.cookies` API                                                     |
-| localStorage   | `chrome.scripting.executeScript` 経由で `window.localStorage` を読み書き |
+| localStorage   | コンテンツスクリプト（`content/content-script.js`）が `window.localStorage` を読み書きし、ポップアップとは `chrome.tabs.sendMessage` でやり取りする |
 | sessionStorage | 同上（`window.sessionStorage`）                                          |
 | IndexedDB      | 同上（`indexedDB` を JSON にシリアライズ / リストア）                    |
 
@@ -116,7 +116,7 @@ graph TD
 ```json
 {
   "manifest_version": 3,
-  "permissions": ["cookies", "storage", "unlimitedStorage", "scripting", "activeTab", "tabs"],
+  "permissions": ["cookies", "storage", "unlimitedStorage", "tabs"],
   "host_permissions": ["<all_urls>"],
   "background": { "service_worker": "background/service-worker.js", "type": "module" },
   "commands": { "_execute_action": { "suggested_key": { "default": "Alt+Shift+S" } } },
@@ -181,7 +181,7 @@ graph TD
 
 ## 実装時の注意点
 
-- `chrome.scripting.executeScript` は `activeTab` か `host_permissions` が必要。`func` オプションで関数を渡す形式を使う
+- 権限は使うものだけを宣言する（使っていない権限は Chrome Web Store の審査で指摘されることがある）。`scripting` と `activeTab` は使っていないので宣言しない。localStorage などはマニフェストで宣言したコンテンツスクリプトが扱う
 - sessionStorage はタブをまたいで取得できないため、コンテンツスクリプト経由でアクティブタブから取得する
 - Cookie の `httpOnly` フラグが付いたものは JS からは読めないが `chrome.cookies` API なら取得可能
 - IndexedDB の復元時はスキーマ（`keyPath`, `autoIncrement`）も保存しておく必要がある
