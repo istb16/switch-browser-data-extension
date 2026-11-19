@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { $, escHtml, showStatus } from '../../lib/ui.js';
+import { $, escHtml, showStatus, notify, reportError } from '../../lib/ui.js';
+import { MESSAGES } from '../../lib/i18n.js';
 
 describe('lib/ui', () => {
   it('$ looks up an element by id', () => {
@@ -51,6 +52,38 @@ describe('lib/ui', () => {
 
       vi.advanceTimersByTime(1000);
       expect(el.classList.contains('hidden')).toBe(true);
+    });
+  });
+
+  describe('notify / reportError', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+      document.body.innerHTML = '<div id="statusMsg" class="status-msg hidden"></div>';
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    });
+
+    it('notify shows the translated message on #statusMsg, success by default', () => {
+      notify('status_saved', { name: 'A' });
+      const el = $('statusMsg');
+      expect(el.textContent).toBe(MESSAGES.ja.status_saved.replace('{name}', 'A'));
+      expect(el.className).toBe('status-msg success');
+
+      notify('error_enter_name', {}, 'error');
+      expect(el.textContent).toBe(MESSAGES.ja.error_enter_name);
+      expect(el.className).toBe('status-msg error');
+    });
+
+    it('reportError shows the message as an error and logs the error', () => {
+      const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const error = new Error('boom');
+      reportError('error_save_failed', error);
+      const el = $('statusMsg');
+      expect(el.textContent).toBe(MESSAGES.ja.error_save_failed);
+      expect(el.className).toBe('status-msg error');
+      expect(log).toHaveBeenCalledWith(error);
     });
   });
 });
