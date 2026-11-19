@@ -32,8 +32,10 @@ export async function handleExport(scope, button) {
   if (button.disabled) return;
   button.disabled = true;
   try {
-    const { encryptExports } = await getSettings();
-    const snapshots = scope.domain ? await getSnapshotsFor([scope.domain]) : await getSnapshots();
+    const [{ encryptExports }, snapshots] = await Promise.all([
+      getSettings(),
+      scope.domain ? getSnapshotsFor([scope.domain]) : getSnapshots(),
+    ]);
     const text = JSON.stringify(buildExport(snapshots, scope), null, 2);
     if (!encryptExports) {
       downloadExport(text, scope);

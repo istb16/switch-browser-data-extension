@@ -4,8 +4,7 @@ import { showConfirm } from '../lib/dialog.js';
 import { $, notify, reportError } from '../lib/ui.js';
 import { normalizeGroupDomain, validateNewGroup, groupOrigins, addGroup, removeGroup } from '../lib/groups.js';
 
-export async function renderGroups(onChange) {
-  const groups = await getGroups();
+export function renderGroups(groups, onChange) {
   const list = $('groupList');
   if (groups.length === 0) {
     const empty = document.createElement('li');
@@ -41,7 +40,8 @@ export async function handleAddGroup(e, onChange) {
   const input = $('groupInput');
   try {
     const base = normalizeGroupDomain(input.value);
-    const error = validateNewGroup(input.value, await getGroups());
+    const groups = await getGroups();
+    const error = validateNewGroup(input.value, groups);
     if (error) {
       notify(`error_group_${error.replace('-', '_')}`, { group: base }, 'error');
       return;
@@ -51,8 +51,9 @@ export async function handleAddGroup(e, onChange) {
     const granted = enabledTypes.cookies ? await chrome.permissions.request({ origins: groupOrigins(base) }) : true;
     await addGroup(base);
     input.value = '';
-    await renderGroups(onChange);
-    await onChange();
+    const next = [...groups, base];
+    renderGroups(next, onChange);
+    await onChange(next);
     notify(granted ? 'status_group_added' : 'status_group_added_no_permission', { group: base });
   } catch (err) {
     reportError('error_group_failed', err);
@@ -65,8 +66,9 @@ export async function handleRemoveGroup(base, onChange) {
     await removeGroup(base);
     // *://base/* stays: the base host goes on using it as its own scope.
     await chrome.permissions.remove({ origins: [`*://*.${base}/*`] });
-    await renderGroups(onChange);
-    await onChange();
+    const next = await getGroups();
+    renderGroups(next, onChange);
+    await onChange(next);
     notify('status_group_removed', { group: base });
   } catch (err) {
     reportError('error_group_failed', err);

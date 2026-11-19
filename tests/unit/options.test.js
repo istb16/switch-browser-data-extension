@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import {
   setSnapshots, setSnapshotOrders, getSnapshots, getSnapshotOrders, setSettings, getSettings, getBackups, setBackups,
+  setSnapshotsFor, setBackup,
 } from '../../lib/storage.js';
 import { byteSize, formatBytes } from '../../lib/snapshot-summary.js';
 import { encryptText, ENVELOPE_TAG, MIN_ITERATIONS } from '../../lib/crypto.js';
@@ -38,6 +39,27 @@ async function loadOptions() {
 
 function domainItems() {
   return [...document.querySelectorAll('.domain-item')];
+}
+
+function domainNames() {
+  return domainItems().map(item => item.querySelector('.domain-name').textContent);
+}
+
+function rowNames(item) {
+  return [...item.querySelectorAll('.snapshot-row')].map(row => row.dataset.name);
+}
+
+// The `get` calls (by their key lists) that touch a snapshot key or the snapshot index.
+function snapshotReads(getSpy) {
+  return getSpy.mock.calls.map(([keys]) => keys)
+    .filter(keys => keys == null || [keys].flat().some(key => key.startsWith('snapshots/') || key === 'snapshotHosts'));
+}
+
+async function setSort(value) {
+  const select = document.getElementById('sortSelect');
+  select.value = value;
+  select.dispatchEvent(new Event('change'));
+  await flush();
 }
 
 describe('options/options.js', () => {
@@ -416,7 +438,28 @@ describe('options/options.js', () => {
 
       expect(domainItems()).toHaveLength(1);
       expect(document.querySelector('.domain-count').textContent).toBe('0 件');
+      expect(document.querySelector('.domain-size').textContent).toBe(formatBytes(0));
       expect(document.querySelectorAll('.snapshot-row')).toHaveLength(0);
+    });
+
+    it('deleting one of two snapshots updates the domain size and meter without reading another host', async () => {
+      const small = { savedAt: '2024-01-01T00:00:00.000Z' };
+      await setSnapshots({
+        'a.com': { big: { savedAt: '2024-01-01T00:00:00.000Z', localStorage: { k: 'x'.repeat(5000) } }, small },
+        'b.com': { other: { savedAt: '2024-01-01T00:00:00.000Z' } },
+      });
+      await loadOptions();
+      const get = vi.spyOn(chrome.storage.local, 'get');
+
+      document.querySelector('.snapshot-row[data-name="big"] .btn-icon').click();
+      await flush();
+      document.querySelector('.tk3-btn-confirm').click();
+      await flush();
+
+      expect(domainItems()[0].querySelector('.domain-size').textContent).toBe(formatBytes(byteSize(small)));
+      const segment = [...document.querySelectorAll('#meterBar .meter-segment')].find(s => s.title.startsWith('a.com: '));
+      expect(Number(segment.dataset.bytes)).toBe(byteSize(small));
+      expect(get.mock.calls.some(([keys]) => keys == null || [keys].flat().includes('snapshots/b.com'))).toBe(false);
     });
 
     it('does nothing when the user cancels the delete confirmation', async () => {
@@ -822,6 +865,50 @@ describe('options/options.js', () => {
         expect(await getSnapshots()).toEqual({ 'a.com': { x: old } });
         expect((await getSnapshotOrders())['a.com']).toEqual(['x']);
       });
+
+      it('asks about a conflict created after the page loaded', async () => {
+        await setSnapshots({ 'a.com': { x: old } });
+        await loadOptions();
+        // Saved by the popup; the page has not seen the event.
+        await setSnapshotsFor('a.com', { x: old, y: old });
+
+        importFile({ size: 100, text: () => Promise.resolve(JSON.stringify({ 'a.com': { y: fresh } })) });
+        await waitFor(() => dialog());
+
+        expect(dialog().textContent).toContain('a.com / y');
+      });
+    });
+
+    it('import reads and writes only the file\'s hosts', async () => {
+      await setSnapshots({ 'a.com': { x: { savedAt: SAVED } }, 'b.com': { z: { savedAt: SAVED } } });
+      await loadOptions();
+      const get = vi.spyOn(chrome.storage.local, 'get');
+      const set = vi.spyOn(chrome.storage.local, 'set');
+
+      importFile({ size: 100, text: () => Promise.resolve(JSON.stringify({ 'a.com': { y: { savedAt: SAVED } } })) });
+      await waitFor(() => status().textContent.startsWith('インポートしました'));
+
+      expect(set.mock.calls.some(([items]) => 'snapshots/b.com' in items)).toBe(false);
+      // Only the render after the merge reads every host.
+      const lastSet = Math.max(...set.mock.invocationCallOrder);
+      const readsOfB = get.mock.invocationCallOrder.filter((_, i) => {
+        const keys = get.mock.calls[i][0];
+        return keys == null || [keys].flat().includes('snapshots/b.com');
+      });
+      expect(readsOfB.every(order => order > lastSet)).toBe(true);
+      expect(rowNames(domainItems()[0])).toEqual(['x', 'y']);
+    });
+
+    it('exporting one snapshot reads one host', async () => {
+      await setSnapshots({ 'a.com': { x: { savedAt: SAVED } }, 'b.com': { z: { savedAt: SAVED } } });
+      await loadOptions();
+      const get = vi.spyOn(chrome.storage.local, 'get');
+
+      domainItems()[0].querySelector('.snapshot-row[data-name="x"] .btn-export').click();
+      await flush();
+
+      expect(downloads).toHaveLength(1);
+      expect(snapshotReads(get)).toEqual([['snapshots/a.com']]);
     });
 
     it.each([
@@ -1033,6 +1120,151 @@ describe('options/options.js', () => {
 
       expect((await chrome.storage.local.get('groups')).groups).toEqual(['example.com']);
       expect([...chrome._state.grantedOrigins]).toEqual(['*://*.example.com/*']);
+    });
+  });
+
+  describe('page state', () => {
+    const SAVED = '2024-01-01T00:00:00.000Z';
+
+    it('changing the sort reads no snapshot key', async () => {
+      await setSnapshots({
+        'a.com': { small: { savedAt: SAVED } },
+        'b.com': { big: { savedAt: SAVED, localStorage: { k: 'x'.repeat(1000) } } },
+      });
+      await loadOptions();
+      expect(domainNames()).toEqual(['a.com', 'b.com']);
+      const get = vi.spyOn(chrome.storage.local, 'get');
+
+      await setSort('size');
+
+      expect(domainNames()).toEqual(['b.com', 'a.com']);
+      expect(snapshotReads(get)).toEqual([]);
+    });
+
+    it('a snapshot saved elsewhere appears on the next render', async () => {
+      await setSnapshots({ 'a.com': { x: { savedAt: SAVED } } });
+      await loadOptions();
+
+      await setSnapshotsFor('b.com', { y: { savedAt: SAVED } });
+      chrome._deliverStorageEvents();
+      await setSort('size');
+
+      expect(domainNames()).toContain('b.com');
+      expect(rowNames(domainItems().find(item => item.querySelector('.domain-name').textContent === 'b.com'))).toEqual(['y']);
+    });
+
+    it('a change that lands during the first load is not lost', async () => {
+      await setSnapshots({ 'a.com': { x: { savedAt: SAVED } } });
+      const held = chrome._holdGet(keys => keys.includes('snapshotHosts'));
+      await loadOptions();
+
+      await setSnapshotsFor('b.com', { y: { savedAt: SAVED } });
+      chrome._deliverStorageEvents();
+      held.release();
+      await flush();
+      expect(domainNames()).toEqual(['a.com']);
+
+      await setSort('name');
+      expect(domainNames()).toEqual(['a.com', 'b.com']);
+    });
+
+    it('a reorder shows on the next render', async () => {
+      await setSnapshots({ 'a.com': { first: { savedAt: SAVED }, second: { savedAt: SAVED } } });
+      await setSnapshotOrders({ 'a.com': ['first', 'second'] });
+      await loadOptions();
+
+      const list = document.querySelector('.domain-snapshots');
+      const [firstRow, secondRow] = [...list.querySelectorAll('.snapshot-row')];
+      list.insertBefore(secondRow, firstRow);
+      list.dispatchEvent(new Event('drop', { bubbles: true }));
+      await flush();
+      await setSort('name');
+
+      expect(rowNames(domainItems()[0])).toEqual(['second', 'first']);
+    });
+
+    it('a rename shows on the next render', async () => {
+      await setSnapshots({ 'a.com': { first: { savedAt: SAVED }, second: { savedAt: SAVED } } });
+      await setSnapshotOrders({ 'a.com': ['second', 'first'] });
+      await loadOptions();
+
+      const row = document.querySelector('.snapshot-row[data-name="first"]');
+      row.querySelector('.snapshot-name').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      const input = row.querySelector('.snapshot-name-input');
+      input.value = 'renamed';
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+      await flush();
+      await setSort('name');
+
+      expect(rowNames(domainItems()[0])).toEqual(['second', 'renamed']);
+    });
+
+    it('render right after import shows the imported snapshots', async () => {
+      await setSnapshots({ 'a.com': { existing: { savedAt: SAVED } } });
+      await loadOptions();
+
+      const input = document.getElementById('importFile');
+      const text = JSON.stringify({ 'a.com': { imported: { savedAt: SAVED } }, 'n.com': { n: { savedAt: SAVED } } });
+      Object.defineProperty(input, 'files', { value: [{ size: text.length, text: async () => text }], configurable: true });
+      input.dispatchEvent(new Event('change'));
+      await vi.waitFor(() => {
+        if (!document.getElementById('statusMsg').textContent.startsWith('インポートしました')) throw new Error('not yet');
+      });
+
+      expect(domainNames()).toEqual(['a.com', 'n.com']);
+      expect(rowNames(domainItems()[0])).toEqual(['existing', 'imported']);
+    });
+
+    it('clear all empties the list before the event arrives', async () => {
+      await setSnapshots({ 'a.com': { x: { savedAt: SAVED } } });
+      await loadOptions();
+
+      document.getElementById('clearAllBtn').click();
+      await flush();
+      document.querySelector('.tk3-btn-confirm').click();
+      await flush();
+
+      expect(chrome._state.storageEvents.length).toBeGreaterThan(0);
+      expect(domainItems()).toHaveLength(0);
+      expect(document.querySelector('.empty-state')).not.toBeNull();
+    });
+
+    it('group chips update right after add and remove, with no snapshot read', async () => {
+      await setSnapshots({ 'app.example.com': { a: { savedAt: SAVED } } });
+      await loadOptions();
+      const get = vi.spyOn(chrome.storage.local, 'get');
+      const confirm = async () => {
+        await flush();
+        document.querySelector('.tk3-btn-confirm').click();
+        await flush();
+        await flush();
+      };
+
+      document.getElementById('groupInput').value = 'example.com';
+      document.getElementById('groupForm').requestSubmit();
+      await confirm();
+      expect(document.querySelector('.group-chip')?.textContent).toBe('グループ: example.com');
+
+      document.querySelector('#groupList .group-item .btn-icon').click();
+      await confirm();
+      expect(document.querySelector('.group-chip')).toBeNull();
+      expect(document.querySelector('#groupList .group-empty')).not.toBeNull();
+
+      expect(snapshotReads(get)).toEqual([]);
+    });
+
+    it('a backup written elsewhere shows in the meter on the next render', async () => {
+      await setSnapshots({ 'a.com': { x: { savedAt: SAVED } } });
+      await loadOptions();
+      const backupSegment = () => document.querySelector('#meterBar .meter-segment--backups');
+      expect(Number(backupSegment().dataset.bytes)).toBe(0);
+
+      await setBackup('a.com', { savedAt: SAVED, activeName: null, localStorage: { k: 'v' } });
+      await setSort('size');
+
+      const expected = await chrome.storage.local.getBytesInUse(['backups/a.com']);
+      expect(expected).toBeGreaterThan(0);
+      expect(Number(backupSegment().dataset.bytes)).toBe(expected);
     });
   });
 

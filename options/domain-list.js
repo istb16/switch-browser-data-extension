@@ -1,5 +1,5 @@
 import { t } from '../lib/i18n.js';
-import { getSnapshots, getSnapshotOrders, getGroups } from '../lib/storage.js';
+import { getSnapshots, getSnapshotsFor, getSnapshotOrders, SNAPSHOT_PREFIX } from '../lib/storage.js';
 import { deleteSnapshot, renameSnapshot, setSnapshotOrder, orderedNames } from '../lib/snapshot.js';
 import { bindInlineRename } from '../lib/inline-rename.js';
 import { showConfirm } from '../lib/dialog.js';
@@ -10,8 +10,38 @@ import { resolveScope } from '../lib/groups.js';
 import { renderMeter } from './meter.js';
 import { buildExportButton, handleExport } from './transfer-ui.js';
 
-export async function renderDomainList(sort = $('sortSelect').value) {
-  const [allSnapshots, allOrders, groups] = await Promise.all([getSnapshots(), getSnapshotOrders(), getGroups()]);
+let stale = true;
+let loaded = null;
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== 'local') return;
+  if (Object.keys(changes).some(key => key.startsWith(SNAPSHOT_PREFIX) || key === 'snapshotHosts' || key === 'snapshotOrder')) {
+    stale = true;
+  }
+});
+
+export function markStale() {
+  stale = true;
+}
+
+// The flag is cleared before the read starts, so a change that lands during
+// the read marks the state stale again and the next render reloads it.
+export function getState() {
+  if (stale) {
+    stale = false;
+    loaded = Promise.all([getSnapshots(), getSnapshotOrders()])
+      .then(([snapshots, orders]) => ({ snapshots, orders }))
+      .catch(err => {
+        stale = true;
+        throw err;
+      });
+  }
+  return loaded;
+}
+
+export async function renderDomainList(groups) {
+  const sort = $('sortSelect').value;
+  const { snapshots: allSnapshots, orders: allOrders } = await getState();
   const sizes = measureDomains(allSnapshots);
   await renderMeter(sizes);
   const container = $('domainList');
@@ -141,7 +171,16 @@ export function buildSnapshotRow(name, snapshot, bytes, domain, snapshotList, he
     row.remove();
     const countEl = header.querySelector('.domain-count');
     if (countEl) countEl.textContent = t('count_format', { n: snapshotList.querySelectorAll('.snapshot-row').length });
-    const sizes = measureDomains(await getSnapshots());
+    const { snapshots, orders } = await getState();
+    if (snapshots[domain]) {
+      delete snapshots[domain][currentName];
+      if (Object.keys(snapshots[domain]).length === 0) delete snapshots[domain];
+    }
+    if (orders[domain]) {
+      orders[domain] = orders[domain].filter(n => n !== currentName);
+      if (orders[domain].length === 0) delete orders[domain];
+    }
+    const sizes = measureDomains(snapshots);
     header.querySelector('.domain-size').textContent = formatBytes(sizes[domain]?.bytes ?? 0);
     await renderMeter(sizes);
     notify('status_snapshot_deleted', { name: currentName });
@@ -163,11 +202,18 @@ export function buildSnapshotRow(name, snapshot, bytes, domain, snapshotList, he
     };
     bindInlineRename(input, {
       oldName,
-      exists: async newName => Boolean((await getSnapshots())[domain]?.[newName]),
+      exists: async newName => Boolean((await getSnapshotsFor([domain]))[domain]?.[newName]),
       onError: msg => (msg ? showRenameError(msg) : clearRenameError()),
       onCancel: restore,
       onCommit: async newName => {
         await renameSnapshot(domain, oldName, newName);
+        const { snapshots, orders } = await getState();
+        if (snapshots[domain]?.[oldName]) {
+          snapshots[domain][newName] = snapshots[domain][oldName];
+          delete snapshots[domain][oldName];
+        }
+        const index = orders[domain]?.indexOf(oldName) ?? -1;
+        if (index !== -1) orders[domain][index] = newName;
         row.dataset.name = newName;
         nameSpan.textContent = newName;
         restore();
@@ -225,5 +271,6 @@ export function setupDragDrop(snapshotList, domain) {
     e.preventDefault();
     const newOrder = [...snapshotList.querySelectorAll('.snapshot-row')].map(el => el.dataset.name);
     await setSnapshotOrder(domain, newOrder);
+    (await getState()).orders[domain] = newOrder;
   });
 }

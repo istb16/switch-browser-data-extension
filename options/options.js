@@ -1,9 +1,9 @@
 import { initI18n, t, applyI18n, setLanguage, getSavedLangSetting } from '../lib/i18n.js';
-import { getSettings, setSettings } from '../lib/storage.js';
+import { getSettings, setSettings, getGroups } from '../lib/storage.js';
 import { clearAllData, migrateStorage } from '../lib/snapshot.js';
 import { showConfirm } from '../lib/dialog.js';
 import { $, notify } from '../lib/ui.js';
-import { renderDomainList } from './domain-list.js';
+import { renderDomainList, markStale } from './domain-list.js';
 import { renderGroups, handleAddGroup } from './groups-pane.js';
 import { handleExport, handleImport } from './transfer-ui.js';
 
@@ -20,7 +20,17 @@ const TOGGLES = [
   { id: 'toggleEncryptExports', key: 'encryptExports' },
 ];
 
-const onGroupsChange = () => renderDomainList();
+const onGroupsChange = groups => renderDomainList(groups);
+
+async function renderList() {
+  await renderDomainList(await getGroups());
+}
+
+async function renderAll() {
+  const groups = await getGroups();
+  renderGroups(groups, onGroupsChange);
+  await renderDomainList(groups);
+}
 
 async function init() {
   setupNav();
@@ -39,13 +49,15 @@ async function init() {
   }
   $('exportBtn').addEventListener('click', () => handleExport({}, $('exportBtn')));
   $('importBtn').addEventListener('click', () => $('importFile').click());
-  $('importFile').addEventListener('change', e => handleImport(e, () => renderDomainList()));
+  $('importFile').addEventListener('change', e => handleImport(e, () => {
+    markStale();
+    return renderList();
+  }));
   $('clearAllBtn').addEventListener('click', handleClearAll);
-  $('sortSelect').addEventListener('change', () => renderDomainList());
+  $('sortSelect').addEventListener('change', renderList);
   $('groupForm').addEventListener('submit', e => handleAddGroup(e, onGroupsChange));
 
-  await renderGroups(onGroupsChange);
-  await renderDomainList();
+  await renderAll();
 }
 
 function setupNav() {
@@ -69,8 +81,7 @@ async function handleLanguageChange() {
   await setLanguage($('langSelect').value);
   applyI18n();
   renderVersionFooter();
-  await renderGroups(onGroupsChange);
-  await renderDomainList();
+  await renderAll();
 }
 
 function renderVersionFooter() {
@@ -91,7 +102,8 @@ async function handleSaveSettings() {
 async function handleClearAll() {
   if (!await showConfirm(t('confirm_clear_all'))) return;
   await clearAllData();
-  await renderDomainList();
+  markStale();
+  await renderList();
   notify('status_cleared');
 }
 
