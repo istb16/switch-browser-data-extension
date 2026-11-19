@@ -1,4 +1,4 @@
-# Chrome Web Store 掲載情報（v1.0.31）
+# Chrome Web Store 掲載情報（v1.0.32）
 
 画像は `node store/generate.mjs` で作り直せる（実際の拡張機能を読み込んで撮影し、`store/images/` に書き出す）。
 
@@ -92,7 +92,7 @@ Because it handles cookies, the extension asks for access to a site the first ti
 
 英語で入力する場合: `Snapshots are copies of the site data the user chooses to save (cookies, localStorage, sessionStorage, IndexedDB), so their size depends on the site; IndexedDB alone can be tens of MB. Several snapshots per site plus one pre-switch backup can exceed the 10 MB chrome.storage.local quota, which would make saving fail. All data stays on the device.`
 | `tabs` | 開いているタブのドメインを調べてそのサイトのスナップショットを表示し、読み込み後にタブを再読み込みし、ツールバーのアイコンに適用中の名前を出すため |
-| ホスト権限（`optional_host_permissions`） | そのサイトの Cookie を読み書きするため。ユーザーが許可したサイトにだけ使う。サブドメインのグループ（v1.0.31 で追加）では、ユーザーが選んだドメインとそのサブドメイン（`*://example.com/*` と `*://*.example.com/*`）を求める。どちらも実行時の許可で、インストール時の権限は増えない |
+| ホスト権限（`optional_host_permissions`） | そのサイトの Cookie を読み書きするため。ユーザーが許可したサイトにだけ使う。サブドメインのグループ（v1.0.32 で追加）では、ユーザーが選んだドメインとそのサブドメイン（`*://example.com/*` と `*://*.example.com/*`）を求める。どちらも実行時の許可で、インストール時の権限は増えない |
 | コンテンツスクリプト（全サイト） | そのページの localStorage・sessionStorage・IndexedDB を読み書きするため |
 
 `scripting` と `activeTab` は使っていなかったので v1.0.20 で外した（外す方向の変更なので、ユーザーへの確認は出ない）。ダッシュボードにこの2つの理由の欄が残っていれば消す。

@@ -1,7 +1,7 @@
 import { getActiveSnapshots, getSettings, getGroups } from '../lib/storage.js';
 import { badgeText } from '../lib/badge.js';
 import { resolveScope, activeRef } from '../lib/groups.js';
-import { getCookiesForDomain } from '../lib/cookie-handler.js';
+import { getCookiesForDomain, cookiesWithin } from '../lib/cookie-handler.js';
 import { hasHostPermission } from '../lib/data-bridge.js';
 import { takeCookieCheck, learnVolatileCookies } from '../lib/volatile-cookies.js';
 
@@ -58,7 +58,11 @@ async function checkCookiesAfterLoad(tabId) {
   // every cookie had disappeared.
   // Checks stored before groups existed carry only the domain.
   if (!check || !await hasHostPermission({ origins: check.origins ?? [`*://${check.domain}/*`] })) return;
-  await learnVolatileCookies(check.domain, check.cookies, await getCookiesForDomain(check.cookieDomain ?? check.domain));
+  const domain = check.cookieDomain ?? check.domain;
+  const current = await getCookiesForDomain(domain);
+  // A group's permission also reaches the sibling hosts an exact scope leaves out.
+  const compared = check.cookieExact ? cookiesWithin(current, { domain, exact: true }) : current;
+  await learnVolatileCookies(check.domain, check.cookies, compared);
 }
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {

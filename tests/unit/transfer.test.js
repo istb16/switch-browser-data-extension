@@ -175,6 +175,16 @@ describe('lib/transfer mergeImport', () => {
     expect(result.orders['a.com']).toEqual(['A', 'B', 'C']);
   });
 
+  it('places added names after existing names missing from an incomplete saved order', () => {
+    const result = mergeImport(
+      { 'a.com': { A: snap(), B: snap(), D: snap() } },
+      { 'a.com': ['A', 'gone'] },
+      { 'a.com': { C: snap() } },
+      'overwrite',
+    );
+    expect(result.orders['a.com']).toEqual(['A', 'B', 'D', 'C']);
+  });
+
   it('does not modify its inputs', () => {
     const ex = existing();
     const or = orders();

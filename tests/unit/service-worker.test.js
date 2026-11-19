@@ -75,6 +75,19 @@ describe('background/service-worker', () => {
       expect(await getVolatileCookiesFor('example.com')).toEqual({});
     });
 
+    it('an exact cookie check on the base host does not mark sibling-host cookies volatile', async () => {
+      chrome._state.grantedOrigins.add('*://*.example.com/*');
+      await loadServiceWorker();
+      await startCookieCheck(1, 'example.com', [cookie('parent', '.example.com', 'applied')], {
+        origins: ORIGINS, cookieDomain: 'example.com', cookieExact: true,
+      });
+      chrome._state.cookies = [cookie('parent', '.example.com', 'rotated'), cookie('own', 'app.example.com', 'x')];
+
+      chrome.tabs.onUpdated.dispatch(1, { status: 'complete' }, { id: 1, url: 'https://example.com/' });
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(await getVolatileCookiesFor('example.com')).toEqual({ '.example.com|/|parent': 'value' });
+    });
+
     it('cookie check learns nothing when the stored origins are not granted', async () => {
       chrome._state.grantedOrigins.add('*://example.com/*');
       await loadServiceWorker();

@@ -1,6 +1,6 @@
 import { initI18n, t, applyI18n, setLanguage, getSavedLangSetting } from '../lib/i18n.js';
 import { getSnapshots, setSnapshots, getSettings, setSettings, getSnapshotOrders, setSnapshotOrders, getGroups } from '../lib/storage.js';
-import { deleteSnapshot, renameSnapshot, setSnapshotOrder, clearAllData } from '../lib/snapshot.js';
+import { deleteSnapshot, renameSnapshot, setSnapshotOrder, clearAllData, withSnapshotLock } from '../lib/snapshot.js';
 import { bindInlineRename } from '../lib/inline-rename.js';
 import { showConfirm, showFormDialog, showChoice } from '../lib/dialog.js';
 import { $, escHtml, showStatus } from '../lib/ui.js';
@@ -546,8 +546,7 @@ async function handleImport(e) {
       parsed = parseImport(await decryptEnvelope(parsed.envelope, passphrase), { decrypted: true });
     }
 
-    const [existing, orders] = await Promise.all([getSnapshots(), getSnapshotOrders()]);
-    const conflicts = findConflicts(existing, parsed.data);
+    const conflicts = findConflicts(await getSnapshots(), parsed.data);
     let strategy = 'skip';
     if (conflicts.length > 0) {
       const shown = conflicts.slice(0, CONFLICT_NAMES_SHOWN).map(c => `${c.domain} / ${c.name}`);
@@ -560,9 +559,14 @@ async function handleImport(e) {
       if (strategy === null) return;
     }
 
-    const merged = mergeImport(existing, orders, parsed.data, strategy);
-    await setSnapshots(merged.snapshots);
-    await setSnapshotOrders(merged.orders);
+    // Read again after the dialog: the popup may have saved, renamed or deleted
+    // snapshots while it was open, and merging into the earlier read would undo that.
+    const merged = await withSnapshotLock(async () => {
+      const [existing, orders] = await Promise.all([getSnapshots(), getSnapshotOrders()]);
+      const result = mergeImport(existing, orders, parsed.data, strategy);
+      await Promise.all([setSnapshots(result.snapshots), setSnapshotOrders(result.orders)]);
+      return result;
+    });
     await renderDomainList();
     showStatus($('statusMsg'), t('status_imported', merged.counts), 'success');
   } catch (err) {

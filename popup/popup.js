@@ -1,17 +1,17 @@
 import { initI18n, t, applyI18n, getLang } from '../lib/i18n.js';
 import {
-  getOrderedSnapshotNames, saveSnapshot, deleteSnapshot, renameSnapshot,
+  orderedNames, saveSnapshot, deleteSnapshot, renameSnapshot,
   loadSnapshot, getActiveSnapshot, setActiveSnapshot, saveBackup, getBackup, updateSnapshotDetails,
 } from '../lib/snapshot.js';
 import { summarize, byteSize, formatBytes, SNAPSHOT_COLORS, MEMO_MAX } from '../lib/snapshot-summary.js';
-import { getSettings, getSnapshots, getGroups } from '../lib/storage.js';
+import { getSettings, getSnapshots, getSnapshotOrders, getGroups } from '../lib/storage.js';
 import {
   collectData, applyData, clearData, canReachPage, requestHostPermission, hasHostPermission, cookieDomainFor,
 } from '../lib/data-bridge.js';
 import { cookiesWithin } from '../lib/cookie-handler.js';
 import { resolveScope, memberHosts, activeRef } from '../lib/groups.js';
 import { findChanges, describeChanges, withDigests, TYPE_LABELS } from '../lib/data-compare.js';
-import { getVolatileCookiesFor, startCookieCheck, ignoreCookieChange, hasPendingCookieCheck, cancelCookieCheck } from '../lib/volatile-cookies.js';
+import { getVolatileCookiesFor, startCookieCheck, ignoreCookieChange, hasPendingCookieCheck, cancelCookieChecksFor } from '../lib/volatile-cookies.js';
 import { showConfirm, showFormDialog } from '../lib/dialog.js';
 import { setupMenu } from '../lib/menu.js';
 import { bindInlineRename } from '../lib/inline-rename.js';
@@ -148,11 +148,12 @@ function comparable(entry, data) {
 }
 
 async function refresh() {
-  const [allSnapshots, active] = await Promise.all([getSnapshots(), getActiveSnapshot(scope.key)]);
+  const [allSnapshots, allOrders, active] = await Promise.all([
+    getSnapshots(), getSnapshotOrders(), getActiveSnapshot(scope.key),
+  ]);
   const hosts = memberHosts(Object.keys(allSnapshots), scope, groups);
-  const orders = await Promise.all(hosts.map(host => getOrderedSnapshotNames(host)));
   snapshots = Object.fromEntries(hosts.map(host => [host, allSnapshots[host]]));
-  entries = hosts.flatMap((host, i) => orders[i].map(name => ({ host, name })));
+  entries = hosts.flatMap(host => orderedNames(allSnapshots[host], allOrders[host]).map(name => ({ host, name })));
   const now = Date.now();
   // Counts follow what a load applies here; the size stays that of the stored snapshot.
   summaries = new Map(entries.map(entry => [entryId(entry), {
@@ -554,8 +555,10 @@ async function saveCurrentAs(name, details) {
 // `storeKey` is the host the applied data is stored under (see applyData).
 async function watchCookiesAfterApply(storeKey, data) {
   if (!settings.enabledTypes.cookies || !data.cookies) return;
-  const cookieDomain = cookieDomainFor(data, storeKey, scope);
-  await startCookieCheck(activeTab.id, scope.key, cookiesWithin(data.cookies, cookieDomain), { origins: scope.origins, cookieDomain });
+  const within = cookieDomainFor(data, storeKey, scope);
+  await startCookieCheck(activeTab.id, scope.key, cookiesWithin(data.cookies, within), {
+    origins: scope.origins, cookieDomain: within.domain, cookieExact: within.exact,
+  });
 }
 
 // The backup is a convenience: a full chrome.storage.local must not cost the
@@ -628,12 +631,12 @@ function handleClearSite() {
         const current = await collectData(activeTab.id, scope, types, { interactive: false });
         backedUp = await tryBackup(current);
       }
-      const blocked = await clearData(activeTab.id, scope, types);
+      // A check left from a recent load, in this tab or any other tab sharing
+      // the jar, would compare that snapshot's cookies with the emptied jar and
+      // mark them all as rewritten by the site.
+      const blocked = await clearData(activeTab.id, scope, types, { beforeCookies: cancelCookieChecksFor });
       await setActiveSnapshot(scope.key, null);
       changes = [];
-      // A check left from a recent load would compare that snapshot's cookies
-      // with the emptied jar and mark them all as rewritten by the site.
-      await cancelCookieCheck(activeTab.id);
       if (settings.autoReload) await chrome.tabs.reload(activeTab.id);
       let statusKey = backedUp ? 'status_site_cleared' : 'status_site_cleared_no_backup';
       if (blocked.length && !settings.autoReload) statusKey = 'status_site_cleared_reload_needed';

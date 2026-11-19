@@ -621,6 +621,58 @@ describe('popup/popup.js', () => {
       expect((await chrome.storage.local.get('cookieChecks')).cookieChecks).toEqual({});
     });
 
+    it('keeps the pending cookie checks when the cookies type is turned off', async () => {
+      const checks = { 1: { domain: 'example.com', cookies: [sid], until: Date.now() + 60_000 } };
+      await chrome.storage.local.set({ cookieChecks: checks });
+      await setSettings({ ...(await getSettings()), enabledTypes: { cookies: false, localStorage: true, sessionStorage: true, indexedDB: true } });
+      await loadPopup('https://example.com/');
+
+      $('clearSiteBtn').click();
+      await settle();
+      document.querySelector('.tk3-btn-confirm').click();
+      await settle();
+
+      expect($('statusMsg').className).toContain('success');
+      expect((await chrome.storage.local.get('cookieChecks')).cookieChecks).toEqual(checks);
+    });
+
+    it('keeps the pending cookie checks when the page can\'t be reached', async () => {
+      const checks = { 1: { domain: 'example.com', cookies: [sid], until: Date.now() + 60_000 } };
+      await chrome.storage.local.set({ cookieChecks: checks });
+      chrome.tabs.sendMessage = vi.fn(async () => {
+        throw new Error('Receiving end does not exist.');
+      });
+      await loadPopup('https://example.com/');
+
+      $('clearSiteBtn').click();
+      await settle();
+      document.querySelector('.tk3-btn-confirm').click();
+      await settle();
+
+      expect($('statusMsg').className).toContain('error');
+      expect((await chrome.storage.local.get('cookieChecks')).cookieChecks).toEqual(checks);
+    });
+
+    it('keeps the pending cookie checks when clearing the page\'s storage fails before the cookies', async () => {
+      const checks = { 1: { domain: 'example.com', cookies: [sid], until: Date.now() + 60_000 } };
+      await chrome.storage.local.set({ cookieChecks: checks });
+      chrome.tabs.sendMessage = vi.fn(async (_tabId, message) => {
+        if (message.type === 'clearStorageData') throw new Error('Receiving end does not exist.');
+        if (message.type === 'ping') return { ok: true };
+        return structuredClone(pageData);
+      });
+      await loadPopup('https://example.com/');
+
+      $('clearSiteBtn').click();
+      await settle();
+      document.querySelector('.tk3-btn-confirm').click();
+      await settle();
+
+      expect($('statusMsg').className).toContain('error');
+      expect(chrome._state.cookies).toEqual([sid]);
+      expect((await chrome.storage.local.get('cookieChecks')).cookieChecks).toEqual(checks);
+    });
+
     it('touches nothing, and keeps the existing backup, when the page can\'t be reached', async () => {
       await chrome.storage.local.set({ backups: { 'example.com': { savedAt: '2024-01-01T00:00:00.000Z', activeName: null, localStorage: { earlier: '1' } } } });
       chrome.tabs.sendMessage = vi.fn(async () => {
@@ -868,6 +920,55 @@ describe('popup/popup.js', () => {
 
       expect(row('pre').classList.contains('is-active')).toBe(true);
       expect(isHidden(row('pre').querySelector('.badge--modified'))).toBe(true);
+    });
+
+    it('popup load of a pre-group snapshot on the base host leaves sibling-host cookies in place', async () => {
+      chrome._state.cookies = [
+        cookie('parent', '.example.com', 'old'), cookie('sibling', 'www.example.com', 's'), cookie('own', 'app.example.com', 'o'),
+      ];
+      await setSnapshots({ 'example.com': { pre: snap('2024-01-01T00:00:00.000Z', { cookies: [cookie('parent', '.example.com', 'new')] }) } });
+      await loadPopup('https://example.com/');
+
+      row('pre').querySelector('.snapshot__main').click();
+      await settle();
+
+      expect(jar()).toEqual(['.example.com:parent=new', 'app.example.com:own=o', 'www.example.com:sibling=s']);
+      const { cookieChecks } = await chrome.storage.local.get('cookieChecks');
+      expect(cookieChecks[1]).toMatchObject({ cookieDomain: 'example.com', cookieExact: true, cookies: [cookie('parent', '.example.com', 'new')] });
+    });
+
+    it('popup on the base host shows no "changed" for a pre-group snapshot when only sibling-host cookies exist', async () => {
+      chrome._state.cookies = [
+        cookie('parent', '.example.com', '1'), cookie('sibling', 'www.example.com', 'x'), cookie('own', 'app.example.com', 'y'),
+      ];
+      await setSnapshots({ 'example.com': { pre: snap('2024-01-01T00:00:00.000Z', { cookies: [cookie('parent', '.example.com', '1')] }) } });
+      await setActiveSnapshots({ 'example.com': { host: 'example.com', name: 'pre' } });
+      await loadPopup('https://example.com/');
+
+      expect(row('pre').classList.contains('is-active')).toBe(true);
+      expect(isHidden(row('pre').querySelector('.badge--modified'))).toBe(true);
+    });
+
+    it('clear-site in a group cancels the pending cookie checks of every member tab', async () => {
+      const until = Date.now() + 60_000;
+      await chrome.storage.local.set({ cookieChecks: {
+        1: { domain: 'example.com', cookies: [], until },
+        2: { domain: 'example.com', cookies: [cookie('parent', '.example.com', 'p')], until },
+        3: { domain: 'other.com', cookies: [], until },
+      } });
+      const base = chrome.tabs.sendMessage;
+      chrome.tabs.sendMessage = vi.fn(async (tabId, message) => {
+        if (message.type === 'clearStorageData') return { success: true, blockedIndexedDB: [] };
+        return base(tabId, message);
+      });
+      await loadPopup('https://www.example.com/');
+
+      $('clearSiteBtn').click();
+      await settle();
+      document.querySelector('.tk3-btn-confirm').click();
+      await settle();
+
+      expect(Object.keys((await chrome.storage.local.get('cookieChecks')).cookieChecks)).toEqual(['3']);
     });
 
     it('popup outside a group lists a group-saved snapshot on its host and compares only the host\'s cookies', async () => {

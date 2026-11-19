@@ -83,6 +83,90 @@ describe('lib/cookie-handler', () => {
     expect(cookiesWithin(undefined, 'example.com')).toEqual([]);
   });
 
+  it('cookiesWithin drops a domain that is not a hostname, even when its suffix matches', () => {
+    const crafted = [
+      cookie('hash', 'evil.com#.example.com'),
+      cookie('query', 'evil.com?.example.com'),
+      cookie('slash', 'evil.com/.example.com'),
+      cookie('at', 'evil.com@.example.com'),
+      cookie('port', 'evil.com:80.example.com'),
+      cookie('space', 'evil.com .example.com'),
+      cookie('empty', ''),
+      cookie('dots', '..example.com'),
+    ];
+    expect(cookiesWithin(crafted, 'example.com')).toEqual([]);
+  });
+
+  it.each([
+    ['an underscore', 'a_b.example.com', 'example.com'],
+    ['a hyphen', 'my-app.example.com', 'example.com'],
+    ['a dot-domain', '.example.com', 'example.com'],
+    ['an IPv4 address', '127.0.0.1', '127.0.0.1'],
+    ['localhost', 'localhost', 'localhost'],
+    ['a punycode label', 'xn--bcher-kva.example.com', 'example.com'],
+    ['a bracketed IPv6 address', '[::1]', '[::1]'],
+    ['a full IPv6 address', '[2001:db8::1]', '[2001:db8::1]'],
+  ])('cookiesWithin keeps a domain with %s', (_label, domain, scope) => {
+    const kept = [cookie('a', domain)];
+    expect(cookiesWithin(kept, scope)).toEqual(kept);
+    expect(cookiesWithin(kept, { domain: domain.replace(/^\./, ''), exact: true })).toEqual(kept);
+  });
+
+  // Chrome reports cookie domains in lower case, so the scope is compared as is:
+  // an upper-case domain passes the hostname check but only matches its own case.
+  it('cookiesWithin compares the domain with the scope case-sensitively', () => {
+    const upper = [cookie('a', '.Example.com')];
+    expect(cookiesWithin(upper, 'example.com')).toEqual([]);
+    expect(cookiesWithin(upper, 'Example.com')).toEqual(upper);
+  });
+
+  it('cookiesWithin drops a domain the URL parser reads as another host', () => {
+    expect(cookiesWithin([cookie('hex', '0x7f.0.0.1')], '0x7f.0.0.1')).toEqual([]);
+    expect(cookiesWithin([cookie('short', '[0:0::1]')], '[0:0::1]')).toEqual([]);
+  });
+
+  it('cookiesWithin drops an IPv6 address with a dot prefix or without brackets', () => {
+    expect(cookiesWithin([cookie('dot', '.[::1]')], '[::1]')).toEqual([]);
+    expect(cookiesWithin([cookie('bare', '::1')], '::1')).toEqual([]);
+  });
+
+  it('setCookiesForDomain restores the saved cookies of an IPv6 host', async () => {
+    chrome._state.cookies = [cookie('sid', '[::1]', { value: 'current' })];
+    await setCookiesForDomain({ domain: '[::1]', exact: true }, [cookie('sid', '[::1]', { value: 'saved' })]);
+
+    expect(chrome._state.cookies).toEqual([expect.objectContaining({ name: 'sid', value: 'saved', domain: '[::1]', url: 'http://[::1]/' })]);
+  });
+
+  it('setCookiesForDomain never sets a crafted domain on another host', async () => {
+    const set = vi.spyOn(chrome.cookies, 'set');
+    await setCookiesForDomain('example.com', [cookie('evil', 'evil.com#.example.com'), cookie('ok', 'example.com')]);
+
+    expect(set.mock.calls.map(([d]) => d.name)).toEqual(['ok']);
+    expect(set.mock.calls.every(([d]) => new URL(d.url).hostname === 'example.com')).toBe(true);
+  });
+
+  it('cookiesWithin with exact keeps only the host and its dot-domain', () => {
+    const kept = [cookie('a', 'example.com'), cookie('b', '.example.com')];
+    const dropped = [cookie('c', 'app.example.com'), cookie('d', '.app.example.com')];
+    expect(cookiesWithin([...kept, ...dropped], { domain: 'example.com', exact: true })).toEqual(kept);
+    expect(cookiesWithin([...kept, ...dropped], { domain: 'example.com', exact: false })).toEqual([...kept, ...dropped]);
+  });
+
+  it('setCookiesForDomain with exact leaves sibling-host cookies in the jar and does not set them', async () => {
+    chrome._state.cookies = [
+      cookie('old', 'example.com'),
+      cookie('base', '.example.com'),
+      cookie('sibling', 'www.example.com'),
+      cookie('sid', 'app.example.com'),
+    ];
+    const set = vi.spyOn(chrome.cookies, 'set');
+    await setCookiesForDomain({ domain: 'example.com', exact: true }, [cookie('new', 'example.com'), cookie('app', 'app.example.com')]);
+
+    expect(set.mock.calls.map(([d]) => d.name)).toEqual(['new']);
+    expect(chrome._state.cookies.map(c => `${c.domain}:${c.name}`).sort())
+      .toEqual(['app.example.com:sid', 'example.com:new', 'www.example.com:sibling']);
+  });
+
   it('setCookiesForDomain restores a dot-domain cookie as a domain cookie', async () => {
     const set = vi.spyOn(chrome.cookies, 'set');
     await setCookiesForDomain('example.com', [cookie('dom', '.example.com'), cookie('host', 'example.com')]);

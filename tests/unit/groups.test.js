@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   normalizeGroupDomain, validateNewGroup, groupOrigins, resolveScope, memberHosts, activeRef,
   getScopeForHost, addGroup, removeGroup,
@@ -108,6 +108,22 @@ describe('lib/groups', () => {
     await setGroups(['example.com']);
     await setActiveSnapshots({ 'example.com': 'first' });
     await removeGroup('example.com');
+    expect(await getActiveSnapshots()).toEqual({ 'example.com': 'first' });
+  });
+
+  it('removeGroup rewrites the active snapshots under the snapshots lock', async () => {
+    const request = vi.fn((_name, task) => task());
+    const descriptor = Object.getOwnPropertyDescriptor(navigator, 'locks');
+    Object.defineProperty(navigator, 'locks', { value: { request }, configurable: true });
+    try {
+      await setGroups(['example.com']);
+      await setActiveSnapshots({ 'example.com': { host: 'example.com', name: 'first' } });
+      await removeGroup('example.com');
+    } finally {
+      if (descriptor) Object.defineProperty(navigator, 'locks', descriptor);
+      else delete navigator.locks;
+    }
+    expect(request).toHaveBeenCalledWith('snapshots', expect.any(Function));
     expect(await getActiveSnapshots()).toEqual({ 'example.com': 'first' });
   });
 });

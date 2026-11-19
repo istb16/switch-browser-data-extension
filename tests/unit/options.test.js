@@ -8,6 +8,17 @@ import { encryptText, ENVELOPE_TAG, MIN_ITERATIONS } from '../../lib/crypto.js';
 import { IMPORT_MAX_BYTES } from '../../lib/transfer.js';
 import { MESSAGES } from '../../lib/i18n.js';
 
+// The UI derives keys at the minimum accepted iteration count here: the default
+// count is slow enough to time out on a busy runner, and is covered once in
+// crypto.test.js.
+vi.mock('../../lib/crypto.js', async importOriginal => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    encryptText: (text, passphrase, iterations = actual.MIN_ITERATIONS) => actual.encryptText(text, passphrase, iterations),
+  };
+});
+
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../');
 const optionsHtml = readFileSync(path.join(repoRoot, 'options/options.html'), 'utf-8');
 const bodyHtml = optionsHtml.match(/<body>([\s\S]*)<\/body>/)[1];
@@ -139,6 +150,22 @@ describe('options/options.js', () => {
       expect(plain.querySelector('.snapshot-memo')).toBeNull();
     });
 
+    // A real reorder: drag `from` over the top half of `to`, then drop.
+    async function dragRow(list, from, to) {
+      const fire = (target, type, extra = {}) => {
+        const event = new Event(type, { bubbles: true, cancelable: true });
+        Object.defineProperty(event, 'dataTransfer', { value: { effectAllowed: '', setData() {} } });
+        for (const [key, value] of Object.entries(extra)) Object.defineProperty(event, key, { value });
+        target.dispatchEvent(event);
+      };
+      const row = name => list.querySelector(`.snapshot-row[data-name="${name}"]`);
+      fire(row(from), 'dragstart');
+      fire(row(to), 'dragover', { clientY: -1 });
+      fire(row(from), 'drop');
+      fire(row(from), 'dragend');
+      await flush();
+    }
+
     it('size sort orders domains and rows by size and disables drag', async () => {
       await setSnapshots({
         'a.com': { s: { savedAt: '2024-01-01T00:00:00.000Z' } },
@@ -147,7 +174,9 @@ describe('options/options.js', () => {
           zz: { savedAt: '2024-01-01T00:00:00.000Z', localStorage: { k: 'x'.repeat(500) } },
         },
       });
-      await setSnapshotOrders({ 'b.com': ['aa', 'zz'] });
+      // The saved order matches what size sort shows, so a drag that got through
+      // would show up as a change.
+      await setSnapshotOrders({ 'b.com': ['zz', 'aa'] });
       await loadOptions();
 
       expect(domainItems().map(i => i.querySelector('.domain-name').textContent)).toEqual(['a.com', 'b.com']);
@@ -164,8 +193,18 @@ describe('options/options.js', () => {
       expect(rows.map(r => r.dataset.name)).toEqual(['zz', 'aa']);
       expect(rows.every(r => !r.draggable && !r.querySelector('.drag-handle'))).toBe(true);
 
-      items[0].querySelector('.domain-snapshots').dispatchEvent(new Event('drop', { bubbles: true }));
+      const sizeList = items[0].querySelector('.domain-snapshots');
+      await dragRow(sizeList, 'aa', 'zz');
+      expect([...sizeList.querySelectorAll('.snapshot-row')].map(r => r.dataset.name)).toEqual(['zz', 'aa']);
+      expect((await getSnapshotOrders())['b.com']).toEqual(['zz', 'aa']);
+
+      select.value = 'name';
+      select.dispatchEvent(new Event('change'));
       await flush();
+
+      const nameList = domainItems().find(i => i.querySelector('.domain-name').textContent === 'b.com')
+        .querySelector('.domain-snapshots');
+      await dragRow(nameList, 'aa', 'zz');
       expect((await getSnapshotOrders())['b.com']).toEqual(['aa', 'zz']);
     });
   });
@@ -575,6 +614,7 @@ describe('options/options.js', () => {
       const envelope = JSON.parse(text);
       expect(Array.isArray(envelope)).toBe(true);
       expect(envelope[0]).toBe(ENVELOPE_TAG);
+      expect(envelope[1].iterations).toBe(MIN_ITERATIONS);
       expect(text).not.toContain('a.com');
       expect(status().textContent).toBe(MESSAGES.ja.status_exported);
 
@@ -585,7 +625,7 @@ describe('options/options.js', () => {
 
       expect(await getSnapshots()).toEqual({ 'a.com': { x: snapshot } });
       expect(status().className).toContain('success');
-    }, 15_000);
+    });
 
     it('an encrypted import with a wrong passphrase shows the error and changes nothing', async () => {
       const before = { 'a.com': { existing: { savedAt: SAVED } } };
@@ -598,6 +638,121 @@ describe('options/options.js', () => {
       await waitFor(() => status().textContent === MESSAGES.ja.error_wrong_passphrase);
 
       expect(status().className).toContain('error');
+      expect(await getSnapshots()).toEqual(before);
+    });
+
+    it('an export that fails shows the error and enables the button again', async () => {
+      await setSnapshots({ 'a.com': { x: { savedAt: SAVED } } });
+      await loadOptions();
+      const get = chrome.storage.local.get.bind(chrome.storage.local);
+      vi.spyOn(chrome.storage.local, 'get').mockImplementation(async keys => {
+        if (keys === 'snapshots') throw new Error('storage failure');
+        return get(keys);
+      });
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const button = document.getElementById('exportBtn');
+
+      button.click();
+      await waitFor(() => status().textContent === MESSAGES.ja.error_export_failed);
+
+      expect(status().className).toContain('error');
+      expect(button.disabled).toBe(false);
+      expect(downloads).toHaveLength(0);
+      consoleError.mockRestore();
+    });
+
+    it('an encrypted export whose encryption fails shows the error and enables the button again', async () => {
+      await setSettings({ encryptExports: true });
+      await setSnapshots({ 'a.com': { x: { savedAt: SAVED } } });
+      await loadOptions();
+      const deriveKey = vi.spyOn(crypto.subtle, 'deriveKey').mockRejectedValue(new Error('OperationError'));
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const button = document.getElementById('exportBtn');
+
+      button.click();
+      await submitDialog('correct horse', 'correct horse');
+      await waitFor(() => status().textContent === MESSAGES.ja.error_export_failed);
+
+      expect(button.disabled).toBe(false);
+      expect(downloads).toHaveLength(0);
+      deriveKey.mockRestore();
+      consoleError.mockRestore();
+    });
+
+    it('cancelling the new passphrase downloads nothing, shows nothing and enables the button again', async () => {
+      await setSettings({ encryptExports: true });
+      await setSnapshots({ 'a.com': { x: { savedAt: SAVED } } });
+      await loadOptions();
+      const button = document.getElementById('exportBtn');
+
+      button.click();
+      await waitFor(() => dialog());
+      expect(button.disabled).toBe(true);
+      dialog().querySelector('.tk3-btn-cancel').click();
+      await flush();
+
+      expect(dialog()).toBeNull();
+      expect(downloads).toHaveLength(0);
+      expect(status().textContent).toBe('');
+      expect(button.disabled).toBe(false);
+    });
+
+    it('cancelling the import passphrase changes nothing', async () => {
+      const before = { 'a.com': { existing: { savedAt: SAVED } } };
+      await setSnapshots(before);
+      await loadOptions();
+      const envelope = await encryptText(JSON.stringify({ 'b.com': { x: { savedAt: SAVED } } }), 'right-passphrase', MIN_ITERATIONS);
+
+      importFile({ size: 1000, text: () => Promise.resolve(JSON.stringify(envelope)) });
+      await waitFor(() => dialog());
+      dialog().querySelector('.tk3-btn-cancel').click();
+      await flush();
+      await flush();
+
+      expect(dialog()).toBeNull();
+      expect(await getSnapshots()).toEqual(before);
+      expect(status().textContent).toBe('');
+      expect(document.getElementById('importFile').value).toBe('');
+    });
+
+    it.each([
+      ['is not JSON', async () => encryptText('not json', 'passphrase', MIN_ITERATIONS)],
+      ['is itself an encrypted file', async () => encryptText(
+        JSON.stringify(await encryptText('{}', 'passphrase', MIN_ITERATIONS)), 'passphrase', MIN_ITERATIONS,
+      )],
+      ['has a malformed iv', async () => {
+        const envelope = await encryptText('{}', 'passphrase', MIN_ITERATIONS);
+        envelope[1].iv = 'AAAA';
+        return envelope;
+      }],
+    ])('refuses an encrypted file whose content %s and changes nothing', async (_, build) => {
+      const before = { 'a.com': { existing: { savedAt: SAVED } } };
+      await setSnapshots(before);
+      await loadOptions();
+      const envelope = await build();
+
+      importFile({ size: 1000, text: () => Promise.resolve(JSON.stringify(envelope)) });
+      await submitDialog('passphrase');
+      await waitFor(() => status().textContent === MESSAGES.ja.error_import_failed);
+
+      expect(status().className).toContain('error');
+      expect(await getSnapshots()).toEqual(before);
+    });
+
+    it('refuses a tampered ciphertext and changes nothing', async () => {
+      const before = { 'a.com': { existing: { savedAt: SAVED } } };
+      await setSnapshots(before);
+      await loadOptions();
+      const envelope = await encryptText(JSON.stringify({ 'b.com': { x: { savedAt: SAVED } } }), 'passphrase', MIN_ITERATIONS);
+      const { data } = envelope[1];
+      envelope[1].data = `${data[0] === 'A' ? 'B' : 'A'}${data.slice(1)}`;
+
+      importFile({ size: 1000, text: () => Promise.resolve(JSON.stringify(envelope)) });
+      await submitDialog('passphrase');
+      await waitFor(() => status().className.includes('error'));
+
+      // AES-GCM cannot tell tampering from a wrong passphrase.
+      expect(status().textContent).toBe(MESSAGES.ja.error_wrong_passphrase);
       expect(await getSnapshots()).toEqual(before);
     });
 
@@ -636,6 +791,24 @@ describe('options/options.js', () => {
         await importWithConflict(2);
         expect(await getSnapshots()).toEqual({ 'a.com': { x: old, 'x (2)': fresh, y: extra } });
         expect((await getSnapshotOrders())['a.com']).toEqual(['x', 'x (2)', 'y']);
+      });
+
+      it('keeps changes another page made while the conflict dialog was open', async () => {
+        await setSnapshots({ 'a.com': { x: old } });
+        await setSnapshotOrders({ 'a.com': ['x'] });
+        await loadOptions();
+        importFile({ size: 100, text: () => Promise.resolve(JSON.stringify({ 'a.com': { x: fresh, y: extra } })) });
+        await waitFor(() => dialog());
+
+        // The popup saves a snapshot meanwhile.
+        await setSnapshots({ 'a.com': { x: old, popup: old }, 'p.com': { p: old } });
+        await setSnapshotOrders({ 'a.com': ['x', 'popup'], 'p.com': ['p'] });
+
+        dialog().querySelectorAll('button')[1].click();
+        await waitFor(() => status().textContent.startsWith('インポートしました'));
+
+        expect(await getSnapshots()).toEqual({ 'a.com': { x: old, popup: old, y: extra }, 'p.com': { p: old } });
+        expect(await getSnapshotOrders()).toEqual({ 'a.com': ['x', 'popup', 'y'], 'p.com': ['p'] });
       });
 
       it('cancel changes nothing', async () => {
@@ -748,6 +921,36 @@ describe('options/options.js', () => {
       expect(groupNames()).toEqual(['example.com']);
       expect(document.getElementById('groupInput').value).toBe('');
       expect(status().textContent).toBe(MESSAGES.ja.status_group_added.replace('{group}', 'example.com'));
+    });
+
+    it('still adds the group when the permission prompt is denied, and says so', async () => {
+      await loadOptions();
+      const request = vi.spyOn(chrome.permissions, 'request').mockResolvedValue(false);
+
+      await submitGroup('example.com');
+      await answer(true);
+
+      expect(request).toHaveBeenCalledWith({ origins: ['*://example.com/*', '*://*.example.com/*'] });
+      expect((await chrome.storage.local.get('groups')).groups).toEqual(['example.com']);
+      expect([...chrome._state.grantedOrigins]).toEqual([]);
+      expect(groupNames()).toEqual(['example.com']);
+      expect(status().className).toContain('success');
+      expect(status().textContent).toBe(MESSAGES.ja.status_group_added_no_permission.replace('{group}', 'example.com'));
+    });
+
+    it('adds nothing and shows an error when the permission request fails', async () => {
+      await loadOptions();
+      vi.spyOn(chrome.permissions, 'request').mockRejectedValue(new Error('This function must be called during a user gesture'));
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      await submitGroup('example.com');
+      await answer(true);
+
+      expect((await chrome.storage.local.get('groups')).groups ?? []).toEqual([]);
+      expect(groupNames()).toEqual([]);
+      expect(status().className).toContain('error');
+      expect(status().textContent).toBe(MESSAGES.ja.error_group_failed);
+      consoleError.mockRestore();
     });
 
     it('does not request permission when cookies are turned off', async () => {

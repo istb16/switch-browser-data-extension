@@ -72,6 +72,67 @@ test('a snapshot saved on app.example.test restores the .example.test cookie on 
   expect(cookies.filter(c => c.name === 'gsid').map(c => [c.domain, c.value])).toEqual([['.example.test', 'alice']]);
 });
 
+// Every cookie of the group, as "domain:name=value", read from an extension page.
+function groupJar(extensionPage) {
+  return extensionPage.evaluate(async () => (await chrome.cookies.getAll({ domain: 'example.test' }))
+    .map(c => `${c.domain}:${c.name}=${c.value}`)
+    .sort());
+}
+
+function setCookies(extensionPage, cookies) {
+  return extensionPage.evaluate(list => Promise.all(list.map(c => chrome.cookies.set(c))), cookies);
+}
+
+test('loading a group snapshot leaves one gsid when a host-only and a domain gsid both exist', async ({ context, extensionId }) => {
+  await addGroupFromOptions(context, extensionId, 'example.test');
+
+  const app = await context.newPage();
+  await app.goto(`${APP}/group/login?user=alice`);
+  await expect(app.locator('h1')).toHaveText('group user: alice');
+  const popup = await openPopupFor(context, extensionId, app);
+  await saveAs(popup, 'alice');
+
+  // A stale host-only cookie of the same name, a newer domain cookie, and a sibling host's cookie.
+  await setCookies(popup, [
+    { url: `${APP}/`, name: 'gsid', value: 'stale-host', path: '/' },
+    { url: `${APP}/`, name: 'gsid', value: 'bob', domain: 'example.test', path: '/' },
+    { url: `${WWW}/`, name: 'wonly', value: 'w', path: '/' },
+  ]);
+  expect(await groupJar(popup)).toEqual([
+    '.example.test:gsid=bob', 'app.example.test:gsid=stale-host', 'www.example.test:wonly=w',
+  ]);
+
+  // The save already left a success status, so poll the jar rather than the message.
+  await row(popup, 'alice').locator('.snapshot__main').click();
+  await expect.poll(() => groupJar(popup)).toEqual(['.example.test:gsid=alice']);
+  await expect(app.locator('h1')).toHaveText('group user: alice');
+});
+
+test('clearing a group site removes every cookie of the group, and undo brings them back', async ({ context, extensionId }) => {
+  await addGroupFromOptions(context, extensionId, 'example.test');
+
+  const www = await context.newPage();
+  await www.goto(`${WWW}/group/login?user=alice`);
+  await expect(www.locator('h1')).toHaveText('group user: alice');
+  const popup = await openPopupFor(context, extensionId, www);
+  await setCookies(popup, [
+    { url: `${APP}/`, name: 'aonly', value: 'a', path: '/' },
+    { url: `${WWW}/`, name: 'wonly', value: 'w', path: '/' },
+  ]);
+  const before = ['.example.test:gsid=alice', 'app.example.test:aonly=a', 'www.example.test:wonly=w'];
+  expect(await groupJar(popup)).toEqual(before);
+
+  await popup.locator('#clearSiteBtn').click();
+  await popup.locator('.tk3-btn-confirm').click();
+  await expect(popup.locator('#statusMsg')).toHaveClass(/success/);
+  await expect(www.locator('h1')).toHaveText('group user: (none)');
+  expect(await groupJar(popup)).toEqual([]);
+
+  await popup.locator('#undoBtn').click();
+  await expect(www.locator('h1')).toHaveText('group user: alice');
+  await expect.poll(() => groupJar(popup)).toEqual(before);
+});
+
 test('localStorage saved on app is not written to www', async ({ context, extensionId }) => {
   await addGroupFromOptions(context, extensionId, 'example.test');
 

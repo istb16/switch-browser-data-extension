@@ -188,11 +188,95 @@ describe('lib/data-bridge in a subdomain group', () => {
   });
 
   it('cookieDomainFor narrows to the captured scope, never wider than the current one', () => {
-    expect(cookieDomainFor({}, 'app.example.com', APP)).toBe('app.example.com');
-    expect(cookieDomainFor({ cookieDomain: 'example.com' }, 'app.example.com', APP)).toBe('example.com');
-    expect(cookieDomainFor({ cookieDomain: 'example.com' }, 'app.example.com', APP_ALONE)).toBe('app.example.com');
-    expect(cookieDomainFor({ cookieDomain: 'evil.com' }, 'app.example.com', APP)).toBe('example.com');
-    expect(cookieDomainFor({}, 'evil.com', APP)).toBe('example.com');
+    const exact = domain => ({ domain, exact: true });
+    const wide = domain => ({ domain, exact: false });
+    const BASE_ALONE = resolveScope('example.com', []);
+
+    expect(cookieDomainFor({}, 'app.example.com', APP)).toEqual(exact('app.example.com'));
+    expect(cookieDomainFor({ cookieDomain: 'example.com' }, 'app.example.com', APP)).toEqual(wide('example.com'));
+    expect(cookieDomainFor({ cookieDomain: 'example.com' }, 'app.example.com', APP_ALONE)).toEqual(exact('app.example.com'));
+    // A pre-group snapshot on the base host holds only the base host's cookies.
+    expect(cookieDomainFor({}, 'example.com', BASE)).toEqual(exact('example.com'));
+    // After the group is removed, a group snapshot on the base host is narrowed to that host.
+    expect(cookieDomainFor({ cookieDomain: 'example.com' }, 'example.com', BASE_ALONE)).toEqual(exact('example.com'));
+    // A foreign cookieDomain falls back to the host it was stored under, not the whole group.
+    expect(cookieDomainFor({ cookieDomain: 'evil.com' }, 'app.example.com', APP)).toEqual(exact('app.example.com'));
+    expect(cookieDomainFor({ cookieDomain: 5 }, 'app.example.com', APP)).toEqual(exact('app.example.com'));
+    expect(cookieDomainFor({}, 'evil.com', APP)).toEqual(exact('app.example.com'));
+    // A cookieDomain wider than the group is cut down to the group.
+    expect(cookieDomainFor({ cookieDomain: 'com' }, 'app.example.com', APP)).toEqual(wide('example.com'));
+    // A cookieDomain narrower than the group is kept as it is, subdomains included.
+    expect(cookieDomainFor({ cookieDomain: 'www.example.com' }, 'app.example.com', APP)).toEqual(wide('www.example.com'));
+    // An exact capture under another host of the group stays on that host.
+    expect(cookieDomainFor({}, 'www.example.com', APP)).toEqual(exact('www.example.com'));
+  });
+
+  it('cookieDomainFor outside a group never leaves the current host', () => {
+    const exact = domain => ({ domain, exact: true });
+
+    expect(cookieDomainFor({ cookieDomain: 'www.example.com' }, 'app.example.com', APP_ALONE)).toEqual(exact('app.example.com'));
+    expect(cookieDomainFor({ cookieDomain: 'app.example.com' }, 'app.example.com', APP_ALONE)).toEqual(exact('app.example.com'));
+    expect(cookieDomainFor({}, 'www.example.com', APP_ALONE)).toEqual(exact('app.example.com'));
+  });
+
+  it('clearData hands the cookie scope to beforeCookies only when it is about to remove cookies', async () => {
+    const beforeCookies = vi.fn();
+    chrome._state.grantedOrigins.add('*://*.example.com/*');
+    await clearData(1, APP, COOKIES_ONLY, { beforeCookies });
+    expect(beforeCookies).toHaveBeenCalledWith({ domain: 'example.com', exact: false });
+
+    beforeCookies.mockClear();
+    await clearData(1, APP, { ...COOKIES_ONLY, cookies: false }, { beforeCookies });
+    expect(beforeCookies).not.toHaveBeenCalled();
+  });
+
+  it('clearData does not call beforeCookies when the host permission is denied', async () => {
+    vi.spyOn(chrome.permissions, 'request').mockResolvedValue(false);
+    const before = jar();
+    const beforeCookies = vi.fn();
+    await clearData(1, APP, COOKIES_ONLY, { beforeCookies });
+    expect(beforeCookies).not.toHaveBeenCalled();
+    expect(jar()).toEqual(before);
+  });
+
+  it('clearData calls beforeCookies before the jar is emptied', async () => {
+    chrome._state.grantedOrigins.add('*://*.example.com/*');
+    const before = jar();
+    let seen;
+    await clearData(1, APP, COOKIES_ONLY, { beforeCookies: () => { seen = jar(); } });
+    expect(seen).toEqual(before);
+    expect(jar()).toEqual(['notexample.com:other=1']);
+  });
+
+  it('clearData leaves the cookies alone when beforeCookies rejects', async () => {
+    chrome._state.grantedOrigins.add('*://*.example.com/*');
+    const before = jar();
+    const beforeCookies = vi.fn().mockRejectedValue(new Error('storage failed'));
+    await expect(clearData(1, APP, COOKIES_ONLY, { beforeCookies })).rejects.toThrow('storage failed');
+    expect(jar()).toEqual(before);
+  });
+
+  it('group applyData of a pre-group base-host snapshot leaves sibling-host cookies in place', async () => {
+    await applyData(1, BASE, { cookies: [cookie('parent', '.example.com', 'new')] }, COOKIES_ONLY, 'example.com');
+    expect(jar()).toEqual([
+      '.example.com:parent=new', 'app.example.com:own=1', 'notexample.com:other=1', 'www.example.com:sibling=1',
+    ]);
+  });
+
+  it('host applyData of a group snapshot on the base host, after the group is gone, sets only the base host\'s cookies', async () => {
+    const set = vi.spyOn(chrome.cookies, 'set');
+    await applyData(1, resolveScope('example.com', []), {
+      cookieDomain: 'example.com',
+      cookies: [cookie('parent', '.example.com', 'new'), cookie('own', 'app.example.com', 'new')],
+    }, COOKIES_ONLY, 'example.com');
+    expect(set.mock.calls.map(([details]) => details.name)).toEqual(['parent']);
+    expect(jar()).toContain('app.example.com:own=1');
+  });
+
+  it('host clearData leaves sibling-host cookies alone', async () => {
+    chrome.tabs.sendMessage = vi.fn().mockResolvedValue({ success: true });
+    await clearData(1, resolveScope('example.com', []), ALL);
+    expect(jar()).toEqual(['app.example.com:own=1', 'notexample.com:other=1', 'www.example.com:sibling=1']);
   });
 
   it('group applyData of a group snapshot replaces the whole jar', async () => {

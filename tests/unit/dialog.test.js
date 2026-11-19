@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { showConfirm, showFormDialog, showChoice } from '../../lib/dialog.js';
+import { t } from '../../lib/i18n.js';
 
 const dialog = () => document.querySelector('dialog.tk3-dialog');
 
@@ -99,6 +100,78 @@ describe('lib/dialog showFormDialog', () => {
     const escaped = showFormDialog({ title: 't', content: document.createElement('input') });
     dialog().close();
     expect(await escaped).toBe(false);
+  });
+
+  it('shows the message an async validate resolves, then closes once it resolves null', async () => {
+    let message = 'not yet';
+    const promise = showFormDialog({
+      title: 't',
+      content: document.createElement('input'),
+      validate: async () => { await flush(); return message; },
+    });
+    const confirm = dialog().querySelector('.tk3-btn-confirm');
+
+    confirm.click();
+    await flush();
+    await flush();
+    expect(dialog().open).toBe(true);
+    expect(dialog().querySelector('.tk3-dialog-error').textContent).toBe('not yet');
+    expect(confirm.disabled).toBe(false);
+
+    message = null;
+    confirm.click();
+    expect(await promise).toBe(true);
+  });
+
+  it('a validate that throws or rejects shows an error, stays open and can be retried', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    let attempt = 0;
+    const promise = showFormDialog({
+      title: 't',
+      content: document.createElement('input'),
+      validate: () => {
+        attempt++;
+        if (attempt === 1) throw new Error('sync failure');
+        if (attempt === 2) return Promise.reject(new Error('async failure'));
+        return null;
+      },
+    });
+    const d = dialog();
+    const confirm = d.querySelector('.tk3-btn-confirm');
+    const errorEl = d.querySelector('.tk3-dialog-error');
+
+    for (let i = 0; i < 2; i++) {
+      confirm.click();
+      await flush();
+      await flush();
+      expect(d.open).toBe(true);
+      expect(errorEl.hidden).toBe(false);
+      expect(errorEl.textContent).toBe(t('error_dialog_check_failed'));
+      expect(confirm.disabled).toBe(false);
+    }
+
+    confirm.click();
+    expect(await promise).toBe(true);
+    expect(attempt).toBe(3);
+    expect(consoleError).toHaveBeenCalledTimes(2);
+    consoleError.mockRestore();
+  });
+
+  it('ignores a second submit while validation is pending', async () => {
+    let finish;
+    const validate = vi.fn(() => new Promise(resolve => { finish = resolve; }));
+    const promise = showFormDialog({ title: 't', content: document.createElement('input'), validate });
+    const confirm = dialog().querySelector('.tk3-btn-confirm');
+
+    confirm.click();
+    await flush();
+    expect(confirm.disabled).toBe(true);
+    dialog().querySelector('form').requestSubmit();
+    await flush();
+    expect(validate).toHaveBeenCalledTimes(1);
+
+    finish(null);
+    expect(await promise).toBe(true);
   });
 });
 

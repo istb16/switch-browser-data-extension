@@ -1,7 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   getSnapshotsForDomain,
   getOrderedSnapshotNames,
+  orderedNames,
+  withSnapshotLock,
   saveSnapshot,
   deleteSnapshot,
   renameSnapshot,
@@ -35,6 +37,80 @@ describe('lib/snapshot', () => {
     expect(orders['example.com']).toEqual(['first']);
     const snapshots = await getSnapshotsForDomain('example.com');
     expect(snapshots.first.cookies).toEqual([{ name: 'a' }]);
+  });
+
+  it('orderedNames drops stale names and appends the unordered ones sorted', () => {
+    expect(orderedNames({ a: {}, b: {}, c: {} }, ['c', 'gone'])).toEqual(['c', 'a', 'b']);
+    expect(orderedNames(undefined, ['x'])).toEqual([]);
+    expect(orderedNames({ b: {}, a: {} }, undefined)).toEqual(['a', 'b']);
+  });
+
+  describe('with Web Locks', () => {
+    let restore;
+
+    beforeEach(() => {
+      // A minimal exclusive lock: each request waits for the previous one.
+      let tail = Promise.resolve();
+      const locks = {
+        request: vi.fn((name, task) => {
+          const run = tail.then(() => task());
+          tail = run.catch(() => {});
+          return run;
+        }),
+      };
+      const descriptor = Object.getOwnPropertyDescriptor(navigator, 'locks');
+      Object.defineProperty(navigator, 'locks', { value: locks, configurable: true });
+      restore = () => {
+        if (descriptor) Object.defineProperty(navigator, 'locks', descriptor);
+        else delete navigator.locks;
+      };
+    });
+
+    afterEach(() => restore());
+
+    it('concurrent writes from two pages all persist', async () => {
+      await Promise.all([
+        saveSnapshot('example.com', 'a', {}),
+        saveSnapshot('example.com', 'b', {}),
+        withSnapshotLock(async () => {
+          const snapshots = await getSnapshots();
+          snapshots['other.com'] = { c: { savedAt: '2024-01-01T00:00:00.000Z' } };
+          await setSnapshots(snapshots);
+        }),
+        renameSnapshot('example.com', 'a', 'renamed'),
+      ]);
+
+      expect(Object.keys((await getSnapshots())['example.com']).sort()).toEqual(['b', 'renamed']);
+      expect((await getSnapshots())['other.com']).toHaveProperty('c');
+      expect((await getSnapshotOrders())['example.com']).toEqual(['renamed', 'b']);
+      expect(navigator.locks.request).toHaveBeenCalledTimes(4);
+      expect(navigator.locks.request.mock.calls.every(([name]) => name === 'snapshots')).toBe(true);
+    });
+
+    it('setting the active snapshot and renaming at once both persist', async () => {
+      const { setActiveSnapshot } = await import('../../lib/snapshot.js');
+      const { setActiveSnapshots, getActiveSnapshots } = await import('../../lib/storage.js');
+      await saveSnapshot('example.com', 'a', {});
+      await setActiveSnapshots({ 'example.com': 'a' });
+
+      await Promise.all([
+        renameSnapshot('example.com', 'a', 'renamed'),
+        setActiveSnapshot('other.com', 'x'),
+      ]);
+
+      expect(await getActiveSnapshots()).toEqual({ 'example.com': 'renamed', 'other.com': 'x' });
+    });
+
+    it('a backup saved while all data is cleared does not bring the old backups back', async () => {
+      const { saveBackup, clearAllData } = await import('../../lib/snapshot.js');
+      const { getBackups } = await import('../../lib/storage.js');
+      await saveBackup('old.com', {}, null);
+
+      // saveBackup starts first: without the lock it reads old.com before the clear and writes it back after.
+      await Promise.all([saveBackup('a.com', {}, null), clearAllData()]);
+
+      expect(Object.keys(await getBackups())).toEqual([]);
+    });
   });
 
   it('getOrderedSnapshotNames follows the stored order, then appends unordered names alphabetically', async () => {
