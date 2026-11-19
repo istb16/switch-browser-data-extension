@@ -1,12 +1,13 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
-  getSnapshots, setSnapshots, getSettings, setSettings, getSnapshotOrders, setSnapshotOrders,
-  getActiveSnapshots, setActiveSnapshots, getBackups, setBackups, getGroups, setGroups,
+  getSnapshots, getSettings, setSettings, getSnapshotOrders, setSnapshotOrders,
+  getActiveSnapshots, setActiveSnapshots, getGroups, setGroups,
   getVolatileCookies, setVolatileCookies, getCookieChecks, setCookieChecks,
   readKeys, updateKey, withDefaultSettings,
   getSnapshotHosts, getSnapshotsFor, setSnapshotsFor, getBackupHosts, getBackup, setBackup,
   setSnapshotsAndOrders,
 } from '../../lib/storage.js';
+import { setSnapshots, getBackups, setBackups } from '../support/storage-seed.js';
 
 describe('lib/storage', () => {
   it('returns an empty object when no snapshots are stored', async () => {
@@ -123,6 +124,11 @@ describe('lib/storage', () => {
     expect(await readKeys('groups')).toEqual({ groups: [] });
   });
 
+  it('readKeys returns a key outside its table as stored', async () => {
+    await chrome.storage.local.set({ language: 'en' });
+    expect(await readKeys(['groups', 'language', 'missing'])).toEqual({ groups: [], language: 'en', missing: undefined });
+  });
+
   it('updateKey writes what the updater returns', async () => {
     await setActiveSnapshots({ 'a.com': 'x' });
     const update = vi.fn(active => ({ ...active, 'b.com': 'y' }));
@@ -208,15 +214,6 @@ describe('lib/storage', () => {
 
       expect(get).toHaveBeenCalledWith(['snapshots/a.com', 'snapshots/gone.com']);
       expect(await getSnapshots()).toEqual({ 'a.com': { x: snap }, 'b.com': { y: snap } });
-    });
-
-    it('setSnapshots replaces the whole store through the index', async () => {
-      await setSnapshots({ 'a.com': { x: snap }, 'b.com': { y: snap } });
-      await setSnapshots({ 'b.com': { z: snap }, 'c.com': {} });
-
-      expect(await getSnapshots()).toEqual({ 'b.com': { z: snap } });
-      expect(await getSnapshotHosts()).toEqual(['b.com']);
-      expect(chrome._state.storage).not.toHaveProperty('snapshots/a.com');
     });
 
     it('backups live under one key per host', async () => {

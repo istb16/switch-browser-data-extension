@@ -3,9 +3,9 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import {
-  setSnapshots, getSnapshots, setSettings, getSettings, setActiveSnapshots, getActiveSnapshots, getBackups, setBackups,
-  setGroups,
+  getSnapshots, setSettings, getSettings, setActiveSnapshots, getActiveSnapshots, setGroups,
 } from '../../lib/storage.js';
+import { setSnapshots, getBackups, setBackups } from '../support/storage-seed.js';
 import { byteSize, formatBytes } from '../../lib/snapshot-summary.js';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../');

@@ -3,9 +3,9 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import {
-  setSnapshots, setSnapshotOrders, getSnapshots, getSnapshotOrders, setSettings, getSettings, getBackups, setBackups,
-  setSnapshotsFor, setBackup, getSnapshotHosts,
+  setSnapshotOrders, getSnapshots, getSnapshotOrders, setSettings, getSettings, setSnapshotsFor, setBackup, getSnapshotHosts,
 } from '../../lib/storage.js';
+import { setSnapshots, getBackups, setBackups } from '../support/storage-seed.js';
 import { byteSize, formatBytes } from '../../lib/snapshot-summary.js';
 import { encryptText, ENVELOPE_TAG, MIN_ITERATIONS } from '../../lib/crypto.js';
 import { IMPORT_MAX_BYTES } from '../../lib/transfer.js';
@@ -1212,6 +1212,23 @@ describe('options/options.js', () => {
 
       expect(domainNames()).toContain('b.com');
       expect(rowNames(domainItems().find(item => item.querySelector('.domain-name').textContent === 'b.com'))).toEqual(['y']);
+    });
+
+    it('after its own delete, the next render reads no snapshot key and shows the change', async () => {
+      await setSnapshots({ 'a.com': { first: { savedAt: SAVED }, second: { savedAt: SAVED } } });
+      await loadOptions();
+      domainItems()[0].querySelector('.domain-header').click();
+      domainItems()[0].querySelector('.snapshot-row[data-name="first"] .btn-icon').click();
+      await flush();
+      document.querySelector('.tk3-btn-confirm').click();
+      await flush();
+      chrome._deliverStorageEvents();
+      const get = vi.spyOn(chrome.storage.local, 'get');
+
+      await setSort('size');
+
+      expect(snapshotReads(get)).toEqual([]);
+      expect(rowNames(domainItems()[0])).toEqual(['second']);
     });
 
     it('a change that lands during the first load is not lost', async () => {

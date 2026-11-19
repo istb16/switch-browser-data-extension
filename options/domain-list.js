@@ -11,12 +11,29 @@ import { renderMeter } from './meter.js';
 import { buildExportButton, handleExport } from './transfer-ui.js';
 
 let stale = true;
+let loading = false;
 let loaded = null;
+let cache = null;
 
+// Each change carries the new value of a host's key, so the cache takes it as is
+// instead of reading the whole store again; the page's own writes arrive here
+// too. A change during the first read may be older or newer than that read, so
+// it only marks the state for one more read.
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local') return;
-  if (Object.keys(changes).some(key => key.startsWith(SNAPSHOT_PREFIX) || key === 'snapshotHosts' || key === 'snapshotOrder')) {
-    stale = true;
+  for (const [key, { newValue }] of Object.entries(changes)) {
+    if (!key.startsWith(SNAPSHOT_PREFIX) && key !== 'snapshotOrder') continue;
+    if (loading || !cache) {
+      stale = true;
+      continue;
+    }
+    if (key === 'snapshotOrder') {
+      cache.orders = newValue ?? {};
+      continue;
+    }
+    const host = key.slice(SNAPSHOT_PREFIX.length);
+    if (newValue && Object.keys(newValue).length) cache.snapshots[host] = newValue;
+    else delete cache.snapshots[host];
   }
 });
 
@@ -29,11 +46,18 @@ export function markStale() {
 export function getState() {
   if (stale) {
     stale = false;
+    loading = true;
     loaded = Promise.all([getSnapshots(), getSnapshotOrders()])
-      .then(([snapshots, orders]) => ({ snapshots, orders }))
+      .then(([snapshots, orders]) => {
+        cache = { snapshots, orders };
+        return cache;
+      })
       .catch(err => {
         stale = true;
         throw err;
+      })
+      .finally(() => {
+        loading = false;
       });
   }
   return loaded;

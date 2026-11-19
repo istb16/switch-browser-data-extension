@@ -13,9 +13,10 @@ import {
   clearAllData,
 } from '../../lib/snapshot.js';
 import {
-  getSnapshots, getSnapshotOrders, setSnapshots, setSnapshotOrders, getSettings, setSettings, getGroups, setGroups,
-  getBackups, getSnapshotHosts, getBackupHosts,
+  getSnapshots, getSnapshotOrders, setSnapshotOrders, getSettings, setSettings, getGroups, setGroups,
+  getSnapshotHosts, getBackupHosts,
 } from '../../lib/storage.js';
+import { setSnapshots, getBackups } from '../support/storage-seed.js';
 import { byteSize } from '../../lib/snapshot-summary.js';
 import { removeGroup } from '../../lib/groups.js';
 
@@ -109,7 +110,7 @@ describe('lib/snapshot', () => {
 
     it('a backup saved while all data is cleared does not bring the old backups back', async () => {
       const { saveBackup, clearAllData } = await import('../../lib/snapshot.js');
-      const { getBackups } = await import('../../lib/storage.js');
+      const { getBackups } = await import('../support/storage-seed.js');
       await saveBackup('old.com', {}, null);
 
       // saveBackup starts first: without the lock it reads old.com before the clear and writes it back after.
@@ -477,10 +478,12 @@ describe('lib/snapshot — migrateStorage', () => {
     expect(remove).not.toHaveBeenCalled();
   });
 
-  it('keeps an existing per-host key over the legacy copy', async () => {
+  it('keeps an existing per-host key over the legacy copy, and adds the names only the legacy copy has', async () => {
     await saveSnapshot('a.com', 'newer', {});
+    await saveSnapshot('a.com', 'x', { localStorage: { k: 'per-host' } });
     await saveBackup('a.com', { localStorage: { newer: '1' } }, null);
     const kept = structuredClone({ s: chrome._state.storage['snapshots/a.com'], b: chrome._state.storage['backups/a.com'] });
+    // A downgraded version writes the old key again, here with 'y' saved there.
     await chrome.storage.local.set({
       snapshots: legacy().snapshots,
       backups: { ...legacy().backups, 'b.com': { savedAt: SAVED, activeName: null } },
@@ -488,7 +491,12 @@ describe('lib/snapshot — migrateStorage', () => {
 
     await migrateStorage();
 
-    expect((await getSnapshots())['a.com']).toEqual(kept.s);
+    const a = (await getSnapshots())['a.com'];
+    expect(a.newer).toEqual(kept.s.newer);
+    expect(a.x).toEqual(kept.s.x);
+    expect(a.y).toMatchObject({ savedAt: SAVED });
+    expect(Number.isFinite(a.y.bytes)).toBe(true);
+    expect(Object.keys(a).sort()).toEqual(['newer', 'x', 'y']);
     expect(Object.keys((await getSnapshots())['b.com'])).toEqual(['z']);
     expect((await getBackups())['a.com']).toEqual(kept.b);
     expect((await getBackups())['b.com']).toEqual({ savedAt: SAVED, activeName: null });

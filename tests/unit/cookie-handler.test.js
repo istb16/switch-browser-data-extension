@@ -36,6 +36,26 @@ describe('lib/cookie-handler', () => {
     expect(names).toEqual(['fresh']);
   });
 
+  it('setCookiesForDomain removes a host-only and a dot-domain cookie of the same name, even when remove() looks up before it deletes', async () => {
+    chrome._state.cookies.push(
+      { name: 'sid', value: 'host', domain: 'example.com', path: '/', secure: false, httpOnly: false },
+      { name: 'sid', value: 'dot', domain: '.example.com', path: '/', secure: false, httpOnly: false },
+    );
+    // Chrome finds the cookie and deletes it in separate steps; two calls in
+    // flight at once can both find the same one.
+    chrome.cookies.remove = vi.fn(async ({ url, name }) => {
+      const host = new URL(url).hostname;
+      const found = chrome._state.cookies.find(c => c.name === name && c.domain.replace(/^\./, '') === host);
+      await new Promise(resolve => setTimeout(resolve, 0));
+      chrome._state.cookies = chrome._state.cookies.filter(c => c !== found);
+      return found ? { url, name } : null;
+    });
+
+    await setCookiesForDomain('example.com', []);
+
+    expect(chrome._state.cookies.filter(c => c.name === 'sid')).toEqual([]);
+  });
+
   it('setCookiesForDomain builds an https url for secure cookies and strips a leading dot from the domain', async () => {
     await setCookiesForDomain('example.com', [
       { name: 'a', value: '1', domain: '.example.com', path: '/admin', secure: true, httpOnly: false, sameSite: 'strict' },
