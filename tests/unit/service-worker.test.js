@@ -116,6 +116,7 @@ describe('background/service-worker', () => {
       await vi.waitFor(() => expect(chrome._state.badges).toMatchObject({ 1: 'Ad', 2: 'Ad' }));
 
       await setActiveSnapshots({ 'example.com': 'User' });
+      chrome._deliverStorageEvents();
       chrome.tabs.onUpdated.dispatch(1, { status: 'complete' }, appTab);
       await vi.waitFor(() => expect(chrome._state.badges[1]).toBe('Us'));
     });
@@ -151,7 +152,84 @@ describe('background/service-worker', () => {
     await vi.waitFor(() => expect(chrome._state.badges[1]).toBe('Ad'));
 
     await setSettings({ ...(await getSettings()), showBadge: false });
+    chrome._deliverStorageEvents();
     chrome.tabs.onUpdated.dispatch(1, { status: 'complete' }, tab);
     await vi.waitFor(() => expect(chrome._state.badges[1]).toBe(''));
+  });
+
+  describe('badge cache', () => {
+    const badgeKeyGets = get => get.mock.calls.filter(([keys]) => [keys].flat().includes('activeSnapshots')).length;
+
+    it('a second tab update reads no badge keys', async () => {
+      await setActiveSnapshots({ 'a.com': 'Admin' });
+      await loadServiceWorker();
+      const get = vi.spyOn(chrome.storage.local, 'get');
+
+      chrome.tabs.onUpdated.dispatch(1, { status: 'complete' }, tab);
+      await vi.waitFor(() => expect(chrome._state.badges[1]).toBe('Ad'));
+      const reads = badgeKeyGets(get);
+      chrome._state.badges[1] = undefined;
+
+      chrome.tabs.onUpdated.dispatch(1, { status: 'complete' }, tab);
+      await vi.waitFor(() => expect(chrome._state.badges[1]).toBe('Ad'));
+      expect(reads).toBe(1);
+      expect(badgeKeyGets(get)).toBe(reads);
+    });
+
+    it('a change during the first load ends with the newest value', async () => {
+      await setActiveSnapshots({ 'a.com': 'Admin' });
+      await loadServiceWorker();
+      const held = chrome._holdGet(keys => keys.includes('activeSnapshots'));
+
+      chrome.tabs.onUpdated.dispatch(1, { status: 'complete' }, tab);
+      await setActiveSnapshots({ 'a.com': 'User' });
+      chrome._deliverStorageEvents();
+      held.release();
+      await vi.waitFor(() => expect(chrome._state.badges[1]).toBeDefined());
+
+      chrome.tabs.onUpdated.dispatch(1, { status: 'complete' }, tab);
+      await vi.waitFor(() => expect(chrome._state.badges[1]).toBe('Us'));
+    });
+
+    it('after clear() a tab update sets an empty badge without throwing', async () => {
+      await setActiveSnapshots({ 'a.com': 'Admin' });
+      await loadServiceWorker();
+      chrome.tabs.onUpdated.dispatch(1, { status: 'complete' }, tab);
+      await vi.waitFor(() => expect(chrome._state.badges[1]).toBe('Ad'));
+
+      await chrome.storage.local.clear();
+      chrome._deliverStorageEvents();
+      chrome.tabs.onUpdated.dispatch(1, { status: 'complete' }, tab);
+      await vi.waitFor(() => expect(chrome._state.badges[1]).toBe(''));
+    });
+
+    it('a check started after the cache loaded is still taken and learned', async () => {
+      chrome._state.grantedOrigins.add('*://a.com/*');
+      await loadServiceWorker();
+      chrome.tabs.onUpdated.dispatch(1, { status: 'complete' }, tab);
+      await vi.advanceTimersByTimeAsync(3000);
+
+      await startCookieCheck(1, 'a.com', [sid('applied')], A_SCOPE);
+      chrome._state.cookies = [sid('rotated')];
+      chrome.tabs.onUpdated.dispatch(1, { status: 'complete' }, tab);
+      await vi.advanceTimersByTimeAsync(3000);
+
+      expect(await getVolatileCookiesFor('a.com')).toEqual({ 'a.com|/|sid': 'value' });
+    });
+
+    it('a taken check is not learned twice', async () => {
+      chrome._state.grantedOrigins.add('*://a.com/*');
+      await loadServiceWorker();
+      await startCookieCheck(1, 'a.com', [sid('applied')], A_SCOPE);
+      chrome._state.cookies = [sid('rotated')];
+      chrome.tabs.onUpdated.dispatch(1, { status: 'complete' }, tab);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect((await chrome.storage.local.get('cookieChecks')).cookieChecks).toEqual({});
+
+      chrome._state.cookies = [];
+      chrome.tabs.onUpdated.dispatch(1, { status: 'complete' }, tab);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(await getVolatileCookiesFor('a.com')).toEqual({ 'a.com|/|sid': 'value' });
+    });
   });
 });

@@ -1,4 +1,4 @@
-import { getActiveSnapshots, getSettings, getGroups } from '../lib/storage.js';
+import { readKeys } from '../lib/storage.js';
 import { badgeText } from '../lib/badge.js';
 import { resolveScope, activeRef } from '../lib/groups.js';
 import { getCookiesForDomain, cookiesWithin } from '../lib/cookie-handler.js';
@@ -21,8 +21,17 @@ function hostnameOf(url) {
   }
 }
 
+const BADGE_KEYS = ['settings', 'activeSnapshots', 'groups'];
+
+let badgeCache = null;
+
+function badgeState() {
+  badgeCache ??= readKeys(BADGE_KEYS);
+  return badgeCache;
+}
+
 async function updateTabs(tabs) {
-  const [settings, active, groups] = await Promise.all([getSettings(), getActiveSnapshots(), getGroups()]);
+  const { settings, activeSnapshots: active, groups } = await badgeState();
   await Promise.all(tabs.map(tab => {
     const host = hostnameOf(tab.url);
     const key = host && resolveScope(host, groups).key;
@@ -35,20 +44,14 @@ async function updateAllTabs() {
   await updateTabs(await chrome.tabs.query({}));
 }
 
-async function setupBadgeColors() {
-  await chrome.action.setBadgeBackgroundColor({ color: BADGE_COLOR });
-  await chrome.action.setBadgeTextColor({ color: BADGE_TEXT_COLOR });
+function setupBadges() {
+  chrome.action.setBadgeBackgroundColor({ color: BADGE_COLOR });
+  chrome.action.setBadgeTextColor({ color: BADGE_TEXT_COLOR });
+  updateAllTabs();
 }
 
-chrome.runtime.onInstalled.addListener(() => {
-  setupBadgeColors();
-  updateAllTabs();
-});
-
-chrome.runtime.onStartup.addListener(() => {
-  setupBadgeColors();
-  updateAllTabs();
-});
+chrome.runtime.onInstalled.addListener(setupBadges);
+chrome.runtime.onStartup.addListener(setupBadges);
 
 // The first page load after a snapshot is applied shows which cookies the site
 // rewrites by itself; those are then left out of the popup's change check.
@@ -70,5 +73,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && (changes.activeSnapshots || changes.settings || changes.groups)) updateAllTabs();
+  if (area !== 'local' || !BADGE_KEYS.some(key => changes[key])) return;
+  badgeCache = null;
+  updateAllTabs();
 });
