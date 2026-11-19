@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { getVolatileCookiesFor, startCookieCheck, takeCookieCheck, learnVolatileCookies, ignoreCookieChange, hasPendingCookieCheck } from '../../lib/volatile-cookies.js';
+import { getVolatileCookiesFor, startCookieCheck, takeCookieCheck, learnVolatileCookies, ignoreCookieChange, hasPendingCookieCheck, cancelCookieCheck } from '../../lib/volatile-cookies.js';
 
 const cookie = (name, value) => ({ name, value, domain: 'a.com', path: '/' });
 
@@ -12,6 +12,12 @@ describe('lib/volatile-cookies', () => {
     expect(await hasPendingCookieCheck(6)).toBe(false);
     expect(await takeCookieCheck(5)).toMatchObject({ domain: 'a.com', cookies: [cookie('sid', '1')] });
     expect(await takeCookieCheck(5)).toBeNull();
+    expect(await hasPendingCookieCheck(5)).toBe(false);
+  });
+
+  it('cancels a pending check', async () => {
+    await startCookieCheck(5, 'a.com', []);
+    await cancelCookieCheck(5);
     expect(await hasPendingCookieCheck(5)).toBe(false);
   });
 

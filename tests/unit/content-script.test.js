@@ -52,6 +52,23 @@ describe('content/content-script (non-module message router)', () => {
     expect(result.indexedDBDigest).toBe(storageDigest.digest(full.indexedDB));
   });
 
+  it('answers ping', () => {
+    let reply;
+    onMessage({ type: 'ping' }, r => { reply = r; });
+    expect(reply).toEqual({ ok: true });
+  });
+
+  it('clearStorageData empties only the requested storage types', async () => {
+    localStorage.setItem('a', '1');
+    sessionStorage.setItem('b', '2');
+
+    const result = await sendAndAwait({ type: 'clearStorageData', types: { localStorage: true, sessionStorage: false, indexedDB: true } });
+
+    expect(result).toEqual({ success: true, blockedIndexedDB: [] });
+    expect(localStorage.length).toBe(0);
+    expect(sessionStorage.getItem('b')).toBe('2');
+  });
+
   it('setStorageData writes only the requested + present storage types', async () => {
     localStorage.setItem('stale', 'x');
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { collectData, applyData } from '../../lib/data-bridge.js';
+import { collectData, applyData, clearData, canReachPage } from '../../lib/data-bridge.js';
 
 describe('lib/data-bridge collectData', () => {
   it('requests host permission and collects cookies when types.cookies is true', async () => {
@@ -67,6 +67,16 @@ describe('lib/data-bridge applyData', () => {
     });
   });
 
+  it('stays silent when the page is unreachable, but fails on an error the content script reports', async () => {
+    const payload = { localStorage: { a: '1' } };
+    const types = { cookies: false, localStorage: true, sessionStorage: false, indexedDB: false };
+    chrome.tabs.sendMessage = vi.fn().mockRejectedValue(new Error('Receiving end does not exist.'));
+    await expect(applyData(1, 'example.com', payload, types)).resolves.toBeUndefined();
+
+    chrome.tabs.sendMessage = vi.fn().mockResolvedValue({ error: 'IndexedDB "app" is in use by the page' });
+    await expect(applyData(1, 'example.com', payload, types)).rejects.toThrow('in use');
+  });
+
   it('does not call chrome.tabs.sendMessage when there is no storage payload to apply', async () => {
     chrome.tabs.sendMessage = vi.fn();
     await applyData(1, 'example.com', {}, { cookies: false, localStorage: true, sessionStorage: true, indexedDB: true });
@@ -78,5 +88,70 @@ describe('lib/data-bridge applyData', () => {
     await expect(applyData(1, 'example.com', { localStorage: { a: '1' } }, {
       cookies: false, localStorage: true, sessionStorage: false, indexedDB: false,
     })).resolves.toBeUndefined();
+  });
+});
+
+describe('lib/data-bridge clearData', () => {
+  const ALL = { cookies: true, localStorage: true, sessionStorage: true, indexedDB: true };
+
+  it('removes the domain\'s cookies and asks the content script to clear storage', async () => {
+    chrome._state.cookies = [
+      { name: 'sid', value: 'a', domain: 'a.com', path: '/', secure: false },
+      { name: 'other', value: 'x', domain: 'b.com', path: '/', secure: false },
+    ];
+    chrome.tabs.sendMessage = vi.fn().mockResolvedValue({ success: true, blockedIndexedDB: ['app'] });
+
+    expect(await clearData(1, 'a.com', ALL)).toEqual(['app']);
+
+    expect(chrome._state.cookies.map(c => c.domain)).toEqual(['b.com']);
+    expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(1, {
+      type: 'clearStorageData',
+      types: { localStorage: true, sessionStorage: true, indexedDB: true },
+    });
+  });
+
+  it('leaves cookies alone when they are turned off, and skips the message when no storage type is on', async () => {
+    chrome._state.cookies = [{ name: 'sid', value: 'a', domain: 'a.com', path: '/', secure: false }];
+    chrome.tabs.sendMessage = vi.fn();
+
+    await clearData(1, 'a.com', { cookies: false, localStorage: false, sessionStorage: false, indexedDB: false });
+
+    expect(chrome._state.cookies).toHaveLength(1);
+    expect(chrome.tabs.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('fails when the content script can\'t be reached or reports an error', async () => {
+    chrome.tabs.sendMessage = vi.fn().mockRejectedValue(new Error('Receiving end does not exist.'));
+    await expect(clearData(1, 'a.com', { ...ALL, cookies: false })).rejects.toThrow();
+
+    chrome.tabs.sendMessage = vi.fn().mockResolvedValue({ error: 'QuotaExceededError' });
+    await expect(clearData(1, 'a.com', { ...ALL, cookies: false })).rejects.toThrow('QuotaExceededError');
+  });
+
+  it('keeps the cookies when clearing the storage fails', async () => {
+    chrome._state.cookies = [{ name: 'sid', value: 'a', domain: 'a.com', path: '/', secure: false }];
+    chrome.tabs.sendMessage = vi.fn().mockResolvedValue({ error: 'SecurityError' });
+
+    await expect(clearData(1, 'a.com', ALL)).rejects.toThrow();
+    expect(chrome._state.cookies).toHaveLength(1);
+  });
+});
+
+describe('lib/data-bridge canReachPage', () => {
+  const STORAGE = { cookies: true, localStorage: true, sessionStorage: false, indexedDB: false };
+
+  it('asks the content script, and treats no answer as unreachable', async () => {
+    chrome.tabs.sendMessage = vi.fn().mockResolvedValue({ ok: true });
+    expect(await canReachPage(1, STORAGE)).toBe(true);
+    expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(1, { type: 'ping' });
+
+    chrome.tabs.sendMessage = vi.fn().mockRejectedValue(new Error('Receiving end does not exist.'));
+    expect(await canReachPage(1, STORAGE)).toBe(false);
+  });
+
+  it('does not need the page when only cookies are enabled', async () => {
+    chrome.tabs.sendMessage = vi.fn();
+    expect(await canReachPage(1, { cookies: true, localStorage: false, sessionStorage: false, indexedDB: false })).toBe(true);
+    expect(chrome.tabs.sendMessage).not.toHaveBeenCalled();
   });
 });

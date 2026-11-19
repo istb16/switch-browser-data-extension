@@ -31,6 +31,7 @@
 ■ 主な機能
 ・ワンクリックで切り替え：一覧の行を押すだけで、保存した状態に丸ごと置き換えます。数字キーや検索でも選べます（ポップアップを開くショートカット：Alt+Shift+S）
 ・切り替え前に戻す：読み込む直前の状態を自動で残すので、間違えても「戻す」で元どおり
+・データの消去：今のサイトのデータをまとめて消して、未ログインの状態からやり直せます（消す前の状態も「戻す」で戻せます）
 ・適用中の表示：今どのスナップショットを使っているかを一覧とツールバーのアイコンに表示
 ・変更の検知：適用中のスナップショットとあとから違いが出たら「変更あり」を表示し、何が変わったかがわかります。サイトが自分で書き換える Cookie は自動で比較から外し、手動で外すこともできます
 ・上書き・名前の変更・削除・並べ替え、エクスポート／インポート
@@ -51,6 +52,7 @@ Save cookies, localStorage, sessionStorage and IndexedDB per site as named snaps
 FEATURES
 • One-click switching: select a row to replace the site's data with the saved state. Number keys and search work too (open the popup with Alt+Shift+S)
 • Undo a switch: the state before each load is kept, so Restore brings it back
+• Clear a site: wipe the site's data to start signed out, and Restore it if needed
 • Active snapshot: the list and the toolbar icon show which snapshot is in use
 • Change detection: when the data differs from the active snapshot, "Changed" shows what changed. Cookies the site rewrites by itself are left out automatically, or by hand
 • Overwrite, rename, delete and reorder; export and import

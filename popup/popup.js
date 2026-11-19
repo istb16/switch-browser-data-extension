@@ -4,9 +4,9 @@ import {
   loadSnapshot, getActiveSnapshot, setActiveSnapshot, saveBackup, getBackup,
 } from '../lib/snapshot.js';
 import { getSettings } from '../lib/storage.js';
-import { collectData, applyData, requestHostPermission, hasHostPermission } from '../lib/data-bridge.js';
-import { findChanges, describeChanges, withDigests } from '../lib/data-compare.js';
-import { getVolatileCookiesFor, startCookieCheck, ignoreCookieChange, hasPendingCookieCheck } from '../lib/volatile-cookies.js';
+import { collectData, applyData, clearData, canReachPage, requestHostPermission, hasHostPermission } from '../lib/data-bridge.js';
+import { findChanges, describeChanges, withDigests, TYPE_LABELS } from '../lib/data-compare.js';
+import { getVolatileCookiesFor, startCookieCheck, ignoreCookieChange, hasPendingCookieCheck, cancelCookieCheck } from '../lib/volatile-cookies.js';
 import { showConfirm } from '../lib/dialog.js';
 import { setupMenu } from '../lib/menu.js';
 import { bindInlineRename } from '../lib/inline-rename.js';
@@ -68,6 +68,8 @@ async function showMain() {
   $('permissionPanel').classList.add('hidden');
   $('mainContent').classList.remove('hidden');
   await refresh();
+  // With every data type turned off there is nothing to clear.
+  $('clearSiteBtn').classList.toggle('hidden', enabledTypeNames().length === 0);
   setupListeners();
   // Not awaited: the check reads the page, and the list is usable without it.
   detectChanges().catch(e => console.error(e));
@@ -268,6 +270,7 @@ function setBusy(value) {
   $('saveBtn').disabled = value;
   $('confirmSaveBtn').disabled = value;
   $('undoBtn').disabled = value;
+  $('clearSiteBtn').disabled = value;
 }
 
 // Called first in each handler, before any other await, so the permission
@@ -293,6 +296,7 @@ function setupListeners() {
   });
 
   $('undoBtn').addEventListener('click', handleUndo);
+  $('clearSiteBtn').addEventListener('click', handleClearSite);
 
   $('searchInput').addEventListener('input', renderList);
   $('searchInput').addEventListener('keydown', e => {
@@ -460,6 +464,45 @@ function handleLoad(name) {
     }
     await refresh();
     focusRow(name);
+  });
+}
+
+function enabledTypeNames() {
+  return Object.keys(TYPE_LABELS).filter(type => settings.enabledTypes[type]).map(type => TYPE_LABELS[type]);
+}
+
+function handleClearSite() {
+  return exclusive(async () => {
+    const types = settings.enabledTypes;
+    const typeNames = enabledTypeNames().join(getLang() === 'ja' ? '・' : ', ');
+    await ensureCookiePermission();
+    const confirmKey = settings.autoBackup ? 'confirm_clear_site_undoable' : 'confirm_clear_site';
+    if (!await showConfirm(t(confirmKey, { domain: currentDomain, types: typeNames }))) return;
+
+    try {
+      // Checked before the backup, so a page that can't be cleared never
+      // replaces the backup that is still useful.
+      if (!await canReachPage(activeTab.id, types)) throw new Error('content script unreachable');
+      let backedUp = true;
+      if (settings.autoBackup) {
+        const current = await collectData(activeTab.id, currentDomain, types, { interactive: false });
+        backedUp = await tryBackup(current);
+      }
+      const blocked = await clearData(activeTab.id, currentDomain, types);
+      await setActiveSnapshot(currentDomain, null);
+      changes = [];
+      // A check left from a recent load would compare that snapshot's cookies
+      // with the emptied jar and mark them all as rewritten by the site.
+      await cancelCookieCheck(activeTab.id);
+      if (settings.autoReload) await chrome.tabs.reload(activeTab.id);
+      let statusKey = backedUp ? 'status_site_cleared' : 'status_site_cleared_no_backup';
+      if (blocked.length && !settings.autoReload) statusKey = 'status_site_cleared_reload_needed';
+      showStatus($('statusMsg'), t(statusKey, { domain: currentDomain }), 'success');
+    } catch (e) {
+      showStatus($('statusMsg'), t('error_clear_site_failed'), 'error');
+      console.error(e);
+    }
+    await refresh();
   });
 }
 

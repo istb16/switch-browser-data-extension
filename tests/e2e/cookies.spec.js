@@ -82,6 +82,19 @@ test('does not ask for access once it has been allowed', async ({ context, exten
   await expect(popup.locator('#permissionPanel')).toBeHidden();
 });
 
+test('clearing the site\'s data signs out, and the undo bar signs back in', async ({ context, extensionId }) => {
+  const site = await context.newPage();
+  await site.goto(loginUrl('alice'));
+
+  const popup = await openPopupFor(context, extensionId, site);
+  await popup.locator('#clearSiteBtn').click();
+  await popup.locator('.tk3-btn-confirm').click();
+  await expect(site.locator('h1')).toHaveText('signed in as: (none)');
+
+  await popup.locator('#undoBtn').click();
+  await expect(site.locator('h1')).toHaveText('signed in as: alice');
+});
+
 test('restores cookies with the undo bar', async ({ context, extensionId }) => {
   const site = await context.newPage();
   await site.goto(loginUrl('alice'));

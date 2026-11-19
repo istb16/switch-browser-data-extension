@@ -482,6 +482,17 @@ kbd {
   background: var(--tk-surface-2);
 }
 
+.text-btn--danger {
+  color: var(--tk-danger);
+}
+
+.clear-site-btn {
+  display: block;
+  margin: 6px auto 0;
+  font-size: 12px;
+  font-weight: 400;
+}
+
 /* ---- save ---- */
 .save-area {
   margin-top: 10px;
