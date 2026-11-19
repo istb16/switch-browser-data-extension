@@ -111,6 +111,14 @@
         <div class="pane" id="pane-data" data-pane="data" hidden>
           <section class="section">
             <h2 data-i18n="section_data_management">データ管理</h2>
+            <div class="toggle-list">
+              <label class="toggle-item">
+                <span data-i18n="toggle_encrypt_exports">エクスポートするファイルをパスフレーズで暗号化する</span>
+                <input type="checkbox" id="toggleEncryptExports">
+              </label>
+            </div>
+            <p id="exportSessionHint" class="hint export-hint" data-i18n="hint_export_sessions">エクスポートしたファイルにはログイン中のセッション（Cookie など）が含まれます。ファイルを渡した相手はそのアカウントにログインできます。</p>
+            <p class="hint" data-i18n="hint_passphrase_unrecoverable">パスフレーズを忘れると、暗号化したファイルは元に戻せません。</p>
             <div class="data-actions">
               <button id="exportBtn"  class="btn btn-secondary" data-i18n="btn_export">全データをエクスポート</button>
               <button id="importBtn"  class="btn btn-secondary" data-i18n="btn_import">データをインポート</button>

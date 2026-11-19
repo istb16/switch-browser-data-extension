@@ -140,6 +140,68 @@ test.describe('options page', () => {
     expect(content['a.example.com'].first.localStorage).toEqual({ a: '1' });
   });
 
+  test('encrypted export downloads an envelope and re-imports with the passphrase', async ({ context, extensionId }) => {
+    const page = await openOptions(context, extensionId, '#data');
+    const snapshot = { savedAt: new Date().toISOString(), localStorage: { a: '1' } };
+    await page.evaluate(s => chrome.storage.local.set({ snapshots: { 'a.example.com': { first: s } } }), snapshot);
+    await reloadAndWait(page);
+
+    await page.locator('#toggleEncryptExports').check();
+    await expect(page.locator('#statusMsg')).toHaveClass(/success/);
+
+    await page.locator('#exportBtn').click();
+    const dialog = page.locator('dialog.tk3-dialog');
+    const fields = dialog.locator('input[type="password"]');
+    await fields.nth(0).fill('short');
+    await fields.nth(1).fill('short');
+    await dialog.locator('.tk3-btn-confirm').click();
+    await expect(dialog.locator('.tk3-dialog-error')).toBeVisible();
+
+    await fields.nth(0).fill('correct horse');
+    await fields.nth(1).fill('correct horse');
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      dialog.locator('.tk3-btn-confirm').click(),
+    ]);
+    const fs = await import('node:fs');
+    const text = fs.readFileSync(await download.path(), 'utf-8');
+    const envelope = JSON.parse(text);
+    expect(envelope[0]).toBe('switch-browser-data-encrypted');
+    expect(text).not.toContain('a.example.com');
+
+    await page.evaluate(() => chrome.storage.local.set({ snapshots: {} }));
+    await reloadAndWait(page);
+    await page.locator('#importFile').setInputFiles({ name: 'export.json', mimeType: 'application/json', buffer: Buffer.from(text) });
+    await dialog.locator('input[type="password"]').fill('correct horse');
+    await dialog.locator('.tk3-btn-confirm').click();
+    await expect(page.locator('#statusMsg')).toHaveClass(/success/, { timeout: 15_000 });
+
+    const stored = await page.evaluate(() => chrome.storage.local.get('snapshots'));
+    expect(stored.snapshots).toEqual({ 'a.example.com': { first: snapshot } });
+  });
+
+  test('import conflict "keep both" adds a renamed row', async ({ context, extensionId }) => {
+    const page = await openOptions(context, extensionId, '#data');
+    const savedAt = new Date().toISOString();
+    await page.evaluate(at => chrome.storage.local.set({
+      snapshots: { 'a.example.com': { first: { savedAt: at } } },
+      snapshotOrder: { 'a.example.com': ['first'] },
+    }), savedAt);
+    await reloadAndWait(page);
+
+    const file = JSON.stringify({ 'a.example.com': { first: { savedAt, localStorage: { b: '2' } } } });
+    await page.locator('#importFile').setInputFiles({ name: 'export.json', mimeType: 'application/json', buffer: Buffer.from(file) });
+    const dialog = page.locator('dialog.tk3-dialog');
+    await expect(dialog).toContainText('a.example.com / first');
+    await dialog.getByRole('button', { name: '両方残す（別名で追加）' }).click();
+    await expect(page.locator('#statusMsg')).toHaveClass(/success/);
+
+    await page.locator('.nav-link[data-pane="snapshots"]').click();
+    await page.locator('.domain-item .domain-header').click();
+    await expect(page.locator('.snapshot-row')).toHaveCount(2);
+    await expect(page.locator('.snapshot-row[data-name="first (2)"]')).toBeVisible();
+  });
+
   test('clearing all data empties storage and shows the empty state', async ({ context, extensionId }) => {
     const page = await openOptions(context, extensionId, '#data');
     await page.evaluate(() => chrome.storage.local.set({

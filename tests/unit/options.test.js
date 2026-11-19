@@ -1,9 +1,12 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { setSnapshots, setSnapshotOrders, getSnapshots, getSnapshotOrders, setSettings } from '../../lib/storage.js';
+import { setSnapshots, setSnapshotOrders, getSnapshots, getSnapshotOrders, setSettings, getSettings } from '../../lib/storage.js';
 import { byteSize, formatBytes } from '../../lib/snapshot-summary.js';
+import { encryptText, ENVELOPE_TAG, MIN_ITERATIONS } from '../../lib/crypto.js';
+import { IMPORT_MAX_BYTES } from '../../lib/transfer.js';
+import { MESSAGES } from '../../lib/i18n.js';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../');
 const optionsHtml = readFileSync(path.join(repoRoot, 'options/options.html'), 'utf-8');
@@ -442,6 +445,232 @@ describe('options/options.js', () => {
 
       expect(document.getElementById('statusMsg').className).toContain('error');
       expect(await getSnapshots()).toEqual({ 'a.com': { existing: { savedAt: '2024-01-01T00:00:00.000Z' } } });
+    });
+  });
+
+  describe('scoped export, encryption and checked import', () => {
+    const SAVED = '2024-01-01T00:00:00.000Z';
+    let downloads;
+    let restoreDownloads;
+
+    beforeEach(() => {
+      downloads = [];
+      const { createObjectURL, revokeObjectURL } = URL;
+      URL.createObjectURL = vi.fn(blob => { downloads.push(blob); return 'blob:test'; });
+      URL.revokeObjectURL = vi.fn();
+      const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+      restoreDownloads = () => {
+        URL.createObjectURL = createObjectURL;
+        URL.revokeObjectURL = revokeObjectURL;
+        click.mockRestore();
+      };
+    });
+
+    afterEach(() => restoreDownloads());
+
+    const readBlob = blob => (typeof blob.text === 'function'
+      ? blob.text()
+      : new Promise(resolve => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.readAsText(blob);
+      }));
+
+    const dialog = () => document.querySelector('.tk3-dialog');
+    const status = () => document.getElementById('statusMsg');
+    const waitFor = (check, timeout = 10_000) => vi.waitFor(() => { if (!check()) throw new Error('not yet'); }, { timeout, interval: 20 });
+
+    function importFile(file) {
+      const input = document.getElementById('importFile');
+      Object.defineProperty(input, 'files', { value: [file], configurable: true });
+      input.dispatchEvent(new Event('change'));
+    }
+
+    async function submitDialog(...values) {
+      await waitFor(() => dialog());
+      const inputs = dialog().querySelectorAll('input[type="password"]');
+      values.forEach((value, i) => { inputs[i].value = value; });
+      dialog().querySelector('.tk3-btn-confirm').click();
+      await flush();
+    }
+
+    it('exports one domain from its header and one snapshot from its row', async () => {
+      const x = { savedAt: SAVED, localStorage: { a: '1' } };
+      await setSnapshots({ 'a.com': { x, y: { savedAt: SAVED } }, 'b.com': { z: { savedAt: SAVED } } });
+      await loadOptions();
+
+      const item = domainItems()[0];
+      item.querySelector('.domain-header .btn-export').click();
+      await flush();
+      expect(item.classList.contains('open')).toBe(false);
+      expect(JSON.parse(await readBlob(downloads[0]))).toEqual({ 'a.com': { x, y: { savedAt: SAVED } } });
+
+      item.querySelector('.snapshot-row[data-name="x"] .btn-export').click();
+      await flush();
+      expect(JSON.parse(await readBlob(downloads[1]))).toEqual({ 'a.com': { x } });
+    });
+
+    it('a plain export shows the session warning, which the hint by the toggle also gives', async () => {
+      await setSnapshots({ 'a.com': { x: { savedAt: SAVED } } });
+      await loadOptions();
+
+      document.getElementById('exportBtn').click();
+      await flush();
+
+      expect(downloads).toHaveLength(1);
+      expect(status().textContent).toBe(MESSAGES.ja.status_exported_plain);
+      expect(document.getElementById('exportSessionHint').textContent).toBe(MESSAGES.ja.hint_export_sessions);
+      expect(document.getElementById('toggleEncryptExports').checked).toBe(false);
+    });
+
+    it('the encryption toggle reflects and saves settings.encryptExports', async () => {
+      await setSettings({ encryptExports: true });
+      await loadOptions();
+      const toggle = document.getElementById('toggleEncryptExports');
+      expect(toggle.checked).toBe(true);
+
+      toggle.click();
+      await flush();
+      expect((await getSettings()).encryptExports).toBe(false);
+    });
+
+    it('an encrypted export keeps the dialog open until the passphrase is valid and downloads nothing meanwhile', async () => {
+      await setSettings({ encryptExports: true });
+      await setSnapshots({ 'a.com': { x: { savedAt: SAVED } } });
+      await loadOptions();
+
+      document.getElementById('exportBtn').click();
+      await waitFor(() => dialog());
+      expect(dialog().textContent).toContain(MESSAGES.ja.hint_passphrase_unrecoverable);
+      const error = () => dialog().querySelector('.tk3-dialog-error');
+
+      for (const [first, second, message] of [
+        ['', '', MESSAGES.ja.error_passphrase_short.replace('{n}', '8')],
+        ['1234567', '1234567', MESSAGES.ja.error_passphrase_short.replace('{n}', '8')],
+        ['12345678', '12345679', MESSAGES.ja.error_passphrase_mismatch],
+      ]) {
+        await submitDialog(first, second);
+        expect(dialog()).not.toBeNull();
+        expect(error().hidden).toBe(false);
+        expect(error().textContent).toBe(message);
+      }
+      expect(downloads).toHaveLength(0);
+
+      dialog().querySelector('.tk3-btn-cancel').click();
+      await flush();
+      expect(dialog()).toBeNull();
+      expect(downloads).toHaveLength(0);
+    });
+
+    it('an encrypted export imports back through the real handlers', async () => {
+      const snapshot = { savedAt: SAVED, localStorage: { k: 'v' }, memo: 'work', color: 'blue' };
+      await setSettings({ encryptExports: true });
+      await setSnapshots({ 'a.com': { x: snapshot } });
+      await loadOptions();
+
+      document.getElementById('exportBtn').click();
+      await submitDialog('correct horse', 'correct horse');
+      await waitFor(() => downloads.length === 1);
+      const text = await readBlob(downloads[0]);
+      const envelope = JSON.parse(text);
+      expect(Array.isArray(envelope)).toBe(true);
+      expect(envelope[0]).toBe(ENVELOPE_TAG);
+      expect(text).not.toContain('a.com');
+      expect(status().textContent).toBe(MESSAGES.ja.status_exported);
+
+      await setSnapshots({});
+      importFile({ size: downloads[0].size, text: () => Promise.resolve(text) });
+      await submitDialog('correct horse');
+      await waitFor(() => status().textContent.startsWith('インポートしました'));
+
+      expect(await getSnapshots()).toEqual({ 'a.com': { x: snapshot } });
+      expect(status().className).toContain('success');
+    }, 15_000);
+
+    it('an encrypted import with a wrong passphrase shows the error and changes nothing', async () => {
+      const before = { 'a.com': { existing: { savedAt: SAVED } } };
+      await setSnapshots(before);
+      await loadOptions();
+      const envelope = await encryptText(JSON.stringify({ 'b.com': { x: { savedAt: SAVED } } }), 'right-passphrase', MIN_ITERATIONS);
+
+      importFile({ size: 1000, text: () => Promise.resolve(JSON.stringify(envelope)) });
+      await submitDialog('wrong-passphrase');
+      await waitFor(() => status().textContent === MESSAGES.ja.error_wrong_passphrase);
+
+      expect(status().className).toContain('error');
+      expect(await getSnapshots()).toEqual(before);
+    });
+
+    describe('conflicts', () => {
+      const old = { savedAt: SAVED };
+      const fresh = { savedAt: '2024-02-02T00:00:00.000Z' };
+      const extra = { savedAt: '2024-03-03T00:00:00.000Z' };
+
+      async function importWithConflict(choiceIndex) {
+        await setSnapshots({ 'a.com': { x: old } });
+        await setSnapshotOrders({ 'a.com': ['x'] });
+        await loadOptions();
+        importFile({ size: 100, text: () => Promise.resolve(JSON.stringify({ 'a.com': { x: fresh, y: extra } })) });
+        await waitFor(() => dialog());
+        expect(dialog().textContent).toContain('a.com / x');
+        const buttons = dialog().querySelectorAll('button');
+        // overwrite, skip, keep both, cancel
+        buttons[choiceIndex].click();
+        await flush();
+        await flush();
+      }
+
+      it('overwrite replaces the same name in place and appends the new one', async () => {
+        await importWithConflict(0);
+        expect(await getSnapshots()).toEqual({ 'a.com': { x: fresh, y: extra } });
+        expect((await getSnapshotOrders())['a.com']).toEqual(['x', 'y']);
+        expect(status().textContent).toBe('インポートしました（追加 1 件・上書き 1 件・別名で追加 0 件・スキップ 0 件）');
+      });
+
+      it('skip keeps the existing snapshot', async () => {
+        await importWithConflict(1);
+        expect(await getSnapshots()).toEqual({ 'a.com': { x: old, y: extra } });
+      });
+
+      it('keep both adds the imported one under a new name', async () => {
+        await importWithConflict(2);
+        expect(await getSnapshots()).toEqual({ 'a.com': { x: old, 'x (2)': fresh, y: extra } });
+        expect((await getSnapshotOrders())['a.com']).toEqual(['x', 'x (2)', 'y']);
+      });
+
+      it('cancel changes nothing', async () => {
+        await importWithConflict(3);
+        expect(await getSnapshots()).toEqual({ 'a.com': { x: old } });
+        expect((await getSnapshotOrders())['a.com']).toEqual(['x']);
+      });
+    });
+
+    it.each([
+      ['a reserved key', '{"__proto__": {"x": {"savedAt": "2024-01-01T00:00:00.000Z"}}}'],
+      ['malformed cookies', JSON.stringify({ 'b.com': { x: { savedAt: SAVED, cookies: 'nope' } } })],
+    ])('refuses a file with %s', async (_, text) => {
+      const before = { 'a.com': { existing: { savedAt: SAVED } } };
+      await setSnapshots(before);
+      await loadOptions();
+
+      importFile({ size: text.length, text: () => Promise.resolve(text) });
+      await flush();
+
+      expect(status().className).toContain('error');
+      expect(await getSnapshots()).toEqual(before);
+      expect(Object.prototype).not.toHaveProperty('x');
+    });
+
+    it('refuses a file over the size limit without reading it', async () => {
+      await loadOptions();
+      const text = vi.fn(async () => '{}');
+
+      importFile({ size: IMPORT_MAX_BYTES + 1, text });
+      await flush();
+
+      expect(text).not.toHaveBeenCalled();
+      expect(status().className).toContain('error');
+      expect(status().textContent).toBe(MESSAGES.ja.error_import_too_large.replace('{size}', formatBytes(IMPORT_MAX_BYTES)));
     });
   });
 

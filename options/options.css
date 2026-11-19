@@ -414,6 +414,40 @@ h2 {
   border-radius: var(--tk-radius-sm);
 }
 
+.export-hint {
+  margin-top: 10px;
+  margin-bottom: 4px;
+}
+
+.btn-export {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--tk-accent);
+  font: inherit;
+  font-size: 13px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background 0.15s;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.btn-export:hover {
+  background: var(--tk-surface-2);
+}
+
+.btn-export:disabled {
+  color: var(--tk-muted);
+  cursor: progress;
+}
+
+.passphrase-hint {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--tk-muted);
+}
+
 .data-actions {
   display: flex;
   gap: 8px;

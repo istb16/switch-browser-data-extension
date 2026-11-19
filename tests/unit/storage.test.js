@@ -21,6 +21,7 @@ describe('lib/storage', () => {
       autoBackup: true,
       autoReload: true,
       showBadge:  true,
+      encryptExports: false,
     });
   });
 
@@ -30,6 +31,7 @@ describe('lib/storage', () => {
       autoBackup: false,
       autoReload: true,
       showBadge:  false,
+      encryptExports: true,
     };
     await setSettings(settings);
     expect(await getSettings()).toEqual(settings);
@@ -42,6 +44,7 @@ describe('lib/storage', () => {
     expect(settings.autoBackup).toBe(true);
     expect(settings.autoReload).toBe(true);
     expect(settings.showBadge).toBe(true);
+    expect(settings.encryptExports).toBe(false);
   });
 
   it('round-trips active snapshots and backups', async () => {
