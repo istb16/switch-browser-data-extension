@@ -146,7 +146,7 @@ test('the row menu opens from its button and deletes the snapshot', async ({ con
   await saveAs(popup, 'to-delete');
 
   await row(popup, 'to-delete').locator('.snapshot__more').click();
-  const menu = row(popup, 'to-delete').locator('.row-menu');
+  const menu = row(popup, 'to-delete').locator('.actions-menu');
   await expect(menu).toBeVisible();
   await menu.locator('[data-action="delete"]').click();
   await expect(menu).toBeHidden();
@@ -168,7 +168,7 @@ test('the row menu works from the keyboard', async ({ context, extensionId }) =>
   const more = row(popup, 'kbd').locator('.snapshot__more');
   await more.focus();
   await popup.keyboard.press('Enter');
-  const menu = row(popup, 'kbd').locator('.row-menu');
+  const menu = row(popup, 'kbd').locator('.actions-menu');
   await expect(menu).toBeVisible();
   await expect(menu.locator('[data-action="overwrite"]')).toBeFocused();
   await popup.keyboard.press('ArrowDown');

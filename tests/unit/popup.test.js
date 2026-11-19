@@ -330,6 +330,24 @@ describe('popup/popup.js', () => {
       expect(row('first').querySelector('.badge--modified').classList.contains('hidden')).toBe(true);
     });
 
+    it('stops comparing a cookie the user ignores from the changed menu', async () => {
+      chrome._state.cookies = [sid('account-b')];
+      await loadPopup('https://example.com/');
+
+      const ignore = row('first').querySelector('.changes-menu [data-action="ignore"]');
+      expect(ignore.textContent).toContain('sid');
+      ignore.click();
+      await settle();
+
+      expect(row('first').querySelector('.badge--modified').classList.contains('hidden')).toBe(true);
+      expect((await chrome.storage.local.get('volatileCookies')).volatileCookies)
+        .toEqual({ 'example.com': { 'example.com|/|sid': 'value' } });
+      expect($('statusMsg').className).toContain('success');
+
+      await loadPopup('https://example.com/');
+      expect(row('first').querySelector('.badge--modified').classList.contains('hidden')).toBe(true);
+    });
+
     it('records the applied cookies for the service worker before reloading', async () => {
       await loadPopup('https://example.com/');
 

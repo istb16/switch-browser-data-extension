@@ -276,6 +276,14 @@ kbd {
 .badge--modified {
   color: var(--tk-amber);
   background: color-mix(in srgb, var(--tk-amber) 14%, var(--tk-surface));
+  border: none;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.badge--modified:hover,
+.badge--modified[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--tk-amber) 26%, var(--tk-surface));
 }
 
 .snapshot-list[aria-busy='true'] {

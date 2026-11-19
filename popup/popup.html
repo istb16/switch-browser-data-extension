@@ -85,13 +85,18 @@
           <span class="snapshot__meta"></span>
         </span>
         <span class="badge badge--active hidden"></span>
-        <span class="badge badge--modified hidden"></span>
       </button>
+      <button class="badge badge--modified hidden" type="button" aria-haspopup="menu" aria-expanded="false" command="toggle-popover"></button>
+      <div class="row-menu changes-menu" popover="auto">
+        <div focusgroup="menu nomemory">
+          <button type="button" data-action="overwrite"></button>
+        </div>
+      </div>
       <kbd class="snapshot__key" aria-hidden="true"></kbd>
       <button class="icon-btn snapshot__more" type="button" aria-haspopup="menu" aria-expanded="false" command="toggle-popover">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg>
       </button>
-      <div class="row-menu" popover="auto">
+      <div class="row-menu actions-menu" popover="auto">
         <div focusgroup="menu nomemory">
           <button type="button" data-action="overwrite"></button>
           <button type="button" data-action="rename"></button>

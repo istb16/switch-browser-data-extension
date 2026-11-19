@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { getVolatileCookiesFor, startCookieCheck, takeCookieCheck, learnVolatileCookies } from '../../lib/volatile-cookies.js';
+import { getVolatileCookiesFor, startCookieCheck, takeCookieCheck, learnVolatileCookies, ignoreCookieChange } from '../../lib/volatile-cookies.js';
 
 const cookie = (name, value) => ({ name, value, domain: 'a.com', path: '/' });
 
@@ -25,5 +25,11 @@ describe('lib/volatile-cookies', () => {
     await learnVolatileCookies('a.com', [cookie('x', '1'), cookie('csrf', '1')], [cookie('x', '2'), cookie('csrf', '2')]);
     expect(await getVolatileCookiesFor('a.com')).toEqual({ 'a.com|/|x': 'any', 'a.com|/|csrf': 'value' });
     expect(await getVolatileCookiesFor('b.com')).toEqual({});
+  });
+
+  it('records a cookie the user chose to ignore: a value change as "value", a cookie that came or went as "any"', async () => {
+    await ignoreCookieChange('a.com', { type: 'cookies', key: 'a.com|/|psidts', name: 'psidts', kind: 'value' });
+    await ignoreCookieChange('a.com', { type: 'cookies', key: 'a.com|/|tmp', name: 'tmp', kind: 'presence' });
+    expect(await getVolatileCookiesFor('a.com')).toEqual({ 'a.com|/|psidts': 'value', 'a.com|/|tmp': 'any' });
   });
 });

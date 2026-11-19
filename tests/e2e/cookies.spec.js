@@ -60,6 +60,16 @@ test('learns the cookie the site rewrites on its own, and still flags an account
   await expect(badge).toBeVisible();
   await expect(badge).toHaveAttribute('title', /Cookie: sid/);
   await expect(badge).not.toHaveAttribute('title', /csrf/);
+
+  // The badge opens a menu; ignoring sid from it clears the flag for good.
+  await badge.click();
+  const ignore = row(switched, 'alice').locator('.changes-menu [data-action="ignore"]');
+  await expect(ignore).toBeVisible();
+  await expect(ignore).toContainText('sid');
+  await ignore.click();
+  await expect(row(switched, 'alice').locator('.badge--modified')).toBeHidden();
+  expect(await storageGet(switched, 'volatileCookies'))
+    .toEqual({ localhost: { 'localhost|/|csrf': 'value', 'localhost|/|sid': 'value' } });
 });
 
 test('restores cookies with the undo bar', async ({ context, extensionId }) => {

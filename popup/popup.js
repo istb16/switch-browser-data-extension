@@ -5,8 +5,8 @@ import {
 } from '../lib/snapshot.js';
 import { getSettings } from '../lib/storage.js';
 import { collectData, applyData, requestHostPermission } from '../lib/data-bridge.js';
-import { findChanges, withDigests } from '../lib/data-compare.js';
-import { getVolatileCookiesFor, startCookieCheck } from '../lib/volatile-cookies.js';
+import { findChanges, describeChanges, withDigests } from '../lib/data-compare.js';
+import { getVolatileCookiesFor, startCookieCheck, ignoreCookieChange } from '../lib/volatile-cookies.js';
 import { showConfirm } from '../lib/dialog.js';
 import { setupMenu } from '../lib/menu.js';
 import { bindInlineRename } from '../lib/inline-rename.js';
@@ -23,7 +23,7 @@ let settings = null;
 let snapshots = {};
 let names = [];
 let activeName = null;
-// What differs from the active snapshot, as labels; empty when nothing does.
+// What differs from the active snapshot (see findChanges); empty when nothing does.
 let changes = [];
 let busy = false;
 // Bumped by every action that changes the page data or the active snapshot, so a
@@ -126,16 +126,16 @@ function buildRow(name, index) {
   activeBadge.textContent = t('badge_active');
   activeBadge.classList.toggle('hidden', !isActive);
   const modifiedBadge = row.querySelector('.badge--modified');
-  modifiedBadge.textContent = t('badge_modified');
-  modifiedBadge.classList.toggle('hidden', !isModified);
-  modifiedBadge.title = isModified ? t('modified_detail', { items: changes.join(' / ') }) : '';
+  const changesMenu = row.querySelector('.changes-menu');
+  if (isModified) setupChangesMenu(modifiedBadge, changesMenu, name, index);
+  else changesMenu.remove();
 
   const key = row.querySelector('.snapshot__key');
   if (index < 9) key.textContent = String(index + 1);
   else key.remove();
 
   const trigger = row.querySelector('.snapshot__more');
-  const menu = row.querySelector('.row-menu');
+  const menu = row.querySelector('.actions-menu');
   trigger.id = `snapshot-more-${index}`;
   menu.id = `snapshot-menu-${index}`;
   trigger.setAttribute('commandfor', menu.id);
@@ -160,6 +160,48 @@ async function renderUndo() {
   const backup = settings.autoBackup ? await getBackup(currentDomain) : null;
   $('undoBar').classList.toggle('hidden', !backup);
   if (backup) $('undoText').textContent = t('undo_text', { time: formatRelative(backup.savedAt, getLang()) });
+}
+
+// The "changed" badge opens a menu that names what changed and lets the user
+// stop comparing a cookie the site keeps rewriting.
+function setupChangesMenu(badge, menu, name, index) {
+  const detail = t('modified_detail', { items: describeChanges(changes).join(' / ') });
+  badge.textContent = t('badge_modified');
+  badge.title = detail;
+  badge.setAttribute('aria-label', `${t('badge_modified')}: ${detail}`);
+  badge.classList.remove('hidden');
+  badge.id = `snapshot-changes-${index}`;
+  menu.id = `snapshot-changes-menu-${index}`;
+  badge.setAttribute('commandfor', menu.id);
+
+  const group = menu.querySelector('[focusgroup]');
+  group.setAttribute('aria-labelledby', badge.id);
+  const overwrite = group.querySelector('[data-action="overwrite"]');
+  overwrite.textContent = t('menu_overwrite');
+  const cookieChanges = changes.filter(c => c.type === 'cookies');
+  if (cookieChanges.length) group.prepend(...cookieChanges.map(change => {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.dataset.action = 'ignore';
+    item.dataset.key = change.key;
+    item.textContent = t('menu_ignore_cookie', { name: change.name });
+    return item;
+  }), document.createElement('hr'));
+
+  setupMenu(badge, menu, (action, item) => {
+    if (action === 'overwrite') handleOverwrite(name);
+    else if (action === 'ignore') handleIgnoreCookie(name, changes.find(c => c.key === item.dataset.key));
+  });
+}
+
+async function handleIgnoreCookie(name, change) {
+  if (!change) return;
+  await ignoreCookieChange(currentDomain, change);
+  changes = changes.filter(c => c !== change);
+  renderList();
+  showStatus($('statusMsg'), t('status_cookie_ignored', { name: change.name }), 'success');
+  const row = [...$('snapshotList').children].find(el => el.dataset.name === name);
+  (row?.querySelector('.badge--modified') ?? row?.querySelector('.snapshot__main'))?.focus();
 }
 
 function visibleMains() {
