@@ -2,12 +2,24 @@ function clone(value) {
   return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 }
 
+// A chrome.events.Event stand-in whose listeners tests can fire.
+function event() {
+  const listeners = [];
+  return {
+    addListener(fn) { listeners.push(fn); },
+    removeListener(fn) { listeners.splice(listeners.indexOf(fn), 1); },
+    dispatch(...args) { listeners.forEach(fn => fn(...args)); },
+  };
+}
+
 export function createChromeMock() {
   const state = {
     storage: {},
     cookies: [],
     tabs: [],
     messageHandlers: [],
+    reloadedTabs: [],
+    badges: {},
     grantedOrigins: new Set(),
     uiLanguage: 'ja',
     manifest: { version: '1.0.1' },
@@ -42,6 +54,7 @@ export function createChromeMock() {
           state.storage = {};
         },
       },
+      onChanged: event(),
     },
 
     cookies: {
@@ -68,6 +81,10 @@ export function createChromeMock() {
       async query() {
         return clone(state.tabs);
       },
+      async reload(tabId) {
+        state.reloadedTabs.push(tabId);
+      },
+      onUpdated: event(),
       // Overridden per-test with vi.fn() where message round-tripping matters.
       sendMessage: async () => {
         throw new Error('Could not establish connection. Receiving end does not exist.');
@@ -80,7 +97,15 @@ export function createChromeMock() {
         removeListener(fn) { state.messageHandlers = state.messageHandlers.filter(h => h !== fn); },
       },
       openOptionsPage() {},
+      onInstalled: event(),
+      onStartup: event(),
       getManifest() { return clone(state.manifest); },
+    },
+
+    action: {
+      async setBadgeText({ tabId, text }) { state.badges[tabId] = text; },
+      async setBadgeBackgroundColor() {},
+      async setBadgeTextColor() {},
     },
 
     i18n: {

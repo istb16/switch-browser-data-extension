@@ -22,7 +22,7 @@ describe('lib/data-bridge collectData', () => {
 
     const data = await collectData(1, 'example.com', { cookies: false, localStorage: true, sessionStorage: true, indexedDB: false });
 
-    expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(1, { type: 'getStorageData', types: { localStorage: true, sessionStorage: true, indexedDB: false } });
+    expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(1, { type: 'getStorageData', types: { localStorage: true, sessionStorage: true, indexedDB: false }, digest: false });
     expect(data).toEqual({ localStorage: { a: '1' }, sessionStorage: { b: '2' } });
   });
 

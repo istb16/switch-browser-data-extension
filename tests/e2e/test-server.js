@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { randomBytes } from 'node:crypto';
 import { TEST_PAGE_PORT } from './test-page.js';
 
 const html = `<!doctype html>
@@ -13,7 +14,34 @@ const html = `<!doctype html>
 </body>
 </html>`;
 
+function parseCookies(header = '') {
+  return Object.fromEntries(header.split(';').map(s => s.trim()).filter(Boolean).map(s => {
+    const i = s.indexOf('=');
+    return [s.slice(0, i), decodeURIComponent(s.slice(i + 1))];
+  }));
+}
+
+// /cookies/: csrf is rewritten on every response, like a site's own rotating
+// cookie; sid changes only through /cookies/login?user=NAME, like an account switch.
+function serveCookiePages(req, res, url) {
+  const setCookies = [`csrf=${randomBytes(6).toString('hex')}; Path=/`];
+  if (url.pathname === '/cookies/login') {
+    setCookies.push(`sid=${encodeURIComponent(url.searchParams.get('user') ?? '')}; Path=/; HttpOnly`);
+    res.writeHead(302, { 'Set-Cookie': setCookies, Location: '/cookies/' });
+    res.end();
+    return;
+  }
+  const user = (parseCookies(req.headers.cookie).sid ?? '').replace(/[^\w-]/g, '');
+  res.writeHead(200, { 'Set-Cookie': setCookies, 'Content-Type': 'text/html' });
+  res.end(`<!doctype html><title>tk3 e2e cookie page</title><h1>signed in as: ${user || '(none)'}</h1>`);
+}
+
 createServer((req, res) => {
+  const url = new URL(req.url, `http://localhost:${TEST_PAGE_PORT}`);
+  if (url.pathname.startsWith('/cookies/')) {
+    serveCookiePages(req, res, url);
+    return;
+  }
   res.writeHead(200, { 'Content-Type': 'text/html' });
   res.end(html);
 }).listen(TEST_PAGE_PORT, () => {

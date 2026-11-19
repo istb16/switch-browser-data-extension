@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "__MSG_name__",
-  "version": "1.0.13",
+  "version": "1.0.19",
   "default_locale": "ja",
   "description": "__MSG_description__",
-  "permissions": ["cookies", "storage", "scripting", "activeTab", "tabs"],
+  "permissions": ["cookies", "storage", "unlimitedStorage", "scripting", "activeTab", "tabs"],
   "optional_host_permissions": ["<all_urls>"],
   "action": {
     "default_popup": "popup/popup.html",
@@ -16,12 +16,24 @@
     }
   },
   "options_page": "options/options.html",
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Alt+Shift+S"
+      }
+    }
+  },
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
       "js": [
         "lib/web-storage-handlers.js",
         "lib/indexeddb-handler.js",
+        "lib/storage-digest.js",
         "content/content-script.js"
       ],
       "run_at": "document_idle",

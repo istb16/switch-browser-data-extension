@@ -16,7 +16,9 @@
       <span class="tk-header__name">SWITCH BROWSER DATA</span>
     </span>
     <div class="tk-header__end">
-      <button id="settingsBtn" class="icon-btn" data-i18n-title="btn_settings" title="設定">⚙</button>
+      <button id="settingsBtn" class="icon-btn" type="button" data-i18n-title="btn_settings" data-i18n-aria-label="btn_settings" title="設定" aria-label="設定">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 4.3a1.7 1.7 0 0 1 3.4 0 1.7 1.7 0 0 0 2.6 1 1.7 1.7 0 0 1 2.4 2.4 1.7 1.7 0 0 0 1 2.6 1.7 1.7 0 0 1 0 3.4 1.7 1.7 0 0 0-1 2.6 1.7 1.7 0 0 1-2.4 2.4 1.7 1.7 0 0 0-2.6 1 1.7 1.7 0 0 1-3.4 0 1.7 1.7 0 0 0-2.6-1 1.7 1.7 0 0 1-2.4-2.4 1.7 1.7 0 0 0-1-2.6 1.7 1.7 0 0 1 0-3.4 1.7 1.7 0 0 0 1-2.6 1.7 1.7 0 0 1 2.4-2.4 1.7 1.7 0 0 0 2.6-1z"/><circle cx="12" cy="12" r="3"/></svg>
+      </button>
     </div>
   </header>
 
@@ -26,47 +28,54 @@
       <span id="currentDomain" class="domain-value" data-i18n="loading">読み込み中...</span>
     </div>
 
+    <section id="permissionPanel" class="permission hidden" aria-labelledby="permissionTitle">
+      <svg class="permission__icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+      <h2 id="permissionTitle" class="permission__title" data-i18n="permission_title">このサイトへのアクセスを許可してください</h2>
+      <p class="permission__body" data-i18n="permission_body">Cookie を保存・切り替えるには、このサイトの Cookie を読み書きする許可が要ります。</p>
+      <p class="permission__note" data-i18n="permission_note">許可すると、この画面はいったん閉じます。許可したあとで、もう一度拡張機能のアイコンから開いてください。</p>
+      <button id="grantPermissionBtn" class="tk-btn" type="button" data-i18n="btn_grant_permission">アクセスを許可</button>
+      <p id="permissionDenied" class="permission__denied hidden" role="status" data-i18n="permission_denied">許可されませんでした。もう一度「アクセスを許可」を押すか、Cookie を使わない場合は設定でオフにしてください。</p>
+      <button id="skipCookiesBtn" class="text-btn" type="button" data-i18n="btn_skip_cookies">Cookie を使わない（設定を開く）</button>
+    </section>
+
     <main id="mainContent" class="hidden">
-      <div class="snapshot-section">
-        <label for="snapshotSelect" data-i18n="snapshot_label">スナップショット</label>
-        <select id="snapshotSelect">
-          <option value=""></option>
-        </select>
+      <div id="searchBox" class="search hidden">
+        <label for="searchInput" class="tk-visually-hidden" data-i18n="search_label">スナップショットを検索</label>
+        <svg class="search__icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input type="search" id="searchInput" class="search__input" autocomplete="off" spellcheck="false"
+          data-i18n-placeholder="search_placeholder" placeholder="名前で絞り込み">
+        <kbd class="search__key" aria-hidden="true">/</kbd>
       </div>
 
-      <div id="snapshotMeta" class="snapshot-meta"></div>
+      <h2 id="snapshotListLabel" class="tk-visually-hidden" data-i18n="snapshot_label">スナップショット</h2>
+      <ul id="snapshotList" class="snapshot-list" aria-labelledby="snapshotListLabel"></ul>
 
-      <div class="actions">
-        <button id="loadBtn" class="btn btn-primary" disabled data-i18n="btn_load">読み込み</button>
-        <button id="saveBtn" class="btn btn-secondary" data-i18n="btn_save">保存</button>
-        <button id="deleteBtn" class="btn btn-danger" disabled data-i18n="btn_delete">削除</button>
+      <div id="emptyState" class="empty-state hidden">
+        <p class="empty-state__title" data-i18n="empty_title">まだスナップショットはありません</p>
+        <p class="empty-state__body" data-i18n="empty_body">今のログイン状態などを保存すると、ここからワンクリックで切り替えられます。</p>
+      </div>
+      <p id="noMatch" class="empty-state hidden" data-i18n="no_match">一致するスナップショットはありません</p>
+
+      <div id="undoBar" class="undo-bar hidden">
+        <svg class="undo-bar__icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg>
+        <span id="undoText" class="undo-bar__text"></span>
+        <button id="undoBtn" class="text-btn" type="button" data-i18n="btn_undo">戻す</button>
       </div>
 
-      <div id="savePanel" class="panel hidden">
-        <div class="panel-header" data-i18n="save_panel_title">保存先を選択</div>
-        <div class="save-options">
-          <label>
-            <input type="radio" name="saveMode" value="new" checked>
-            <span data-i18n="save_mode_new">新規作成</span>
-          </label>
-          <label>
-            <input type="radio" name="saveMode" value="overwrite">
-            <span data-i18n="save_mode_overwrite">上書き</span>
-          </label>
-        </div>
-        <div id="newNameArea">
-          <input type="text" id="newSnapshotName" class="text-input"
+      <div class="save-area">
+        <button id="saveBtn" class="tk-btn save-btn" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+          <span data-i18n="btn_save_current">現在の状態を保存</span>
+        </button>
+        <form id="saveForm" class="save-form hidden">
+          <label for="newSnapshotName" class="tk-visually-hidden" data-i18n="new_name_placeholder">スナップショット名</label>
+          <input type="text" id="newSnapshotName" class="text-input" autocomplete="off"
             data-i18n-placeholder="new_name_placeholder" placeholder="スナップショット名">
-        </div>
-        <div id="overwriteArea" class="hidden">
-          <select id="overwriteSelect">
-            <option value=""></option>
-          </select>
-        </div>
-        <div class="panel-actions">
-          <button id="cancelSaveBtn" class="btn btn-ghost" data-i18n="btn_cancel">キャンセル</button>
-          <button id="confirmSaveBtn" class="btn btn-primary" data-i18n="btn_confirm_save">保存する</button>
-        </div>
+          <div class="save-form__actions">
+            <button id="cancelSaveBtn" class="tk-btn tk-btn--quiet" type="button" data-i18n="btn_cancel">キャンセル</button>
+            <button id="confirmSaveBtn" class="tk-btn" type="submit" data-i18n="btn_save">保存</button>
+          </div>
+        </form>
       </div>
     </main>
 
@@ -74,8 +83,41 @@
       このページでは使用できません
     </div>
 
-    <div id="statusMsg" class="status-msg hidden"></div>
+    <div id="statusMsg" class="status-msg hidden" role="status"></div>
   </div>
+
+  <template id="snapshotRowTemplate">
+    <li class="snapshot">
+      <button class="snapshot__main" type="button">
+        <span class="snapshot__dot" aria-hidden="true"></span>
+        <span class="snapshot__text">
+          <span class="snapshot__name"></span>
+          <span class="snapshot__meta"></span>
+        </span>
+        <span class="badge badge--active hidden"></span>
+      </button>
+      <button class="badge badge--modified hidden" type="button" aria-haspopup="menu" aria-expanded="false" command="toggle-popover"></button>
+      <div class="row-menu changes-menu" popover="auto">
+        <div focusgroup="menu nomemory">
+          <button type="button" data-action="overwrite"></button>
+        </div>
+      </div>
+      <kbd class="snapshot__key" aria-hidden="true"></kbd>
+      <button class="icon-btn snapshot__more" type="button" aria-haspopup="menu" aria-expanded="false" command="toggle-popover">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/></svg>
+      </button>
+      <div class="row-menu actions-menu" popover="auto">
+        <div focusgroup="menu nomemory">
+          <button type="button" data-action="overwrite"></button>
+          <button type="button" data-action="rename"></button>
+          <hr>
+          <button type="button" data-action="delete" class="row-menu__danger"></button>
+        </div>
+      </div>
+    </li>
+  </template>
+
+  <script src="../lib/storage-digest.js"></script>
   <script type="module" src="popup.js"></script>
 </body>
 </html>
