@@ -51,7 +51,7 @@ export async function handleAddGroup(e, onChange) {
     const granted = enabledTypes.cookies ? await chrome.permissions.request({ origins: groupOrigins(base) }) : true;
     await addGroup(base);
     input.value = '';
-    const next = [...groups, base];
+    const next = await getGroups();
     renderGroups(next, onChange);
     await onChange(next);
     notify(granted ? 'status_group_added' : 'status_group_added_no_permission', { group: base });

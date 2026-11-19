@@ -177,18 +177,79 @@ describe('background/service-worker', () => {
     });
 
     it('a change during the first load ends with the newest value', async () => {
+      chrome._state.tabs = [tab];
       await setActiveSnapshots({ 'a.com': 'Admin' });
       await loadServiceWorker();
+      const get = vi.spyOn(chrome.storage.local, 'get');
       const held = chrome._holdGet(keys => keys.includes('activeSnapshots'));
 
       chrome.tabs.onUpdated.dispatch(1, { status: 'complete' }, tab);
       await setActiveSnapshots({ 'a.com': 'User' });
       chrome._deliverStorageEvents();
-      held.release();
-      await vi.waitFor(() => expect(chrome._state.badges[1]).toBeDefined());
+      await vi.waitFor(() => expect(chrome._state.badges[1]).toBe('Us'));
+      const heldCall = get.mock.calls.findIndex(([keys]) => [keys].flat().includes('activeSnapshots'));
+      expect(heldCall).toBeGreaterThanOrEqual(0);
+      const staleRead = get.mock.results[heldCall].value;
 
+      held.release();
+      expect((await staleRead).activeSnapshots).toEqual({ 'a.com': 'Admin' });
+      for (let i = 0; i < 5; i++) await vi.advanceTimersByTimeAsync(0);
+      expect(chrome._state.badges[1]).toBe('Us');
+
+      chrome._state.badges[1] = 'zz';
       chrome.tabs.onUpdated.dispatch(1, { status: 'complete' }, tab);
       await vi.waitFor(() => expect(chrome._state.badges[1]).toBe('Us'));
+    });
+
+    it('a failed first read is not cached, so the next tab update sets the badge', async () => {
+      const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+      await setActiveSnapshots({ 'a.com': 'Admin' });
+      await loadServiceWorker();
+      const get = chrome.storage.local.get;
+      vi.spyOn(chrome.storage.local, 'get')
+        .mockImplementationOnce(async () => { throw new Error('read failed'); })
+        .mockImplementation(get);
+
+      chrome.tabs.onUpdated.dispatch(1, { status: 'complete' }, tab);
+      await vi.waitFor(() => expect(logged).toHaveBeenCalled());
+      expect(chrome._state.badges[1]).toBeUndefined();
+
+      chrome.tabs.onUpdated.dispatch(1, { status: 'complete' }, tab);
+      await vi.waitFor(() => expect(chrome._state.badges[1]).toBe('Ad'));
+    });
+
+    it('a write to a key the badge does not use keeps the cache and updates no tabs', async () => {
+      chrome._state.tabs = [tab];
+      await setActiveSnapshots({ 'a.com': 'Admin' });
+      chrome._deliverStorageEvents();
+      await loadServiceWorker();
+      chrome.tabs.onUpdated.dispatch(1, { status: 'complete' }, tab);
+      await vi.waitFor(() => expect(chrome._state.badges[1]).toBe('Ad'));
+      const get = vi.spyOn(chrome.storage.local, 'get');
+      const query = vi.spyOn(chrome.tabs, 'query');
+
+      await chrome.storage.local.set({ 'snapshots/a.com': { Admin: {} }, snapshotOrder: { 'a.com': ['Admin'] } });
+      chrome._deliverStorageEvents();
+      chrome.storage.onChanged.dispatch({ activeSnapshots: { newValue: {} } }, 'session');
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(query).not.toHaveBeenCalled();
+      chrome.tabs.onUpdated.dispatch(1, { status: 'complete' }, tab);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(badgeKeyGets(get)).toBe(0);
+    });
+
+    it('on install sets the badge colours and badges every open tab', async () => {
+      chrome._state.tabs = [tab, { id: 2, url: 'https://b.com/' }];
+      await setActiveSnapshots({ 'a.com': 'Admin' });
+      await loadServiceWorker();
+      const background = vi.spyOn(chrome.action, 'setBadgeBackgroundColor');
+      const text = vi.spyOn(chrome.action, 'setBadgeTextColor');
+
+      chrome.runtime.onInstalled.dispatch({ reason: 'install' });
+      await vi.waitFor(() => expect(chrome._state.badges).toEqual({ 1: 'Ad', 2: '' }));
+      expect(background).toHaveBeenCalledWith({ color: '#1F63D8' });
+      expect(text).toHaveBeenCalledWith({ color: '#FFFFFF' });
     });
 
     it('after clear() a tab update sets an empty badge without throwing', async () => {

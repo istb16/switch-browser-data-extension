@@ -173,6 +173,14 @@ describe('lib/transfer mergeImport', () => {
     const result = mergeImport(existing(), orders(), { 'a.com': { A: snap({ memo: 'new' }) } }, 'skip');
     expect(result.snapshots).toEqual(existing());
     expect(result.orders).toEqual(orders());
+    expect(result.changedHosts).toEqual([]);
+  });
+
+  it('changedHosts lists only the hosts that gained or replaced a snapshot', () => {
+    const imported = { 'a.com': { A: snap() }, 'b.com': { Z: snap() }, 'c.com': {} };
+    expect(mergeImport(existing(), orders(), imported, 'skip').changedHosts).toEqual(['b.com']);
+    expect(mergeImport(existing(), orders(), imported, 'overwrite').changedHosts).toEqual(['a.com', 'b.com']);
+    expect(mergeImport(existing(), orders(), imported, 'keepBoth').changedHosts).toEqual(['a.com', 'b.com']);
   });
 
   it('keepBoth adds name (2), then (3) when (2) exists, appended to the order', () => {

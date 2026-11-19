@@ -1185,6 +1185,39 @@ describe('popup/popup.js', () => {
       expect(await chrome.storage.local.get(['snapshots', 'backups'])).toEqual({});
       expect(Object.keys(await getSnapshots()).sort()).toEqual(['example.com', 'other.com']);
     });
+
+    it('a failed migration still shows the list', async () => {
+      await chrome.storage.local.set({ snapshots: { 'other.com': { third: snap('2024-01-03T00:00:00.000Z') } } });
+      await setSnapshots({ 'example.com': { first: snap('2024-01-01T00:00:00.000Z') } });
+      const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const remove = vi.spyOn(chrome.storage.local, 'remove').mockRejectedValueOnce(new Error('I/O error'));
+
+      await loadPopup('https://example.com/');
+
+      expect(logged).toHaveBeenCalled();
+      expect(rowNames()).toEqual(['first']);
+      expect(await chrome.storage.local.get('snapshots')).toHaveProperty('snapshots');
+      remove.mockRestore();
+      logged.mockRestore();
+    });
+
+    it('the next open retries the migration and keeps the per-host data', async () => {
+      await chrome.storage.local.set({ snapshots: { 'other.com': { third: snap('2024-01-03T00:00:00.000Z') } } });
+      await setSnapshots({ 'example.com': { first: snap('2024-01-01T00:00:00.000Z') } });
+      const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const remove = vi.spyOn(chrome.storage.local, 'remove').mockRejectedValueOnce(new Error('I/O error'));
+      await loadPopup('https://example.com/');
+      remove.mockRestore();
+      logged.mockRestore();
+      const before = structuredClone(await getSnapshots());
+
+      await loadPopup('https://example.com/');
+
+      expect(await chrome.storage.local.get(['snapshots', 'backups'])).toEqual({});
+      expect(await getSnapshots()).toEqual(before);
+      expect(Object.keys(before).sort()).toEqual(['example.com', 'other.com']);
+      expect(rowNames()).toEqual(['first']);
+    });
   });
 
   describe('row menu', () => {

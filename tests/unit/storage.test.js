@@ -5,6 +5,7 @@ import {
   getVolatileCookies, setVolatileCookies, getCookieChecks, setCookieChecks,
   readKeys, updateKey, withDefaultSettings,
   getSnapshotHosts, getSnapshotsFor, setSnapshotsFor, getBackupHosts, getBackup, setBackup,
+  setSnapshotsAndOrders,
 } from '../../lib/storage.js';
 
 describe('lib/storage', () => {
@@ -228,6 +229,54 @@ describe('lib/storage', () => {
 
       await setBackup('a.com', null);
       expect(await getBackups()).toEqual({ 'b.com': snap });
+    });
+
+    describe('setSnapshotsAndOrders', () => {
+      it('skips an empty value and lists only the new hosts', async () => {
+        await setSnapshotsFor('a.com', { x: snap });
+        const set = vi.spyOn(chrome.storage.local, 'set');
+
+        await setSnapshotsAndOrders({ 'a.com': { x: snap, y: snap }, 'b.com': {}, 'c.com': { z: snap } }, { 'a.com': ['y', 'x'] });
+
+        expect(set).toHaveBeenCalledTimes(1);
+        expect(set).toHaveBeenCalledWith({
+          'snapshots/a.com': { x: snap, y: snap },
+          'snapshots/c.com': { z: snap },
+          snapshotHosts: ['a.com', 'c.com'],
+          snapshotOrder: { 'a.com': ['y', 'x'] },
+        });
+        expect(chrome._state.storage).not.toHaveProperty('snapshots/b.com');
+      });
+
+      it('leaves snapshotHosts out when every host is already listed', async () => {
+        await setSnapshotsFor('a.com', { x: snap });
+        await setSnapshotsFor('b.com', { y: snap });
+        const set = vi.spyOn(chrome.storage.local, 'set');
+
+        await setSnapshotsAndOrders({ 'b.com': { y: snap, z: snap } }, { 'b.com': ['y', 'z'] });
+
+        expect(set).toHaveBeenCalledWith({ 'snapshots/b.com': { y: snap, z: snap }, snapshotOrder: { 'b.com': ['y', 'z'] } });
+        expect(await getSnapshotHosts()).toEqual(['a.com', 'b.com']);
+      });
+
+      it('does not list an existing host twice when a new one is added with it', async () => {
+        await setSnapshotsFor('a.com', { x: snap });
+
+        await setSnapshotsAndOrders({ 'a.com': { x: snap, y: snap }, 'b.com': { z: snap } }, {});
+
+        expect(await getSnapshotHosts()).toEqual(['a.com', 'b.com']);
+      });
+
+      it('with no values writes only the orders', async () => {
+        await setSnapshotsFor('a.com', { x: snap });
+        const set = vi.spyOn(chrome.storage.local, 'set');
+
+        await setSnapshotsAndOrders({}, { 'a.com': ['x'] });
+
+        expect(set).toHaveBeenCalledTimes(1);
+        expect(set).toHaveBeenCalledWith({ snapshotOrder: { 'a.com': ['x'] } });
+        expect(await getSnapshotOrders()).toEqual({ 'a.com': ['x'] });
+      });
     });
 
     it('accepts the empty host of file: pages', async () => {

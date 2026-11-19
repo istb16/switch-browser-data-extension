@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import {
   setSnapshots, setSnapshotOrders, getSnapshots, getSnapshotOrders, setSettings, getSettings, getBackups, setBackups,
-  setSnapshotsFor, setBackup,
+  setSnapshotsFor, setBackup, getSnapshotHosts,
 } from '../../lib/storage.js';
 import { byteSize, formatBytes } from '../../lib/snapshot-summary.js';
 import { encryptText, ENVELOPE_TAG, MIN_ITERATIONS } from '../../lib/crypto.js';
@@ -899,6 +899,50 @@ describe('options/options.js', () => {
       expect(rowNames(domainItems()[0])).toEqual(['x', 'y']);
     });
 
+    it('a multi-host import writes the changed hosts, the index and the orders in one set', async () => {
+      const old = { savedAt: SAVED };
+      await setSnapshots({ 'a.com': { x: old }, 'b.com': { z: old } });
+      await setSnapshotOrders({ 'a.com': ['x'], 'b.com': ['z'] });
+      await loadOptions();
+      const set = vi.spyOn(chrome.storage.local, 'set');
+
+      const file = { 'a.com': { y: old }, 'b.com': { z: { savedAt: '2024-02-02T00:00:00.000Z' } }, 'c.com': { w: old } };
+      importFile({ size: 100, text: () => Promise.resolve(JSON.stringify(file)) });
+      await waitFor(() => dialog());
+      dialog().querySelectorAll('button')[1].click();
+      await waitFor(() => status().textContent.startsWith('インポートしました'));
+
+      expect(set).toHaveBeenCalledTimes(1);
+      const [items] = set.mock.calls[0];
+      expect(Object.keys(items).sort()).toEqual(['snapshotHosts', 'snapshotOrder', 'snapshots/a.com', 'snapshots/c.com']);
+      expect(items.snapshotHosts).toEqual(['a.com', 'b.com', 'c.com']);
+      expect(await getSnapshotOrders()).toEqual({ 'a.com': ['x', 'y'], 'b.com': ['z'], 'c.com': ['w'] });
+    });
+
+    it('an import whose write fails shows the error and leaves storage and the list as they were', async () => {
+      const old = { savedAt: SAVED };
+      const before = { 'a.com': { x: old }, 'b.com': { z: old } };
+      await setSnapshots(before);
+      await setSnapshotOrders({ 'a.com': ['x'], 'b.com': ['z'] });
+      await loadOptions();
+      const set = chrome.storage.local.set.bind(chrome.storage.local);
+      vi.spyOn(chrome.storage.local, 'set').mockImplementation(async items => {
+        if ('snapshots/b.com' in items) throw new Error('QUOTA_BYTES quota exceeded');
+        return set(items);
+      });
+
+      const file = { 'a.com': { y: old }, 'b.com': { w: old } };
+      importFile({ size: 100, text: () => Promise.resolve(JSON.stringify(file)) });
+      await waitFor(() => status().textContent === MESSAGES.ja.error_import_failed);
+
+      expect(status().className).toContain('error');
+      expect(document.getElementById('importFile').value).toBe('');
+      expect(await getSnapshots()).toEqual(before);
+      expect(await getSnapshotOrders()).toEqual({ 'a.com': ['x'], 'b.com': ['z'] });
+      expect(domainNames()).toEqual(['a.com', 'b.com']);
+      expect(rowNames(domainItems()[0])).toEqual(['x']);
+    });
+
     it('exporting one snapshot reads one host', async () => {
       await setSnapshots({ 'a.com': { x: { savedAt: SAVED } }, 'b.com': { z: { savedAt: SAVED } } });
       await loadOptions();
@@ -1014,6 +1058,23 @@ describe('options/options.js', () => {
       expect(groupNames()).toEqual(['example.com']);
       expect(document.getElementById('groupInput').value).toBe('');
       expect(status().textContent).toBe(MESSAGES.ja.status_group_added.replace('{group}', 'example.com'));
+    });
+
+    it('after adding, lists and passes on the stored groups, including one added elsewhere meanwhile', async () => {
+      await setSnapshots({ 'app.example.com': { x: { savedAt: SAVED } }, 'app.other.org': { y: { savedAt: SAVED } } });
+      await loadOptions();
+      const chips = () => Object.fromEntries(domainItems().map(item => [
+        item.querySelector('.domain-name').textContent,
+        item.querySelector('.group-chip')?.textContent ?? null,
+      ]));
+
+      await submitGroup('example.com');
+      await chrome.storage.local.set({ groups: ['other.org'] });
+      await answer(true);
+
+      expect((await chrome.storage.local.get('groups')).groups).toEqual(['other.org', 'example.com']);
+      expect(groupNames()).toEqual(['other.org', 'example.com']);
+      expect(chips()).toEqual({ 'app.example.com': 'グループ: example.com', 'app.other.org': 'グループ: other.org' });
     });
 
     it('still adds the group when the permission prompt is denied, and says so', async () => {
@@ -1286,6 +1347,46 @@ describe('options/options.js', () => {
       expect(await chrome.storage.local.get(['snapshots', 'backups'])).toEqual({});
       expect((await getSnapshots())['a.com'].x).toEqual({ ...x, bytes: byteSize(x) });
       expect(await getBackups()).toEqual({ 'a.com': { savedAt: SAVED, activeName: null } });
+    });
+
+    it('a failed migration keeps the old keys and the page still works', async () => {
+      await chrome.storage.local.set({ snapshots: { 'a.com': { x: { savedAt: SAVED } } } });
+      await setSnapshotsFor('b.com', { z: { savedAt: SAVED } });
+      const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const remove = vi.spyOn(chrome.storage.local, 'remove').mockRejectedValueOnce(new Error('I/O error'));
+
+      await loadOptions();
+
+      expect(logged).toHaveBeenCalled();
+      expect(document.body.dataset.ready).toBe('true');
+      expect(domainNames()).toContain('b.com');
+      expect(await chrome.storage.local.get('snapshots')).toHaveProperty('snapshots');
+      remove.mockRestore();
+
+      const toggle = document.getElementById('toggleAutoReload');
+      toggle.click();
+      await flush();
+      expect((await getSettings()).autoReload).toBe(false);
+    });
+
+    it('the next open retries the migration and keeps the per-host data', async () => {
+      await chrome.storage.local.set({ snapshots: { 'a.com': { x: { savedAt: SAVED } } } });
+      await setSnapshotsFor('b.com', { z: { savedAt: SAVED } });
+      const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const remove = vi.spyOn(chrome.storage.local, 'remove').mockRejectedValueOnce(new Error('I/O error'));
+      await loadOptions();
+      expect(logged).toHaveBeenCalled();
+      remove.mockRestore();
+      logged.mockRestore();
+      const before = structuredClone({ a: chrome._state.storage['snapshots/a.com'], b: chrome._state.storage['snapshots/b.com'] });
+
+      await loadOptions();
+
+      expect(await chrome.storage.local.get(['snapshots', 'backups'])).toEqual({});
+      expect(chrome._state.storage['snapshots/a.com']).toEqual(before.a);
+      expect(chrome._state.storage['snapshots/b.com']).toEqual(before.b);
+      expect(await getSnapshotHosts()).toEqual(['b.com', 'a.com']);
+      expect(domainNames()).toEqual(['a.com', 'b.com']);
     });
   });
 

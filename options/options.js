@@ -37,7 +37,8 @@ async function init() {
   await initI18n();
   applyI18n();
   renderVersionFooter();
-  await migrateStorage();
+  // The old keys stay on failure and the next open retries; the page still has to work.
+  await migrateStorage().catch(console.error);
 
   $('langSelect').value = await getSavedLangSetting();
   $('langSelect').addEventListener('change', handleLanguageChange);

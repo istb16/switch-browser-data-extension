@@ -24,14 +24,31 @@ function hostnameOf(url) {
 const BADGE_KEYS = ['settings', 'activeSnapshots', 'groups'];
 
 let badgeCache = null;
+let badgeGeneration = 0;
 
 function badgeState() {
-  badgeCache ??= readKeys(BADGE_KEYS);
+  if (!badgeCache) {
+    const read = readKeys(BADGE_KEYS);
+    badgeCache = read;
+    // A failed read would otherwise stay cached until a badge key changes.
+    read.catch(() => {
+      if (badgeCache === read) badgeCache = null;
+    });
+  }
   return badgeCache;
 }
 
+function invalidateBadgeState() {
+  badgeGeneration++;
+  badgeCache = null;
+}
+
 async function updateTabs(tabs) {
+  const generation = badgeGeneration;
   const { settings, activeSnapshots: active, groups } = await badgeState();
+  // A badge key changed while this read was pending; the update started by that
+  // change draws every tab, and this older state must not overwrite it.
+  if (generation !== badgeGeneration) return;
   await Promise.all(tabs.map(tab => {
     const host = hostnameOf(tab.url);
     const key = host && resolveScope(host, groups).key;
@@ -47,7 +64,7 @@ async function updateAllTabs() {
 function setupBadges() {
   chrome.action.setBadgeBackgroundColor({ color: BADGE_COLOR });
   chrome.action.setBadgeTextColor({ color: BADGE_TEXT_COLOR });
-  updateAllTabs();
+  updateAllTabs().catch(console.error);
 }
 
 chrome.runtime.onInstalled.addListener(setupBadges);
@@ -68,12 +85,12 @@ async function checkCookiesAfterLoad(tabId) {
 }
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.url || changeInfo.status === 'complete') updateTabs([tab]);
+  if (changeInfo.url || changeInfo.status === 'complete') updateTabs([tab]).catch(console.error);
   if (changeInfo.status === 'complete') setTimeout(() => checkCookiesAfterLoad(tabId), SETTLE_MS);
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local' || !BADGE_KEYS.some(key => changes[key])) return;
-  badgeCache = null;
-  updateAllTabs();
+  invalidateBadgeState();
+  updateAllTabs().catch(console.error);
 });

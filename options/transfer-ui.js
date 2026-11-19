@@ -1,6 +1,6 @@
 import { t } from '../lib/i18n.js';
 import {
-  getSnapshots, getSnapshotsFor, setSnapshotsFor, getSettings, getSnapshotOrders, setSnapshotOrders,
+  getSnapshots, getSnapshotsFor, getSettings, getSnapshotOrders, setSnapshotsAndOrders,
 } from '../lib/storage.js';
 import { withSnapshotLock } from '../lib/snapshot.js';
 import { showFormDialog, showChoice } from '../lib/dialog.js';
@@ -145,9 +145,8 @@ export async function handleImport(e, onImported) {
     const merged = await withSnapshotLock(async () => {
       const [existing, orders] = await Promise.all([getSnapshotsFor(hosts), getSnapshotOrders()]);
       const result = mergeImport(existing, orders, parsed.data, strategy);
-      // One host at a time: each write updates the shared host index.
-      for (const host of hosts) await setSnapshotsFor(host, result.snapshots[host]);
-      await setSnapshotOrders(result.orders);
+      const changed = Object.fromEntries(result.changedHosts.map(host => [host, result.snapshots[host]]));
+      await setSnapshotsAndOrders(changed, result.orders);
       return result;
     });
     await onImported();

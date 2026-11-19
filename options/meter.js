@@ -4,8 +4,9 @@ import { formatBytes } from '../lib/snapshot-summary.js';
 import { getBackupHosts, BACKUP_PREFIX } from '../lib/storage.js';
 
 const METER_DOMAIN_SEGMENTS = 5;
-// unlimitedStorage lifts the quota, but the popup reads and rewrites the whole
-// snapshots value on every open and save, so size still costs speed.
+// unlimitedStorage lifts the quota, so the advisory is about speed, not space.
+// It is judged on the total getBytesInUse(null), although the popup reads only
+// the keys of the hosts it lists.
 const METER_ADVISORY_BYTES = 50 * 1024 * 1024;
 
 export async function renderMeter(sizes) {

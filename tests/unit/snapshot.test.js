@@ -523,6 +523,28 @@ describe('lib/snapshot — migrateStorage', () => {
     expect(chrome._state.storage).toEqual(once);
   });
 
+  it('a retry after a failed remove keeps what was saved in between', async () => {
+    await chrome.storage.local.set(legacy());
+    vi.spyOn(chrome.storage.local, 'remove').mockRejectedValueOnce(new Error('crash'));
+    await expect(migrateStorage()).rejects.toThrow('crash');
+    await saveSnapshot('a.com', 'between', { localStorage: { b: '1' } });
+    const before = structuredClone({
+      a: chrome._state.storage['snapshots/a.com'],
+      b: chrome._state.storage['snapshots/b.com'],
+      backup: chrome._state.storage['backups/a.com'],
+    });
+
+    await migrateStorage();
+
+    expect(await chrome.storage.local.get(['snapshots', 'backups'])).toEqual({});
+    expect(chrome._state.storage['snapshots/a.com']).toEqual(before.a);
+    expect(Object.keys(before.a)).toContain('between');
+    expect(chrome._state.storage['snapshots/b.com']).toEqual(before.b);
+    expect(chrome._state.storage['backups/a.com']).toEqual(before.backup);
+    expect(await getSnapshotHosts()).toEqual(['a.com', 'b.com']);
+    expect(await getBackupHosts()).toEqual(['a.com']);
+  });
+
   it('a failed migration leaves the legacy keys and can be retried', async () => {
     await chrome.storage.local.set(legacy());
     vi.spyOn(chrome.storage.local, 'set').mockRejectedValueOnce(new Error('quota'));
@@ -536,6 +558,39 @@ describe('lib/snapshot — migrateStorage', () => {
     await migrateStorage();
     expect(Object.keys(await getSnapshots()).sort()).toEqual(['a.com', 'b.com']);
     expect(await chrome.storage.local.get(['snapshots', 'backups'])).toEqual({});
+  });
+
+  it('drops corrupt legacy snapshots and moves the rest', async () => {
+    const ok = { savedAt: SAVED, localStorage: { k: 'v' } };
+    await chrome.storage.local.set({ snapshots: { 'a.com': { bad: null, text: 'x', list: [1], ok } } });
+
+    await migrateStorage();
+
+    expect(await getSnapshots()).toEqual({ 'a.com': { ok: { ...ok, bytes: byteSize(ok) } } });
+    expect(await chrome.storage.local.get(['snapshots', 'backups'])).toEqual({});
+  });
+
+  it('skips a legacy host whose value is not an object, or has only corrupt entries', async () => {
+    const z = { savedAt: SAVED };
+    await chrome.storage.local.set({
+      snapshots: { 'a.com': 'corrupt', 'n.com': null, 'c.com': { bad: null }, 'b.com': { z } },
+      backups: { 'a.com': 42, 'b.com': { savedAt: SAVED, activeName: null } },
+    });
+
+    await migrateStorage();
+
+    expect(await getSnapshots()).toEqual({ 'b.com': { z: { ...z, bytes: byteSize(z) } } });
+    expect(await getSnapshotHosts()).toEqual(['b.com']);
+    expect(await getBackups()).toEqual({ 'b.com': { savedAt: SAVED, activeName: null } });
+    expect(await chrome.storage.local.get(['snapshots', 'backups'])).toEqual({});
+  });
+
+  it('a legacy value that is not an object is removed without moving anything', async () => {
+    await chrome.storage.local.set({ snapshots: 'corrupt', backups: [1, 2] });
+
+    await migrateStorage();
+
+    expect(chrome._state.storage).toEqual({});
   });
 
   it('a save before migration survives it', async () => {

@@ -28,7 +28,8 @@ async function init() {
   const [, [tab]] = await Promise.all([
     initI18n().then(applyI18n),
     chrome.tabs.query({ active: true, currentWindow: true }),
-    migrateStorage(),
+    // The old keys stay on failure and the next open retries; the popup still has to work.
+    migrateStorage().catch(console.error),
   ]);
   state.activeTab = tab;
 
