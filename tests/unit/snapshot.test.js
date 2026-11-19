@@ -182,6 +182,35 @@ describe('lib/snapshot — active snapshot and backup', () => {
     expect(await getActiveSnapshot('a.com')).toBe('z');
   });
 
+  it('deleteSnapshot clears a group reference to it', async () => {
+    const { getActiveSnapshot } = await import('../../lib/snapshot.js');
+    const { setActiveSnapshots } = await import('../../lib/storage.js');
+    await saveSnapshot('app.example.com', 'x', {});
+    await saveSnapshot('app.example.com', 'y', {});
+    await saveSnapshot('example.com', 'x', {});
+    await setActiveSnapshots({ 'example.com': { host: 'app.example.com', name: 'x' } });
+
+    await deleteSnapshot('example.com', 'x');
+    await deleteSnapshot('app.example.com', 'y');
+    expect(await getActiveSnapshot('example.com')).toEqual({ host: 'app.example.com', name: 'x' });
+
+    await deleteSnapshot('app.example.com', 'x');
+    expect(await getActiveSnapshot('example.com')).toBeNull();
+  });
+
+  it('renameSnapshot renames a group reference to it', async () => {
+    const { getActiveSnapshot } = await import('../../lib/snapshot.js');
+    const { setActiveSnapshots } = await import('../../lib/storage.js');
+    await saveSnapshot('app.example.com', 'x', {});
+    await saveSnapshot('www.example.com', 'x', {});
+    await setActiveSnapshots({ 'example.com': { host: 'app.example.com', name: 'x' } });
+
+    await renameSnapshot('www.example.com', 'x', 'w');
+    expect(await getActiveSnapshot('example.com')).toEqual({ host: 'app.example.com', name: 'x' });
+    await renameSnapshot('app.example.com', 'x', 'z');
+    expect(await getActiveSnapshot('example.com')).toEqual({ host: 'app.example.com', name: 'z' });
+  });
+
   it('keeps one backup per domain, apart from the snapshots', async () => {
     const { saveBackup, getBackup } = await import('../../lib/snapshot.js');
     expect(await getBackup('a.com')).toBeNull();

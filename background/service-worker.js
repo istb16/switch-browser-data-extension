@@ -1,5 +1,6 @@
-import { getActiveSnapshots, getSettings } from '../lib/storage.js';
+import { getActiveSnapshots, getSettings, getGroups } from '../lib/storage.js';
 import { badgeText } from '../lib/badge.js';
+import { resolveScope, activeRef } from '../lib/groups.js';
 import { getCookiesForDomain } from '../lib/cookie-handler.js';
 import { hasHostPermission } from '../lib/data-bridge.js';
 import { takeCookieCheck, learnVolatileCookies } from '../lib/volatile-cookies.js';
@@ -21,10 +22,11 @@ function hostnameOf(url) {
 }
 
 async function updateTabs(tabs) {
-  const [settings, active] = await Promise.all([getSettings(), getActiveSnapshots()]);
+  const [settings, active, groups] = await Promise.all([getSettings(), getActiveSnapshots(), getGroups()]);
   await Promise.all(tabs.map(tab => {
     const host = hostnameOf(tab.url);
-    const text = settings.showBadge && host ? badgeText(active[host]) : '';
+    const key = host && resolveScope(host, groups).key;
+    const text = settings.showBadge && host ? badgeText(activeRef(active[key], key)?.name) : '';
     return chrome.action.setBadgeText({ tabId: tab.id, text }).catch(() => {});
   }));
 }
@@ -54,8 +56,9 @@ async function checkCookiesAfterLoad(tabId) {
   const check = await takeCookieCheck(tabId);
   // Without the host permission getAll() returns nothing, which would look like
   // every cookie had disappeared.
-  if (!check || !await hasHostPermission(check.domain)) return;
-  await learnVolatileCookies(check.domain, check.cookies, await getCookiesForDomain(check.domain));
+  // Checks stored before groups existed carry only the domain.
+  if (!check || !await hasHostPermission({ origins: check.origins ?? [`*://${check.domain}/*`] })) return;
+  await learnVolatileCookies(check.domain, check.cookies, await getCookiesForDomain(check.cookieDomain ?? check.domain));
 }
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
@@ -64,5 +67,5 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && (changes.activeSnapshots || changes.settings)) updateAllTabs();
+  if (area === 'local' && (changes.activeSnapshots || changes.settings || changes.groups)) updateAllTabs();
 });

@@ -1,11 +1,15 @@
 import { initI18n, t, applyI18n, getLang } from '../lib/i18n.js';
 import {
-  getSnapshotsForDomain, getOrderedSnapshotNames, saveSnapshot, deleteSnapshot, renameSnapshot,
+  getOrderedSnapshotNames, saveSnapshot, deleteSnapshot, renameSnapshot,
   loadSnapshot, getActiveSnapshot, setActiveSnapshot, saveBackup, getBackup, updateSnapshotDetails,
 } from '../lib/snapshot.js';
-import { summarize, formatBytes, SNAPSHOT_COLORS, MEMO_MAX } from '../lib/snapshot-summary.js';
-import { getSettings } from '../lib/storage.js';
-import { collectData, applyData, clearData, canReachPage, requestHostPermission, hasHostPermission } from '../lib/data-bridge.js';
+import { summarize, byteSize, formatBytes, SNAPSHOT_COLORS, MEMO_MAX } from '../lib/snapshot-summary.js';
+import { getSettings, getSnapshots, getGroups } from '../lib/storage.js';
+import {
+  collectData, applyData, clearData, canReachPage, requestHostPermission, hasHostPermission, cookieDomainFor,
+} from '../lib/data-bridge.js';
+import { cookiesWithin } from '../lib/cookie-handler.js';
+import { resolveScope, memberHosts, activeRef } from '../lib/groups.js';
 import { findChanges, describeChanges, withDigests, TYPE_LABELS } from '../lib/data-compare.js';
 import { getVolatileCookiesFor, startCookieCheck, ignoreCookieChange, hasPendingCookieCheck, cancelCookieCheck } from '../lib/volatile-cookies.js';
 import { showConfirm, showFormDialog } from '../lib/dialog.js';
@@ -21,15 +25,20 @@ const SEARCH_MIN = 5;
 // Short forms keep the preview on one line; the tooltip spells them out.
 const PREVIEW_LABELS = { cookies: 'Cookie', localStorage: 'LS', sessionStorage: 'SS', indexedDB: 'IDB' };
 
-let currentDomain = null;
+// See resolveScope() in lib/groups.js: `host` is the tab's host, `key` the group
+// base (or the host outside a group).
+let scope = null;
+let groups = [];
 let activeTab = null;
 let settings = null;
+// Snapshots of every listed host: { host: { name: snapshot } }.
 let snapshots = {};
-let names = [];
-// Per-name summarize() results, computed once per refresh rather than per render,
+// The listed rows, { host, name }; in a group they come from every member host.
+let entries = [];
+// Per-entry summarize() results, computed once per refresh rather than per render,
 // since search re-renders on every keystroke.
-let summaries = {};
-let activeName = null;
+let summaries = new Map();
+let activeEntry = null;
 // What differs from the active snapshot (see findChanges); empty when nothing does.
 let changes = [];
 let busy = false;
@@ -54,17 +63,25 @@ async function init() {
     return;
   }
 
+  let host;
   try {
-    currentDomain = new URL(tab.url).hostname;
+    host = new URL(tab.url).hostname;
   } catch {
     showUnavailable();
     return;
   }
 
-  $('currentDomain').textContent = currentDomain;
-  settings = await getSettings();
+  $('currentDomain').textContent = host;
+  [settings, groups] = await Promise.all([getSettings(), getGroups()]);
+  scope = resolveScope(host, groups);
+  if (scope.group) {
+    const chip = $('groupChip');
+    chip.textContent = t('group_chip', { group: scope.group });
+    chip.title = t('group_chip_title', { group: scope.group });
+    chip.classList.remove('hidden');
+  }
 
-  if (settings.enabledTypes.cookies && !await hasHostPermission(currentDomain)) {
+  if (settings.enabledTypes.cookies && !await hasHostPermission(scope)) {
     showPermissionPanel();
     return;
   }
@@ -87,11 +104,12 @@ async function showMain() {
 // front, with nothing else to lose, and telling the user to reopen avoids that.
 function showPermissionPanel() {
   $('permissionPanel').classList.remove('hidden');
+  if (scope.group) $('permissionBody').textContent = t('permission_body_group', { group: scope.group });
   $('grantPermissionBtn').addEventListener('click', async () => {
     $('permissionDenied').classList.add('hidden');
     // Where the popup survives the prompt (it is answered quickly, or the browser
     // keeps the popup open), carry on without making the user reopen it.
-    if (await requestHostPermission(currentDomain)) await showMain();
+    if (await requestHostPermission(scope)) await showMain();
     else $('permissionDenied').classList.remove('hidden');
   });
   $('skipCookiesBtn').addEventListener('click', () => chrome.runtime.openOptionsPage());
@@ -102,74 +120,115 @@ function showUnavailable() {
   $('unavailableMsg').classList.remove('hidden');
 }
 
+const entryId = entry => `${entry.host}\n${entry.name}`;
+const sameEntry = (a, b) => Boolean(a && b && a.host === b.host && a.name === b.name);
+const snapshotOf = entry => snapshots[entry.host]?.[entry.name];
+const entryOfRow = row => ({ host: row.dataset.host, name: row.dataset.name });
+
+// In a group the active snapshot is one reference for every member host, so it
+// has to say which host's snapshot it is.
+function activeValue(entry) {
+  return scope.group ? { host: entry.host, name: entry.name } : entry.name;
+}
+
+function scopeLabel() {
+  return scope.group ? t('scope_label_group', { host: scope.host, group: scope.group }) : scope.host;
+}
+
+// What of `data` this entry's snapshot can be compared on here: the cookies it
+// was captured with (never wider than this scope), and page data only when it
+// was saved on this host, since that is all a load of it applies.
+function comparable(entry, data) {
+  const result = { ...data };
+  if (data.cookies) result.cookies = cookiesWithin(data.cookies, cookieDomainFor(snapshotOf(entry), entry.host, scope));
+  if (entry.host !== scope.host) {
+    for (const type of ['localStorage', 'sessionStorage', 'indexedDB', 'indexedDBDigest']) delete result[type];
+  }
+  return result;
+}
+
 async function refresh() {
-  const [domainSnapshots, orderedNames, active] = await Promise.all([
-    getSnapshotsForDomain(currentDomain),
-    getOrderedSnapshotNames(currentDomain),
-    getActiveSnapshot(currentDomain),
-  ]);
-  snapshots = domainSnapshots;
-  names = orderedNames;
+  const [allSnapshots, active] = await Promise.all([getSnapshots(), getActiveSnapshot(scope.key)]);
+  const hosts = memberHosts(Object.keys(allSnapshots), scope, groups);
+  const orders = await Promise.all(hosts.map(host => getOrderedSnapshotNames(host)));
+  snapshots = Object.fromEntries(hosts.map(host => [host, allSnapshots[host]]));
+  entries = hosts.flatMap((host, i) => orders[i].map(name => ({ host, name })));
   const now = Date.now();
-  summaries = Object.fromEntries(names.map(name => [name, summarize(snapshots[name], now)]));
-  activeName = active && snapshots[active] ? active : null;
-  if (!activeName) changes = [];
+  // Counts follow what a load applies here; the size stays that of the stored snapshot.
+  summaries = new Map(entries.map(entry => [entryId(entry), {
+    ...summarize(comparable(entry, snapshotOf(entry)), now),
+    bytes: byteSize(snapshotOf(entry)),
+  }]));
+  const ref = activeRef(active, scope.key);
+  activeEntry = ref && snapshots[ref.host]?.[ref.name] ? { host: ref.host, name: ref.name } : null;
+  if (!activeEntry) changes = [];
   renderList();
   await renderUndo();
 }
 
 async function detectChanges() {
-  const name = activeName;
-  if (!name) return;
+  const entry = activeEntry;
+  if (!entry) return;
   const version = dataVersion;
   const [current, volatile, learning] = await Promise.all([
-    collectData(activeTab.id, currentDomain, settings.enabledTypes, { interactive: false, digest: true }),
-    getVolatileCookiesFor(currentDomain),
+    collectData(activeTab.id, scope, settings.enabledTypes, { interactive: false, digest: true }),
+    getVolatileCookiesFor(scope.key),
     hasPendingCookieCheck(activeTab.id),
   ]);
-  if (version !== dataVersion || name !== activeName) return;
+  if (version !== dataVersion || !sameEntry(entry, activeEntry)) return;
   // Until the service worker has seen which cookies the site rewrites after the
   // load, those rewrites would all look like changes.
   const types = learning ? { ...settings.enabledTypes, cookies: false } : settings.enabledTypes;
-  changes = findChanges(snapshots[name], current, types, volatile);
+  changes = findChanges(comparable(entry, snapshotOf(entry)), comparable(entry, current), types, volatile);
   if (changes.length) renderList();
 }
 
 function renderList() {
   const query = $('searchInput').value.trim().toLowerCase();
-  const matches = name => name.toLowerCase().includes(query)
-    || Boolean(snapshots[name].memo?.toLowerCase().includes(query));
-  const visible = query ? names.filter(matches) : names;
+  const matches = entry => entry.name.toLowerCase().includes(query)
+    || Boolean(snapshotOf(entry).memo?.toLowerCase().includes(query));
+  const visible = query ? entries.filter(matches) : entries;
 
-  $('searchBox').classList.toggle('hidden', names.length < SEARCH_MIN && !query);
-  $('emptyState').classList.toggle('hidden', names.length > 0);
-  $('noMatch').classList.toggle('hidden', names.length === 0 || visible.length > 0);
+  $('searchBox').classList.toggle('hidden', entries.length < SEARCH_MIN && !query);
+  $('emptyState').classList.toggle('hidden', entries.length > 0);
+  $('noMatch').classList.toggle('hidden', entries.length === 0 || visible.length > 0);
 
   const list = $('snapshotList');
   list.replaceChildren(...visible.map(buildRow));
 }
 
-function buildRow(name, index) {
+function buildRow(entry, index) {
+  const { name } = entry;
   const row = $('snapshotRowTemplate').content.firstElementChild.cloneNode(true);
-  const snapshot = snapshots[name];
-  const isActive = name === activeName;
+  const snapshot = snapshotOf(entry);
+  const isActive = sameEntry(entry, activeEntry);
+  const isForeign = entry.host !== scope.host;
+  row.dataset.host = entry.host;
   row.dataset.name = name;
   row.classList.toggle('is-active', isActive);
   const isModified = isActive && changes.length > 0;
   row.classList.toggle('is-modified', isModified);
 
   row.querySelector('.snapshot__name').textContent = name;
+  const host = row.querySelector('.snapshot__host');
+  if (isForeign) {
+    host.textContent = entry.host;
+    host.title = t('row_host_title', { host: entry.host });
+    host.classList.remove('hidden');
+  } else {
+    host.remove();
+  }
   const meta = row.querySelector('.snapshot__meta');
   meta.textContent = formatRelative(snapshot.savedAt, getLang());
   meta.title = t('saved_at', { date: new Date(snapshot.savedAt).toLocaleString() });
-  renderDetails(row, snapshot, summaries[name]);
+  renderDetails(row, snapshot, summaries.get(entryId(entry)));
 
   const activeBadge = row.querySelector('.badge--active');
   activeBadge.textContent = t('badge_active');
   activeBadge.classList.toggle('hidden', !isActive);
   const modifiedBadge = row.querySelector('.badge--modified');
   const changesMenu = row.querySelector('.changes-menu');
-  if (isModified) setupChangesMenu(modifiedBadge, changesMenu, name, index);
+  if (isModified) setupChangesMenu(modifiedBadge, changesMenu, entry, index);
   else changesMenu.remove();
 
   const key = row.querySelector('.snapshot__key');
@@ -188,13 +247,15 @@ function buildRow(name, index) {
   menu.querySelector('[data-action="rename"]').textContent = t('menu_rename');
   menu.querySelector('[data-action="edit"]').textContent = t('menu_edit_details');
   menu.querySelector('[data-action="delete"]').textContent = t('menu_delete');
+  // Overwriting would store this page's data under the other host's key.
+  if (isForeign) menu.querySelector('[data-action="overwrite"]').remove();
 
-  row.querySelector('.snapshot__main').addEventListener('click', () => handleLoad(name));
+  row.querySelector('.snapshot__main').addEventListener('click', () => handleLoad(entry));
   setupMenu(trigger, menu, action => {
-    if (action === 'overwrite') handleOverwrite(name);
-    else if (action === 'rename') startRename(row, name);
-    else if (action === 'edit') handleEditDetails(name);
-    else if (action === 'delete') handleDelete(name);
+    if (action === 'overwrite') handleOverwrite(entry);
+    else if (action === 'rename') startRename(row, entry);
+    else if (action === 'edit') handleEditDetails(entry);
+    else if (action === 'delete') handleDelete(entry);
   });
 
   return row;
@@ -239,14 +300,14 @@ function renderDetails(row, snapshot, summary) {
 }
 
 async function renderUndo() {
-  const backup = settings.autoBackup ? await getBackup(currentDomain) : null;
+  const backup = settings.autoBackup ? await getBackup(scope.host) : null;
   $('undoBar').classList.toggle('hidden', !backup);
   if (backup) $('undoText').textContent = t('undo_text', { time: formatRelative(backup.savedAt, getLang()) });
 }
 
 // The "changed" badge opens a menu that names what changed and lets the user
 // stop comparing a cookie the site keeps rewriting.
-function setupChangesMenu(badge, menu, name, index) {
+function setupChangesMenu(badge, menu, entry, index) {
   const detail = t('modified_detail', { items: describeChanges(changes).join(' / ') });
   badge.textContent = t('badge_modified');
   badge.title = detail;
@@ -260,6 +321,8 @@ function setupChangesMenu(badge, menu, name, index) {
   group.setAttribute('aria-labelledby', badge.id);
   const overwrite = group.querySelector('[data-action="overwrite"]');
   overwrite.textContent = t('menu_overwrite');
+  const canOverwrite = entry.host === scope.host;
+  if (!canOverwrite) overwrite.remove();
   const cookieChanges = changes.filter(c => c.type === 'cookies');
   if (cookieChanges.length) group.prepend(...cookieChanges.map(change => {
     const item = document.createElement('button');
@@ -268,21 +331,21 @@ function setupChangesMenu(badge, menu, name, index) {
     item.dataset.key = change.key;
     item.textContent = t('menu_ignore_cookie', { name: change.name });
     return item;
-  }), document.createElement('hr'));
+  }), ...(canOverwrite ? [document.createElement('hr')] : []));
 
   setupMenu(badge, menu, (action, item) => {
-    if (action === 'overwrite') handleOverwrite(name);
-    else if (action === 'ignore') handleIgnoreCookie(name, changes.find(c => c.key === item.dataset.key));
+    if (action === 'overwrite') handleOverwrite(entry);
+    else if (action === 'ignore') handleIgnoreCookie(entry, changes.find(c => c.key === item.dataset.key));
   });
 }
 
-async function handleIgnoreCookie(name, change) {
+async function handleIgnoreCookie(entry, change) {
   if (!change) return;
-  await ignoreCookieChange(currentDomain, change);
+  await ignoreCookieChange(scope.key, change);
   changes = changes.filter(c => c !== change);
   renderList();
   showStatus($('statusMsg'), t('status_cookie_ignored', { name: change.name }), 'success');
-  const row = [...$('snapshotList').children].find(el => el.dataset.name === name);
+  const row = rowOf(entry);
   (row?.querySelector('.badge--modified') ?? row?.querySelector('.snapshot__main'))?.focus();
 }
 
@@ -290,9 +353,12 @@ function visibleMains() {
   return [...$('snapshotList').querySelectorAll('.snapshot__main')];
 }
 
-function focusRow(name) {
-  const row = [...$('snapshotList').children].find(el => el.dataset.name === name);
-  row?.querySelector('.snapshot__main')?.focus();
+function rowOf(entry) {
+  return [...$('snapshotList').children].find(el => sameEntry(entryOfRow(el), entry));
+}
+
+function focusRow(entry) {
+  rowOf(entry)?.querySelector('.snapshot__main')?.focus();
 }
 
 // After a row disappears, keep keyboard users in the list: the row that took its
@@ -328,7 +394,7 @@ function setBusy(value) {
 // Called first in each handler, before any other await, so the permission
 // prompt still runs inside the click's user gesture.
 async function ensureCookiePermission() {
-  if (settings.enabledTypes.cookies) await requestHostPermission(currentDomain);
+  if (settings.enabledTypes.cookies) await requestHostPermission(scope);
 }
 
 function setupListeners() {
@@ -412,7 +478,7 @@ function handleShortcut(e) {
 
   if (e.key === 'Delete' && mains.includes(target)) {
     e.preventDefault();
-    handleDelete(target.closest('.snapshot').dataset.name);
+    handleDelete(entryOfRow(target.closest('.snapshot')));
   }
 }
 
@@ -451,27 +517,27 @@ async function handleSaveNew() {
       return;
     }
     await ensureCookiePermission();
-    if (snapshots[name] && !await showConfirm(t('confirm_overwrite', { name }))) return;
+    if (snapshots[scope.host]?.[name] && !await showConfirm(t('confirm_overwrite', { name }))) return;
     saved = await saveCurrentAs(name, saveFormDetails());
   });
   if (saved) closeSaveForm();
   else $('newSnapshotName').focus();
 }
 
-async function handleOverwrite(name) {
+async function handleOverwrite(entry) {
   await exclusive(async () => {
     await ensureCookiePermission();
-    if (!await showConfirm(t('confirm_overwrite', { name }))) return;
-    await saveCurrentAs(name);
+    if (!await showConfirm(t('confirm_overwrite', { name: entry.name }))) return;
+    await saveCurrentAs(entry.name);
   });
-  focusRow(name);
+  focusRow(entry);
 }
 
 async function saveCurrentAs(name, details) {
   try {
-    const data = await collectData(activeTab.id, currentDomain, settings.enabledTypes);
-    await saveSnapshot(currentDomain, name, withDigests(data), details);
-    await setActiveSnapshot(currentDomain, name);
+    const data = await collectData(activeTab.id, scope, settings.enabledTypes);
+    await saveSnapshot(scope.host, name, withDigests(data), details);
+    await setActiveSnapshot(scope.key, activeValue({ host: scope.host, name }));
     changes = [];
     await refresh();
     showStatus($('statusMsg'), t('status_saved', { name }), 'success');
@@ -485,15 +551,18 @@ async function saveCurrentAs(name, details) {
 
 // Must run before the reload, so the service worker finds the check when the
 // reloaded page completes.
-async function watchCookiesAfterApply(data) {
-  if (settings.enabledTypes.cookies && data.cookies) await startCookieCheck(activeTab.id, currentDomain, data.cookies);
+// `storeKey` is the host the applied data is stored under (see applyData).
+async function watchCookiesAfterApply(storeKey, data) {
+  if (!settings.enabledTypes.cookies || !data.cookies) return;
+  const cookieDomain = cookieDomainFor(data, storeKey, scope);
+  await startCookieCheck(activeTab.id, scope.key, cookiesWithin(data.cookies, cookieDomain), { origins: scope.origins, cookieDomain });
 }
 
 // The backup is a convenience: a full chrome.storage.local must not cost the
 // user the load itself, which then just cannot be undone.
 async function tryBackup(data) {
   try {
-    await saveBackup(currentDomain, data, activeName);
+    await saveBackup(scope.host, data, activeEntry && activeValue(activeEntry));
     return true;
   } catch (e) {
     console.error(e);
@@ -501,34 +570,40 @@ async function tryBackup(data) {
   }
 }
 
-function handleLoad(name) {
+function loadedStatusKey(backedUp, storageSkipped) {
+  if (storageSkipped) return backedUp ? 'status_loaded_cookies_only' : 'status_loaded_cookies_only_no_backup';
+  return backedUp ? 'status_loaded' : 'status_loaded_no_backup';
+}
+
+function handleLoad(entry) {
+  const { name } = entry;
   return exclusive(async () => {
     await ensureCookiePermission();
     // With a backup the load can be undone, so it runs without asking first.
     if (!settings.autoBackup && !await showConfirm(t('confirm_load', { name }))) return;
 
-    const snapshot = await loadSnapshot(currentDomain, name);
+    const snapshot = await loadSnapshot(entry.host, name);
     if (!snapshot) return;
 
     const types = settings.enabledTypes;
     try {
       let backedUp = true;
       if (settings.autoBackup) {
-        const current = await collectData(activeTab.id, currentDomain, types, { interactive: false });
+        const current = await collectData(activeTab.id, scope, types, { interactive: false });
         backedUp = await tryBackup(current);
       }
-      await applyData(activeTab.id, currentDomain, snapshot, types);
-      await setActiveSnapshot(currentDomain, name);
+      const { storageSkipped } = await applyData(activeTab.id, scope, snapshot, types, entry.host);
+      await setActiveSnapshot(scope.key, activeValue(entry));
       changes = [];
-      await watchCookiesAfterApply(snapshot);
+      await watchCookiesAfterApply(entry.host, snapshot);
       if (settings.autoReload) await chrome.tabs.reload(activeTab.id);
-      showStatus($('statusMsg'), t(backedUp ? 'status_loaded' : 'status_loaded_no_backup', { name }), 'success');
+      showStatus($('statusMsg'), t(loadedStatusKey(backedUp, storageSkipped), { name, host: entry.host }), 'success');
     } catch (e) {
       showStatus($('statusMsg'), t('error_load_failed'), 'error');
       console.error(e);
     }
     await refresh();
-    focusRow(name);
+    focusRow(entry);
   });
 }
 
@@ -542,7 +617,7 @@ function handleClearSite() {
     const typeNames = enabledTypeNames().join(getLang() === 'ja' ? '・' : ', ');
     await ensureCookiePermission();
     const confirmKey = settings.autoBackup ? 'confirm_clear_site_undoable' : 'confirm_clear_site';
-    if (!await showConfirm(t(confirmKey, { domain: currentDomain, types: typeNames }))) return;
+    if (!await showConfirm(t(confirmKey, { domain: scopeLabel(), types: typeNames }))) return;
 
     try {
       // Checked before the backup, so a page that can't be cleared never
@@ -550,11 +625,11 @@ function handleClearSite() {
       if (!await canReachPage(activeTab.id, types)) throw new Error('content script unreachable');
       let backedUp = true;
       if (settings.autoBackup) {
-        const current = await collectData(activeTab.id, currentDomain, types, { interactive: false });
+        const current = await collectData(activeTab.id, scope, types, { interactive: false });
         backedUp = await tryBackup(current);
       }
-      const blocked = await clearData(activeTab.id, currentDomain, types);
-      await setActiveSnapshot(currentDomain, null);
+      const blocked = await clearData(activeTab.id, scope, types);
+      await setActiveSnapshot(scope.key, null);
       changes = [];
       // A check left from a recent load would compare that snapshot's cookies
       // with the emptied jar and mark them all as rewritten by the site.
@@ -562,7 +637,7 @@ function handleClearSite() {
       if (settings.autoReload) await chrome.tabs.reload(activeTab.id);
       let statusKey = backedUp ? 'status_site_cleared' : 'status_site_cleared_no_backup';
       if (blocked.length && !settings.autoReload) statusKey = 'status_site_cleared_reload_needed';
-      showStatus($('statusMsg'), t(statusKey, { domain: currentDomain }), 'success');
+      showStatus($('statusMsg'), t(statusKey, { domain: scopeLabel() }), 'success');
     } catch (e) {
       showStatus($('statusMsg'), t('error_clear_site_failed'), 'error');
       console.error(e);
@@ -576,20 +651,21 @@ function handleClearSite() {
 async function handleUndo() {
   await exclusive(async () => {
     await ensureCookiePermission();
-    const backup = await getBackup(currentDomain);
+    const backup = await getBackup(scope.host);
     if (!backup) return;
 
     const types = settings.enabledTypes;
     try {
-      const current = await collectData(activeTab.id, currentDomain, types, { interactive: false });
-      await applyData(activeTab.id, currentDomain, backup, types);
+      const current = await collectData(activeTab.id, scope, types, { interactive: false });
+      await applyData(activeTab.id, scope, backup, types, scope.host);
       await tryBackup(current);
-      const restoredName = backup.activeName && snapshots[backup.activeName] ? backup.activeName : null;
-      await setActiveSnapshot(currentDomain, restoredName);
-      changes = restoredName
-        ? findChanges(snapshots[restoredName], backup, types, await getVolatileCookiesFor(currentDomain))
+      const ref = activeRef(backup.activeName, scope.host);
+      const restored = ref && snapshotOf(ref) ? { host: ref.host, name: ref.name } : null;
+      await setActiveSnapshot(scope.key, restored && activeValue(restored));
+      changes = restored
+        ? findChanges(comparable(restored, snapshotOf(restored)), comparable(restored, backup), types, await getVolatileCookiesFor(scope.key))
         : [];
-      await watchCookiesAfterApply(backup);
+      await watchCookiesAfterApply(scope.host, backup);
       if (settings.autoReload) await chrome.tabs.reload(activeTab.id);
       showStatus($('statusMsg'), t('status_restored'), 'success');
     } catch (e) {
@@ -601,23 +677,25 @@ async function handleUndo() {
   if (!$('undoBar').classList.contains('hidden')) $('undoBtn').focus();
 }
 
-async function handleDelete(name) {
-  const index = visibleMains().findIndex(main => main.closest('.snapshot').dataset.name === name);
+async function handleDelete(entry) {
+  const { name } = entry;
+  const index = visibleMains().findIndex(main => sameEntry(entryOfRow(main.closest('.snapshot')), entry));
   let deleted = false;
   await exclusive(async () => {
     if (!await showConfirm(t('confirm_delete_snapshot', { name }))) return;
-    await deleteSnapshot(currentDomain, name);
+    await deleteSnapshot(entry.host, name);
     await refresh();
     showStatus($('statusMsg'), t('status_deleted', { name }), 'success');
     deleted = true;
   });
   if (deleted) focusRowAt(index);
-  else focusRow(name);
+  else focusRow(entry);
 }
 
-async function handleEditDetails(name) {
+async function handleEditDetails(entry) {
+  const { name } = entry;
   await exclusive(async () => {
-    const snapshot = snapshots[name];
+    const snapshot = snapshotOf(entry);
     if (!snapshot) return;
     const fields = buildDetailFields(snapshot);
     const confirmed = await showFormDialog({
@@ -627,7 +705,7 @@ async function handleEditDetails(name) {
     });
     if (!confirmed) return;
     try {
-      await updateSnapshotDetails(currentDomain, name, fields.read());
+      await updateSnapshotDetails(entry.host, name, fields.read());
       await refresh();
       showStatus($('statusMsg'), t('status_details_saved', { name }), 'success');
     } catch (e) {
@@ -635,7 +713,7 @@ async function handleEditDetails(name) {
       console.error(e);
     }
   });
-  focusRow(name);
+  focusRow(entry);
 }
 
 function buildDetailFields({ memo, color }) {
@@ -684,7 +762,8 @@ function buildDetailFields({ memo, color }) {
   };
 }
 
-function startRename(row, name) {
+function startRename(row, entry) {
+  const { name } = entry;
   if (busy || row.querySelector('.snapshot__rename')) return;
   const main = row.querySelector('.snapshot__main');
   const input = document.createElement('input');
@@ -704,22 +783,22 @@ function startRename(row, name) {
 
   bindInlineRename(input, {
     oldName: name,
-    exists: newName => Boolean(snapshots[newName]),
+    exists: newName => Boolean(snapshots[entry.host]?.[newName]),
     onError: msg => {
       if (msg) showStatus($('statusMsg'), msg, 'error');
     },
     onCancel: () => {
       renderList();
-      focusRow(name);
+      focusRow(entry);
     },
     onCommit: async newName => {
       const ran = await exclusive(async () => {
-        await renameSnapshot(currentDomain, name, newName);
+        await renameSnapshot(entry.host, name, newName);
         await refresh();
         showStatus($('statusMsg'), t('status_snapshot_renamed', { old: name, new: newName }), 'success');
       });
       if (!ran) renderList();
-      focusRow(ran ? newName : name);
+      focusRow(ran ? { host: entry.host, name: newName } : entry);
     },
   });
   input.focus();

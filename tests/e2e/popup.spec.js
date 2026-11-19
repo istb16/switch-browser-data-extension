@@ -8,7 +8,7 @@ async function disableCookieCollection(context, extensionId) {
   // (lib/cookie-handler.test.js, lib/data-bridge.test.js), so E2E only needs
   // to exercise the localStorage/sessionStorage path end to end.
   const options = await context.newPage();
-  await options.goto(`chrome-extension://${extensionId}/options/options.html`);
+  await options.goto(`chrome-extension://${extensionId}/options/options.html#data-types`);
   await waitForReady(options);
   await options.locator('#toggleCookies').uncheck();
   await expect(options.locator('#statusMsg')).toHaveClass(/success/);

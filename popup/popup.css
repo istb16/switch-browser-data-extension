@@ -68,6 +68,18 @@ svg {
   white-space: nowrap;
 }
 
+.group-chip {
+  flex: none;
+  font-size: 10px;
+  line-height: 1;
+  padding: 3px 6px;
+  border: 1px solid var(--tk-line);
+  border-radius: 999px;
+  color: var(--tk-muted);
+  background: var(--tk-surface);
+  white-space: nowrap;
+}
+
 .icon-btn {
   display: inline-flex;
   align-items: center;
@@ -297,6 +309,16 @@ kbd {
 .snapshot__chip--amber { background: var(--tk-amber); }
 .snapshot__chip--green { background: var(--tk-green); }
 .snapshot__chip--blue  { background: var(--tk-blue); }
+
+.snapshot__host {
+  flex: 0 1 auto;
+  min-inline-size: 0;
+  font-size: 10px;
+  color: var(--tk-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .snapshot__warning {
   display: inline-flex;

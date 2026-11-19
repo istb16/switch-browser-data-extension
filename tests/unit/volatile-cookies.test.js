@@ -15,6 +15,15 @@ describe('lib/volatile-cookies', () => {
     expect(await hasPendingCookieCheck(5)).toBe(false);
   });
 
+  it('stores the origins and cookie domain the check needs', async () => {
+    await startCookieCheck(5, 'example.com', [], { origins: ['*://example.com/*', '*://*.example.com/*'], cookieDomain: 'app.example.com' });
+    expect(await takeCookieCheck(5)).toMatchObject({
+      domain: 'example.com',
+      origins: ['*://example.com/*', '*://*.example.com/*'],
+      cookieDomain: 'app.example.com',
+    });
+  });
+
   it('cancels a pending check', async () => {
     await startCookieCheck(5, 'a.com', []);
     await cancelCookieCheck(5);
