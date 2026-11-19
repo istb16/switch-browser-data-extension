@@ -1,12 +1,30 @@
 import { test as base, chromium } from '@playwright/test';
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const extensionPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../');
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../');
+const RUNTIME_DIRS = ['manifest.json', '_locales', 'background', 'content', 'icons', 'lib', 'options', 'popup'];
+
+// Reading cookies needs the host permission, which the extension requests at
+// runtime through a native Chrome prompt Playwright can't click. For tests that
+// cover the cookie path, load a copy whose manifest grants it at install instead.
+function copyWithHostPermissions() {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'tk3-ext-'));
+  for (const entry of RUNTIME_DIRS) cpSync(path.join(repoRoot, entry), path.join(dir, entry), { recursive: true });
+  const manifestPath = path.join(dir, 'manifest.json');
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
+  manifest.host_permissions = ['<all_urls>'];
+  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+  return dir;
+}
 
 export const test = base.extend({
-  // eslint-disable-next-line no-empty-pattern
-  context: async ({}, use) => {
+  grantHostPermissions: [false, { option: true }],
+
+  context: async ({ grantHostPermissions }, use) => {
+    const extensionPath = grantHostPermissions ? copyWithHostPermissions() : repoRoot;
     const context = await chromium.launchPersistentContext('', {
       headless: false,
       args: [
@@ -17,6 +35,7 @@ export const test = base.extend({
     });
     await use(context);
     await context.close();
+    if (extensionPath !== repoRoot) rmSync(extensionPath, { recursive: true, force: true });
   },
 
   extensionId: async ({ context }, use) => {
