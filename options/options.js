@@ -4,8 +4,16 @@ import { deleteSnapshot, renameSnapshot, setSnapshotOrder, clearAllData } from '
 import { bindInlineRename } from '../lib/inline-rename.js';
 import { showConfirm } from '../lib/dialog.js';
 import { $, escHtml, showStatus } from '../lib/ui.js';
+import { SNAPSHOT_COLORS, measureDomains, formatBytes } from '../lib/snapshot-summary.js';
+
+const PANES = ['general', 'data-types', 'snapshots', 'data'];
+const METER_DOMAIN_SEGMENTS = 5;
+// unlimitedStorage lifts the quota, but the popup reads and rewrites the whole
+// snapshots value on every open and save, so size still costs speed.
+const METER_ADVISORY_BYTES = 50 * 1024 * 1024;
 
 async function init() {
+  setupNav();
   await initI18n();
   applyI18n();
   renderVersionFooter();
@@ -29,8 +37,69 @@ async function init() {
   $('importBtn').addEventListener('click', () => $('importFile').click());
   $('importFile').addEventListener('change', handleImport);
   $('clearAllBtn').addEventListener('click', handleClearAll);
+  $('sortSelect').addEventListener('change', () => renderDomainList());
 
   await renderDomainList();
+}
+
+function setupNav() {
+  showPane();
+  window.addEventListener('hashchange', showPane);
+}
+
+function showPane() {
+  const requested = location.hash.slice(1);
+  const current = PANES.includes(requested) ? requested : PANES[0];
+  for (const pane of document.querySelectorAll('.pane')) {
+    pane.hidden = pane.dataset.pane !== current;
+  }
+  for (const link of document.querySelectorAll('.nav-link')) {
+    if (link.dataset.pane === current) link.setAttribute('aria-current', 'page');
+    else link.removeAttribute('aria-current');
+  }
+}
+
+async function renderMeter(allSnapshots) {
+  const [total, backups] = await Promise.all([
+    chrome.storage.local.getBytesInUse(null),
+    chrome.storage.local.getBytesInUse('backups'),
+  ]);
+  const largest = Object.entries(measureDomains(allSnapshots))
+    .map(([domain, { bytes }]) => ({ domain, bytes }))
+    .sort((a, b) => b.bytes - a.bytes || a.domain.localeCompare(b.domain))
+    .slice(0, METER_DOMAIN_SEGMENTS);
+  const listed = largest.reduce((sum, d) => sum + d.bytes, 0) + backups;
+  const segments = [
+    ...largest.map((d, i) => ({ kind: `domain-${i + 1}`, label: d.domain, bytes: d.bytes })),
+    { kind: 'backups', label: t('meter_backups'), bytes: backups },
+    { kind: 'other',   label: t('meter_other'),   bytes: Math.max(0, total - listed) },
+  ];
+
+  $('meterTotal').textContent = formatBytes(total);
+  $('meterBar').setAttribute('aria-label', t('meter_label', { size: formatBytes(total) }));
+  $('meterBar').replaceChildren(...segments.map(segment => {
+    const el = document.createElement('span');
+    el.className = `meter-segment meter-segment--${segment.kind}`;
+    el.dataset.bytes = String(segment.bytes);
+    el.style.width = total > 0 ? `${(segment.bytes / total) * 100}%` : '0';
+    el.title = `${segment.label}: ${formatBytes(segment.bytes)}`;
+    return el;
+  }));
+  $('meterLegend').replaceChildren(...segments.map(segment => {
+    const li = document.createElement('li');
+    li.className = 'meter-legend-item';
+    const swatch = document.createElement('span');
+    swatch.className = `meter-swatch meter-segment--${segment.kind}`;
+    const label = document.createElement('span');
+    label.className = 'meter-legend-label';
+    label.textContent = segment.label;
+    const size = document.createElement('span');
+    size.className = 'meter-legend-size';
+    size.textContent = formatBytes(segment.bytes);
+    li.append(swatch, label, size);
+    return li;
+  }));
+  $('meterAdvisory').classList.toggle('hidden', total < METER_ADVISORY_BYTES);
 }
 
 async function handleLanguageChange() {
@@ -59,12 +128,16 @@ async function handleSaveSettings() {
   showStatus($('statusMsg'), t('status_settings_saved'), 'success');
 }
 
-async function renderDomainList() {
+async function renderDomainList(sort = $('sortSelect').value) {
   const [allSnapshots, allOrders] = await Promise.all([getSnapshots(), getSnapshotOrders()]);
+  await renderMeter(allSnapshots);
   const container = $('domainList');
   container.replaceChildren();
 
+  const sizes = measureDomains(allSnapshots);
+  const bySize = sort === 'size';
   const domains = Object.keys(allSnapshots).sort();
+  if (bySize) domains.sort((a, b) => sizes[b].bytes - sizes[a].bytes);
 
   if (domains.length === 0) {
     const empty = document.createElement('div');
@@ -80,6 +153,8 @@ async function renderDomainList() {
     const ordered   = (allOrders[domain] ?? []).filter(n => allNames.includes(n));
     const rest      = allNames.filter(n => !ordered.includes(n)).sort();
     const names     = [...ordered, ...rest];
+    const rowSizes  = sizes[domain].snapshots;
+    if (bySize) names.sort((a, b) => rowSizes[b] - rowSizes[a]);
 
     const item = document.createElement('div');
     item.className = 'domain-item';
@@ -91,7 +166,10 @@ async function renderDomainList() {
         <span class="domain-name">${escHtml(domain)}</span>
         <span class="domain-count">${t('count_format', { n: names.length })}</span>
       </div>
-      <span class="chevron">▾</span>
+      <div class="domain-header-right">
+        <span class="domain-size">${formatBytes(sizes[domain].bytes)}</span>
+        <span class="chevron">▾</span>
+      </div>
     `;
     header.addEventListener('click', () => item.classList.toggle('open'));
 
@@ -99,11 +177,12 @@ async function renderDomainList() {
     snapshotList.className = 'domain-snapshots';
 
     for (const name of names) {
-      const row = buildSnapshotRow(name, domainSnapshots[name].savedAt, domain, snapshotList, header);
+      const row = buildSnapshotRow(name, domainSnapshots[name], rowSizes[name], domain, snapshotList, header, !bySize);
       snapshotList.appendChild(row);
     }
 
-    setupDragDrop(snapshotList, domain);
+    // Dragging in a size-sorted view would save an order the user never saw.
+    if (!bySize) setupDragDrop(snapshotList, domain);
 
     item.appendChild(header);
     item.appendChild(snapshotList);
@@ -111,10 +190,10 @@ async function renderDomainList() {
   }
 }
 
-function buildSnapshotRow(name, savedAt, domain, snapshotList, header) {
+function buildSnapshotRow(name, snapshot, bytes, domain, snapshotList, header, draggable) {
   const row = document.createElement('div');
   row.className = 'snapshot-row';
-  row.draggable = true;
+  row.draggable = draggable;
   row.dataset.name = name;
 
   const handle = document.createElement('span');
@@ -128,19 +207,41 @@ function buildSnapshotRow(name, savedAt, domain, snapshotList, header) {
   nameSpan.className = 'snapshot-name';
   nameSpan.textContent = name;
 
+  const meta = document.createElement('span');
+  meta.className = 'snapshot-meta';
+
   const dateSpan = document.createElement('span');
   dateSpan.className = 'snapshot-date';
-  dateSpan.textContent = new Date(savedAt).toLocaleString();
+  dateSpan.textContent = new Date(snapshot.savedAt).toLocaleString();
 
+  const sizeSpan = document.createElement('span');
+  sizeSpan.className = 'snapshot-size';
+  sizeSpan.textContent = formatBytes(bytes);
+
+  meta.append(dateSpan, sizeSpan);
   info.appendChild(nameSpan);
-  info.appendChild(dateSpan);
+  if (typeof snapshot.memo === 'string' && snapshot.memo) {
+    const memoSpan = document.createElement('span');
+    memoSpan.className = 'snapshot-memo';
+    memoSpan.textContent = snapshot.memo;
+    memoSpan.title = snapshot.memo;
+    info.appendChild(memoSpan);
+  }
+  info.appendChild(meta);
 
   const deleteBtn = document.createElement('button');
   deleteBtn.className = 'btn-icon';
   deleteBtn.title = t('btn_delete_title');
   deleteBtn.textContent = '✕';
 
-  row.appendChild(handle);
+  if (draggable) row.appendChild(handle);
+  if (SNAPSHOT_COLORS.includes(snapshot.color)) {
+    const chip = document.createElement('span');
+    chip.className = `snapshot-chip snapshot-chip--${snapshot.color}`;
+    chip.setAttribute('role', 'img');
+    chip.setAttribute('aria-label', t('chip_label', { color: t(`color_${snapshot.color}`) }));
+    row.appendChild(chip);
+  }
   row.appendChild(info);
   row.appendChild(deleteBtn);
 
@@ -152,6 +253,10 @@ function buildSnapshotRow(name, savedAt, domain, snapshotList, header) {
     row.remove();
     const countEl = header.querySelector('.domain-count');
     if (countEl) countEl.textContent = t('count_format', { n: snapshotList.querySelectorAll('.snapshot-row').length });
+    const allSnapshots = await getSnapshots();
+    header.querySelector('.domain-size').textContent =
+      formatBytes(measureDomains({ [domain]: allSnapshots[domain] ?? {} })[domain].bytes);
+    await renderMeter(allSnapshots);
     showStatus($('statusMsg'), t('status_snapshot_deleted', { name: currentName }), 'success');
   });
 
@@ -167,7 +272,7 @@ function buildSnapshotRow(name, savedAt, domain, snapshotList, header) {
 
     const restore = () => {
       info.replaceChild(nameSpan, input);
-      row.draggable = true;
+      row.draggable = draggable;
     };
     bindInlineRename(input, {
       oldName,

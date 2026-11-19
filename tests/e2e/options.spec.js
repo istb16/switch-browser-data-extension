@@ -1,8 +1,8 @@
 import { test, expect, reloadAndWait } from './fixtures.js';
 
-async function openOptions(context, extensionId) {
+async function openOptions(context, extensionId, pane = '') {
   const page = await context.newPage();
-  await page.goto(`chrome-extension://${extensionId}/options/options.html`);
+  await page.goto(`chrome-extension://${extensionId}/options/options.html${pane}`);
   // Force Japanese regardless of the test machine's browser locale, so
   // assertions on rendered text are deterministic.
   await page.evaluate(() => chrome.storage.local.set({ language: 'ja' }));
@@ -16,13 +16,34 @@ test.describe('options page', () => {
     await expect(page.locator('#versionFooter')).toHaveText(/^バージョン: \d+\.\d+\.\d+$/);
   });
 
-  test('shows the empty state when there are no snapshots', async ({ context, extensionId }) => {
+  test('nav switches panes and the hash opens one directly', async ({ context, extensionId }) => {
     const page = await openOptions(context, extensionId);
+    await expect(page.locator('#pane-general')).toBeVisible();
+    await expect(page.locator('#pane-snapshots')).toBeHidden();
+
+    await page.locator('.nav-link[data-pane="snapshots"]').click();
+    await expect(page).toHaveURL(/#snapshots$/);
+    await expect(page.locator('#pane-snapshots')).toBeVisible();
+    await expect(page.locator('#pane-general')).toBeHidden();
+    await expect(page.locator('.nav-link[data-pane="snapshots"]')).toHaveAttribute('aria-current', 'page');
+    await expect(page.locator('#meterBar')).toBeVisible();
+
+    await page.locator('.nav-link[data-pane="data"]').click();
+    await expect(page.locator('#pane-data')).toBeVisible();
+    await expect(page.locator('#pane-snapshots')).toBeHidden();
+
+    await reloadAndWait(page);
+    await expect(page.locator('#pane-data')).toBeVisible();
+    await expect(page.locator('#pane-general')).toBeHidden();
+  });
+
+  test('shows the empty state when there are no snapshots', async ({ context, extensionId }) => {
+    const page = await openOptions(context, extensionId, '#snapshots');
     await expect(page.locator('.empty-state')).toBeVisible();
   });
 
   test('renaming a snapshot updates it in place without collapsing other open domains', async ({ context, extensionId }) => {
-    const page = await openOptions(context, extensionId);
+    const page = await openOptions(context, extensionId, '#snapshots');
 
     await page.evaluate(() => chrome.storage.local.set({
       snapshots: {
@@ -50,7 +71,7 @@ test.describe('options page', () => {
   });
 
   test('rejects a rename to a name that already exists in the domain', async ({ context, extensionId }) => {
-    const page = await openOptions(context, extensionId);
+    const page = await openOptions(context, extensionId, '#snapshots');
     await page.evaluate(() => chrome.storage.local.set({
       snapshots: { 'a.example.com': { first: { savedAt: new Date().toISOString() }, second: { savedAt: new Date().toISOString() } } },
     }));
@@ -70,7 +91,7 @@ test.describe('options page', () => {
   });
 
   test('deleting a snapshot removes only that row, keeps the domain visible at 0, and keeps other domains open', async ({ context, extensionId }) => {
-    const page = await openOptions(context, extensionId);
+    const page = await openOptions(context, extensionId, '#snapshots');
     await page.evaluate(() => chrome.storage.local.set({
       snapshots: {
         'a.example.com': { only: { savedAt: new Date().toISOString() } },
@@ -93,7 +114,7 @@ test.describe('options page', () => {
   });
 
   test('data-type toggles persist across a reload', async ({ context, extensionId }) => {
-    const page = await openOptions(context, extensionId);
+    const page = await openOptions(context, extensionId, '#data-types');
 
     await page.locator('#toggleCookies').uncheck();
     await expect(page.locator('#statusMsg')).toHaveClass(/success/);
@@ -103,7 +124,7 @@ test.describe('options page', () => {
   });
 
   test('export downloads a JSON file containing the stored snapshots', async ({ context, extensionId }) => {
-    const page = await openOptions(context, extensionId);
+    const page = await openOptions(context, extensionId, '#data');
     await page.evaluate(() => chrome.storage.local.set({
       snapshots: { 'a.example.com': { first: { savedAt: new Date().toISOString(), localStorage: { a: '1' } } } },
     }));
@@ -120,7 +141,7 @@ test.describe('options page', () => {
   });
 
   test('clearing all data empties storage and shows the empty state', async ({ context, extensionId }) => {
-    const page = await openOptions(context, extensionId);
+    const page = await openOptions(context, extensionId, '#data');
     await page.evaluate(() => chrome.storage.local.set({
       snapshots: { 'a.example.com': { first: { savedAt: new Date().toISOString() } } },
     }));
@@ -129,13 +150,14 @@ test.describe('options page', () => {
     await page.locator('#clearAllBtn').click();
     await page.locator('.tk3-btn-confirm').click();
 
+    await page.locator('.nav-link[data-pane="snapshots"]').click();
     await expect(page.locator('.empty-state')).toBeVisible();
     const stored = await page.evaluate(() => chrome.storage.local.get('snapshots'));
     expect(stored.snapshots ?? {}).toEqual({});
   });
 
   test('the confirm dialog is a native modal that Esc and clicking outside both cancel', async ({ context, extensionId }) => {
-    const page = await openOptions(context, extensionId);
+    const page = await openOptions(context, extensionId, '#data');
     await page.evaluate(() => chrome.storage.local.set({
       snapshots: { 'a.example.com': { first: { savedAt: new Date().toISOString() } } },
     }));
@@ -160,7 +182,7 @@ test.describe('options page', () => {
   });
 
   test('the Enter that confirms an IME conversion does not commit a rename', async ({ context, extensionId }) => {
-    const page = await openOptions(context, extensionId);
+    const page = await openOptions(context, extensionId, '#snapshots');
     await page.evaluate(() => chrome.storage.local.set({
       snapshots: { 'a.example.com': { first: { savedAt: new Date().toISOString() } } },
     }));

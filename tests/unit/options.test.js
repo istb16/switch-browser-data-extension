@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { setSnapshots, setSnapshotOrders, getSnapshots, getSnapshotOrders, setSettings } from '../../lib/storage.js';
+import { byteSize, formatBytes } from '../../lib/snapshot-summary.js';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../');
 const optionsHtml = readFileSync(path.join(repoRoot, 'options/options.html'), 'utf-8');
@@ -24,6 +25,146 @@ function domainItems() {
 describe('options/options.js', () => {
   beforeEach(() => {
     document.body.innerHTML = '';
+    history.replaceState(null, '', location.pathname);
+    // The chrome mock has no getBytesInUse; measure the mock's storage instead.
+    chrome.storage.local.getBytesInUse = vi.fn(async keys => {
+      const stored = chrome._state.storage;
+      return keys == null ? byteSize(stored) : (keys in stored ? byteSize(stored[keys]) : 0);
+    });
+  });
+
+  describe('navigation', () => {
+    const visiblePanes = () => [...document.querySelectorAll('.pane')].filter(p => !p.hidden).map(p => p.dataset.pane);
+    const currentLinks = () => [...document.querySelectorAll('.nav-link[aria-current="page"]')].map(a => a.dataset.pane);
+
+    it('shows only the General pane when there is no hash', async () => {
+      await loadOptions();
+      expect(visiblePanes()).toEqual(['general']);
+      expect(currentLinks()).toEqual(['general']);
+    });
+
+    it('opens the pane named by the hash and follows hash changes', async () => {
+      history.replaceState(null, '', '#snapshots');
+      await loadOptions();
+      expect(visiblePanes()).toEqual(['snapshots']);
+      expect(currentLinks()).toEqual(['snapshots']);
+
+      history.replaceState(null, '', '#data');
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+      expect(visiblePanes()).toEqual(['data']);
+      expect(currentLinks()).toEqual(['data']);
+    });
+
+    it('falls back to General for an unknown hash', async () => {
+      history.replaceState(null, '', '#nope');
+      await loadOptions();
+      expect(visiblePanes()).toEqual(['general']);
+    });
+  });
+
+  describe('storage meter', () => {
+    const segments = () => [...document.querySelectorAll('#meterBar .meter-segment')];
+
+    it('six domains give five domain segments, backups and other', async () => {
+      const snapshots = {};
+      for (const [i, domain] of ['a.com', 'b.com', 'c.com', 'd.com', 'e.com', 'f.com'].entries()) {
+        snapshots[domain] = { s: { savedAt: '2024-01-01T00:00:00.000Z', localStorage: { k: 'x'.repeat((i + 1) * 100) } } };
+      }
+      await setSnapshots(snapshots);
+      const total = 100_000;
+      chrome.storage.local.getBytesInUse = vi.fn(async keys => (keys == null ? total : keys === 'backups' ? 2_000 : 0));
+      await loadOptions();
+
+      const segs = segments();
+      expect(segs.map(s => s.className.replace('meter-segment ', ''))).toEqual([
+        'meter-segment--domain-1', 'meter-segment--domain-2', 'meter-segment--domain-3',
+        'meter-segment--domain-4', 'meter-segment--domain-5', 'meter-segment--backups', 'meter-segment--other',
+      ]);
+      expect(segs.reduce((sum, s) => sum + Number(s.dataset.bytes), 0)).toBe(total);
+      expect(segs[0].title).toContain('f.com');
+      expect(segs.slice(0, 5).some(s => s.title.includes('a.com'))).toBe(false);
+      expect(Number(segs[5].dataset.bytes)).toBe(2_000);
+      expect(document.getElementById('meterTotal').textContent).toBe(formatBytes(total));
+      expect(document.querySelectorAll('#meterLegend li')).toHaveLength(7);
+    });
+
+    it('shows the advisory from 50 MB', async () => {
+      const limit = 50 * 1024 * 1024;
+      chrome.storage.local.getBytesInUse = vi.fn(async keys => (keys == null ? limit - 1 : 0));
+      await loadOptions();
+      expect(document.getElementById('meterAdvisory').classList.contains('hidden')).toBe(true);
+
+      chrome.storage.local.getBytesInUse = vi.fn(async keys => (keys == null ? limit : 0));
+      await loadOptions();
+      expect(document.getElementById('meterAdvisory').classList.contains('hidden')).toBe(false);
+    });
+
+    it('deleting a snapshot refreshes the meter and the domain size', async () => {
+      await setSnapshots({ 'a.com': {
+        big:   { savedAt: '2024-01-01T00:00:00.000Z', localStorage: { k: 'x'.repeat(5000) } },
+        small: { savedAt: '2024-01-01T00:00:00.000Z' },
+      } });
+      await loadOptions();
+      const before = document.getElementById('meterTotal').textContent;
+
+      document.querySelector('.snapshot-row[data-name="big"] .btn-icon').click();
+      await flush();
+      document.querySelector('.tk3-btn-confirm').click();
+      await flush();
+
+      expect(document.getElementById('meterTotal').textContent).not.toBe(before);
+      expect(document.querySelector('.domain-size').textContent)
+        .toBe(formatBytes(byteSize({ savedAt: '2024-01-01T00:00:00.000Z' })));
+    });
+  });
+
+  describe('rows and sorting', () => {
+    it('a row shows its colour chip, memo and size', async () => {
+      const snapshot = { savedAt: '2024-01-01T00:00:00.000Z', memo: 'work account', color: 'green' };
+      await setSnapshots({ 'a.com': { x: snapshot, y: { savedAt: '2024-01-01T00:00:00.000Z', color: 'pink' } } });
+      await loadOptions();
+
+      const row = document.querySelector('.snapshot-row[data-name="x"]');
+      expect(row.querySelector('.snapshot-chip').classList.contains('snapshot-chip--green')).toBe(true);
+      expect(row.querySelector('.snapshot-chip').getAttribute('aria-label')).toBe('色: 緑');
+      expect(row.querySelector('.snapshot-memo').textContent).toBe('work account');
+      expect(row.querySelector('.snapshot-size').textContent).toBe(formatBytes(byteSize(snapshot)));
+      expect(document.querySelector('.domain-size').textContent).not.toBe('');
+
+      const plain = document.querySelector('.snapshot-row[data-name="y"]');
+      expect(plain.querySelector('.snapshot-chip')).toBeNull();
+      expect(plain.querySelector('.snapshot-memo')).toBeNull();
+    });
+
+    it('size sort orders domains and rows by size and disables drag', async () => {
+      await setSnapshots({
+        'a.com': { s: { savedAt: '2024-01-01T00:00:00.000Z' } },
+        'b.com': {
+          aa: { savedAt: '2024-01-01T00:00:00.000Z' },
+          zz: { savedAt: '2024-01-01T00:00:00.000Z', localStorage: { k: 'x'.repeat(500) } },
+        },
+      });
+      await setSnapshotOrders({ 'b.com': ['aa', 'zz'] });
+      await loadOptions();
+
+      expect(domainItems().map(i => i.querySelector('.domain-name').textContent)).toEqual(['a.com', 'b.com']);
+      expect(document.querySelector('.snapshot-row').draggable).toBe(true);
+
+      const select = document.getElementById('sortSelect');
+      select.value = 'size';
+      select.dispatchEvent(new Event('change'));
+      await flush();
+
+      const items = domainItems();
+      expect(items.map(i => i.querySelector('.domain-name').textContent)).toEqual(['b.com', 'a.com']);
+      const rows = [...items[0].querySelectorAll('.snapshot-row')];
+      expect(rows.map(r => r.dataset.name)).toEqual(['zz', 'aa']);
+      expect(rows.every(r => !r.draggable && !r.querySelector('.drag-handle'))).toBe(true);
+
+      items[0].querySelector('.domain-snapshots').dispatchEvent(new Event('drop', { bubbles: true }));
+      await flush();
+      expect((await getSnapshotOrders())['b.com']).toEqual(['aa', 'zz']);
+    });
   });
 
   it('shows the manifest version in the footer', async () => {
