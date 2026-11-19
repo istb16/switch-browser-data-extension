@@ -289,6 +289,7 @@ graph TD
 
 - 手動テストは Chrome の DevTools → Application タブで各ストレージの状態を確認しながら行う
 - ストアに提出する zip は `deploy/build.ps1`（`build.sh` `build.cmd` も同じ）で `store/manifest.zip` に作る。入れるのは manifest.json・popup・options・lib・icons・content・_locales・background だけ。zip はコミットしない（`.gitignore` 済み）
+- `v` で始まるタグ（例: `v2.0.1`）を push すると、`.github/workflows/release.yml` が `build.sh` で zip を作り、GitHub のリリースの下書きに添付する。タグと `manifest.json` の `version` が違えば止まる。リリースの説明を書いてから公開する（同じタグのリリースがすでにあれば zip だけ差し替える）
 
 ### 自動テスト
 
