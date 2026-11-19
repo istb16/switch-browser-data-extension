@@ -1092,6 +1092,81 @@ describe('popup/popup.js', () => {
     });
   });
 
+  describe('reading on open', () => {
+    const keysOf = call => [call[0]].flat();
+    const storeReads = spy => spy.mock.calls.filter(call => call[0] !== 'language');
+
+    it('opening on a site reads only that site\'s snapshot keys', async () => {
+      await setSnapshots({
+        'example.com': { mine: snap('2024-01-01T00:00:00.000Z') },
+        'other.com':   { theirs: snap('2024-01-01T00:00:00.000Z') },
+      });
+      const get = vi.spyOn(chrome.storage.local, 'get');
+      await loadPopup('https://example.com/');
+
+      expect(rowNames()).toEqual(['mine']);
+      expect(get.mock.calls.some(call => call[0] === null)).toBe(false);
+      expect(get.mock.calls.flatMap(keysOf)).not.toContain('snapshots/other.com');
+      expect(get.mock.calls.flatMap(keysOf)).toContain('snapshots/example.com');
+      expect(storeReads(get).length).toBeLessThanOrEqual(3);
+    });
+
+    it('in a group, every member host\'s key is read', async () => {
+      await setGroups(['example.com']);
+      chrome._state.grantedOrigins.add('*://*.example.com/*');
+      await setSnapshots({
+        'www.example.com': { mine: snap('2024-01-01T00:00:00.000Z') },
+        'app.example.com': { theirs: snap('2024-01-01T00:00:00.000Z') },
+        'other.com':       { outside: snap('2024-01-01T00:00:00.000Z') },
+      });
+      const get = vi.spyOn(chrome.storage.local, 'get');
+      await loadPopup('https://www.example.com/');
+
+      expect(rowNames()).toEqual(['mine', 'theirs']);
+      const keys = get.mock.calls.flatMap(keysOf);
+      expect(keys).toContain('snapshots/app.example.com');
+      expect(keys).not.toContain('snapshots/other.com');
+    });
+
+    it('row size shows the recorded bytes', async () => {
+      await setSnapshots({ 'example.com': { sized: snap('2024-01-01T00:00:00.000Z', { bytes: 12345 }) } });
+      await loadPopup('https://example.com/');
+
+      expect(row('sized').querySelector('.snapshot__preview').textContent).toBe(formatBytes(12345));
+    });
+
+    it('row size equals byteSize of the stored snapshot for a group-scoped entry', async () => {
+      chrome._state.grantedOrigins.add('*://app.example.com/*');
+      const cookie = (name, domain) => ({ name, value: '1', domain, path: '/' });
+      const grouped = snap('2024-01-01T00:00:00.000Z', {
+        cookieDomain: 'example.com',
+        cookies: [cookie('own', 'app.example.com'), cookie('sibling', 'www.example.com')],
+      });
+      await setSnapshots({ 'app.example.com': { grouped } });
+      await loadPopup('https://app.example.com/');
+
+      expect(row('grouped').querySelector('.snapshot__preview').textContent).toBe(`Cookie 1 · ${formatBytes(byteSize(grouped))}`);
+    });
+
+    it('an open with no active snapshot sends no getStorageData', async () => {
+      await setSnapshots({ 'example.com': { mine: snap('2024-01-01T00:00:00.000Z') } });
+      await loadPopup('https://example.com/');
+
+      expect(rowNames()).toEqual(['mine']);
+      expect(chrome.tabs.sendMessage).not.toHaveBeenCalledWith(1, expect.objectContaining({ type: 'getStorageData' }));
+    });
+
+    it('hides the undo bar without reading the backup when automatic backup is off', async () => {
+      await setBackups({ 'example.com': { savedAt: '2024-01-04T00:00:00.000Z', activeName: null } });
+      await setSettings({ ...await getSettings(), autoBackup: false });
+      const get = vi.spyOn(chrome.storage.local, 'get');
+      await loadPopup('https://example.com/');
+
+      expect($('undoBar').classList.contains('hidden')).toBe(true);
+      expect(get.mock.calls.flatMap(keysOf)).not.toContain('backups/example.com');
+    });
+  });
+
   describe('storage from an older version', () => {
     it('legacy data shows on the first open', async () => {
       await chrome.storage.local.set({
@@ -1147,6 +1222,7 @@ describe('popup/popup.js', () => {
 
       expect(rowNames()).toEqual(['renamed', 'second']);
       expect((await getActiveSnapshots())['example.com']).toBe('renamed');
+      expect(row('renamed').classList.contains('is-active')).toBe(true);
       expect(document.activeElement).toBe(row('renamed').querySelector('.snapshot__main'));
     });
 

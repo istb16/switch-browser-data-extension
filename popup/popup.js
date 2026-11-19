@@ -1,5 +1,5 @@
 import { initI18n, t, applyI18n } from '../lib/i18n.js';
-import { getSettings, getGroups } from '../lib/storage.js';
+import { readKeys } from '../lib/storage.js';
 import { requestHostPermission, hasHostPermission } from '../lib/data-bridge.js';
 import { resolveScope } from '../lib/groups.js';
 import { migrateStorage } from '../lib/snapshot.js';
@@ -25,11 +25,11 @@ setRowActions({
 });
 
 async function init() {
-  await initI18n();
-  applyI18n();
-  await migrateStorage();
-
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const [, [tab]] = await Promise.all([
+    initI18n().then(applyI18n),
+    chrome.tabs.query({ active: true, currentWindow: true }),
+    migrateStorage(),
+  ]);
   state.activeTab = tab;
 
   const isRestrictedUrl = !tab?.url
@@ -51,7 +51,9 @@ async function init() {
   }
 
   $('currentDomain').textContent = host;
-  [state.settings, state.groups] = await Promise.all([getSettings(), getGroups()]);
+  const { settings, groups, ...lists } = await readKeys(['settings', 'groups', 'snapshotHosts', 'snapshotOrder', 'activeSnapshots']);
+  state.settings = settings;
+  state.groups = groups;
   state.scope = resolveScope(host, state.groups);
   if (state.scope.group) {
     const chip = $('groupChip');
@@ -63,13 +65,13 @@ async function init() {
     showPermissionPanel();
     return;
   }
-  await showMain();
+  await showMain(lists);
 }
 
-async function showMain() {
+async function showMain(lists) {
   $('permissionPanel').classList.add('hidden');
   $('mainContent').classList.remove('hidden');
-  await refresh();
+  await refresh(lists);
   // With every data type turned off there is nothing to clear.
   $('clearSiteBtn').classList.toggle('hidden', enabledTypeNames().length === 0);
   setupListeners();

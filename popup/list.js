@@ -1,5 +1,4 @@
 import { t, getLang } from '../lib/i18n.js';
-import { getBackup } from '../lib/snapshot.js';
 import { formatBytes } from '../lib/snapshot-summary.js';
 import { describeChanges, TYPE_LABELS } from '../lib/data-compare.js';
 import { setupMenu } from '../lib/menu.js';
@@ -134,8 +133,8 @@ function renderDetails(row, snapshot, summary) {
   }
 }
 
-export async function renderUndo() {
-  const backup = state.settings.autoBackup ? await getBackup(state.scope.host) : null;
+export function renderUndo() {
+  const { backup } = state;
   $('undoBar').classList.toggle('hidden', !backup);
   if (backup) $('undoText').textContent = t('undo_text', { time: formatRelative(backup.savedAt, getLang()) });
 }

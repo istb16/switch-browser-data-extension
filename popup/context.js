@@ -17,6 +17,8 @@ export const state = {
   // since search re-renders on every keystroke.
   summaries: new Map(),
   activeEntry: null,
+  // This host's backup, or null when there is none or automatic backups are off.
+  backup: null,
   // What differs from the active snapshot (see findChanges); empty when nothing does.
   changes: [],
   busy: false,

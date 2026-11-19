@@ -1,10 +1,10 @@
 import { t, getLang } from '../lib/i18n.js';
 import {
   orderedNames, saveSnapshot, deleteSnapshot, renameSnapshot,
-  loadSnapshot, getActiveSnapshot, setActiveSnapshot, saveBackup, getBackup, updateSnapshotDetails,
+  loadSnapshot, setActiveSnapshot, saveBackup, getBackup, updateSnapshotDetails,
 } from '../lib/snapshot.js';
-import { summarize, byteSize } from '../lib/snapshot-summary.js';
-import { getSnapshots, getSnapshotOrders } from '../lib/storage.js';
+import { summarize, sizeOf } from '../lib/snapshot-summary.js';
+import { readKeys, SNAPSHOT_PREFIX, BACKUP_PREFIX } from '../lib/storage.js';
 import {
   collectData, applyData, clearData, canReachPage, requestHostPermission, cookieDomainFor,
 } from '../lib/data-bridge.js';
@@ -50,25 +50,33 @@ async function ensureCookiePermission() {
   if (state.settings.enabledTypes.cookies) await requestHostPermission(state.scope);
 }
 
-export async function refresh() {
+// `lists` is what init() already read on open; later refreshes read it here.
+export async function refresh(lists) {
   const { scope } = state;
-  const [allSnapshots, allOrders, active] = await Promise.all([
-    getSnapshots(), getSnapshotOrders(), getActiveSnapshot(scope.key),
+  const { snapshotHosts, snapshotOrder, activeSnapshots } = lists
+    ?? await readKeys(['snapshotHosts', 'snapshotOrder', 'activeSnapshots']);
+  const listed = memberHosts(snapshotHosts, scope, state.groups);
+  const backupKey = BACKUP_PREFIX + scope.host;
+  const stored = await chrome.storage.local.get([
+    ...listed.map(host => SNAPSHOT_PREFIX + host),
+    ...(state.settings.autoBackup ? [backupKey] : []),
   ]);
-  const hosts = memberHosts(Object.keys(allSnapshots), scope, state.groups);
-  state.snapshots = Object.fromEntries(hosts.map(host => [host, allSnapshots[host]]));
-  state.entries = hosts.flatMap(host => orderedNames(allSnapshots[host], allOrders[host]).map(name => ({ host, name })));
+  // A listed host whose key is missing was removed part-way; it has nothing to show.
+  const hosts = listed.filter(host => (SNAPSHOT_PREFIX + host) in stored);
+  state.snapshots = Object.fromEntries(hosts.map(host => [host, stored[SNAPSHOT_PREFIX + host]]));
+  state.backup = stored[backupKey] ?? null;
+  state.entries = hosts.flatMap(host => orderedNames(state.snapshots[host], snapshotOrder[host]).map(name => ({ host, name })));
   const now = Date.now();
   // Counts follow what a load applies here; the size stays that of the stored snapshot.
   state.summaries = new Map(state.entries.map(entry => [entryId(entry), {
     ...summarize(comparable(entry, snapshotOf(entry)), now),
-    bytes: byteSize(snapshotOf(entry)),
+    bytes: sizeOf(snapshotOf(entry)),
   }]));
-  const ref = activeRef(active, scope.key);
+  const ref = activeRef(activeSnapshots[scope.key] ?? null, scope.key);
   state.activeEntry = ref && state.snapshots[ref.host]?.[ref.name] ? { host: ref.host, name: ref.name } : null;
   if (!state.activeEntry) state.changes = [];
   renderList();
-  await renderUndo();
+  renderUndo();
 }
 
 export async function detectChanges() {
