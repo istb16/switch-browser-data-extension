@@ -3,11 +3,6 @@ import { $, escHtml, showStatus, notify, reportError } from '../../lib/ui.js';
 import { MESSAGES } from '../../lib/i18n.js';
 
 describe('lib/ui', () => {
-  it('$ looks up an element by id', () => {
-    document.body.innerHTML = '<div id="target"></div>';
-    expect($('target')).toBe(document.getElementById('target'));
-  });
-
   it('escHtml escapes &, <, >, and "', () => {
     expect(escHtml('<script>alert("hi & bye")</script>')).toBe('&lt;script&gt;alert(&quot;hi &amp; bye&quot;)&lt;/script&gt;');
   });

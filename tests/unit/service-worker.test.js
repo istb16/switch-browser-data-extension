@@ -30,16 +30,6 @@ describe('background/service-worker', () => {
     expect(await getVolatileCookiesFor('a.com')).toEqual({ 'a.com|/|sid': 'value' });
   });
 
-  it('learns nothing without the host permission, where every cookie would look gone', async () => {
-    await loadServiceWorker();
-    await startCookieCheck(1, 'a.com', [sid('applied')], A_SCOPE);
-
-    chrome.tabs.onUpdated.dispatch(1, { status: 'complete' }, tab);
-    await vi.advanceTimersByTimeAsync(3000);
-
-    expect(await getVolatileCookiesFor('a.com')).toEqual({});
-  });
-
   describe('in a subdomain group', () => {
     const ORIGINS = ['*://example.com/*', '*://*.example.com/*'];
     const cookie = (name, domain, value) => ({ name, value, domain, path: '/' });

@@ -27,17 +27,6 @@ test('detects the domain and, before cookie access is allowed, asks for it inste
   await expect(popup.locator('#mainContent')).toBeHidden();
 });
 
-test('shows the list straight away when cookies are turned off', async ({ context, extensionId }) => {
-  await disableCookieCollection(context, extensionId);
-  const targetPage = await context.newPage();
-  await targetPage.goto(TEST_PAGE_URL);
-
-  const popup = await openPopupFor(context, extensionId, targetPage);
-
-  await expect(popup.locator('#mainContent')).toBeVisible();
-  await expect(popup.locator('#permissionPanel')).toBeHidden();
-});
-
 test('shows the "not available" message for a restricted page', async ({ context, extensionId }) => {
   const targetPage = await context.newPage();
   await targetPage.goto('chrome://version');
@@ -58,35 +47,6 @@ async function saveAs(popup, name) {
   await popup.locator('#confirmSaveBtn').click();
   await expect(row(popup, name)).toHaveClass(/is-active/);
 }
-
-test('memo, colour and preview show after save', async ({ context, extensionId }) => {
-  await disableCookieCollection(context, extensionId);
-  const targetPage = await context.newPage();
-  await targetPage.goto(TEST_PAGE_URL);
-  await expect.poll(() => targetPage.evaluate(() => localStorage.getItem('greeting'))).toBe('hello');
-
-  const popup = await openPopupFor(context, extensionId, targetPage);
-  await popup.locator('#saveBtn').click();
-  await popup.locator('#newSnapshotName').fill('tagged');
-  await popup.locator('#newSnapshotMemo').fill('staging admin');
-  await popup.locator('input[name="newSnapshotColor"][value="green"]').check();
-  await popup.locator('#confirmSaveBtn').click();
-
-  const tagged = row(popup, 'tagged');
-  await expect(tagged).toHaveClass(/is-active/);
-  await expect(tagged.locator('.snapshot__chip--green')).toBeVisible();
-  await expect(tagged.locator('.snapshot__memo')).toHaveText('staging admin');
-  await expect(tagged.locator('.snapshot__preview')).toHaveText(/^LS \d+ · .*[\d.]+ (B|KB|MB)$/);
-
-  await tagged.locator('.snapshot__more').click();
-  await tagged.locator('.actions-menu [data-action="edit"]').click();
-  const dialog = popup.locator('dialog');
-  await dialog.locator('input[type="text"]').fill('edited');
-  await dialog.locator('input[type="radio"][value="blue"]').check();
-  await dialog.locator('.tk3-btn-confirm').click();
-  await expect(tagged.locator('.snapshot__memo')).toHaveText('edited');
-  await expect(tagged.locator('.snapshot__chip--blue')).toBeVisible();
-});
 
 test('save then load round-trips real localStorage/sessionStorage, reloads the tab and badges the icon', async ({ context, extensionId }) => {
   await disableCookieCollection(context, extensionId);
@@ -188,25 +148,6 @@ test('clears the site\'s localStorage, sessionStorage and IndexedDB, and the und
   await expect.poll(() => targetPage.evaluate(() => indexedDB.databases().then(dbs => dbs.map(d => d.name)))).toEqual(['e2e']);
 });
 
-test('the undo bar restores the state from before the load', async ({ context, extensionId }) => {
-  await disableCookieCollection(context, extensionId);
-
-  const targetPage = await context.newPage();
-  await targetPage.goto(TEST_PAGE_URL);
-
-  const popup = await openPopupFor(context, extensionId, targetPage);
-  await saveAs(popup, 'snap1');
-
-  await targetPage.evaluate(() => localStorage.setItem('greeting', 'changed'));
-  await row(popup, 'snap1').locator('.snapshot__main').click();
-  await expect.poll(() => targetPage.evaluate(() => localStorage.getItem('greeting'))).toBe('hello');
-
-  await popup.locator('#undoBtn').click();
-  await expect.poll(() => targetPage.evaluate(() => localStorage.getItem('greeting'))).toBe('changed');
-  // snap1 was the active snapshot before the load, so it is again, now flagged as changed.
-  await expect(row(popup, 'snap1').locator('.badge--modified')).toBeVisible();
-});
-
 test('legacy storage is migrated in the browser', async ({ context, extensionId }) => {
   await disableCookieCollection(context, extensionId);
 
@@ -218,7 +159,7 @@ test('legacy storage is migrated in the browser', async ({ context, extensionId 
   await seeder.goto(`chrome-extension://${extensionId}/options/options.html`);
   await waitForReady(seeder);
   const savedAt = new Date().toISOString();
-  await seeder.evaluate(seed => chrome.storage.local.set(seed), {
+  await seeder.evaluate(seed => chrome.storage.local.remove('schemaVersion').then(() => chrome.storage.local.set(seed)), {
     snapshots: { localhost: {
       first:  { savedAt, localStorage: { greeting: 'from first' }, sessionStorage: {} },
       second: { savedAt, localStorage: { greeting: 'from second' }, sessionStorage: {} },

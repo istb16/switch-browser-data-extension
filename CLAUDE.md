@@ -70,7 +70,7 @@ Chrome / Edge 向けブラウザ拡張機能。ドメインごとに Cookie・lo
 - **インポート**: 256 MB（`IMPORT_MAX_BYTES`）を超えるファイルは読む前に断る。`parseImport`（`lib/transfer.js`）は形が `{ ドメイン: { 名前: オブジェクト } }` でない、`__proto__` `constructor` `prototype` のキーがある、`savedAt` が日時として読めない、`cookies` がオブジェクトの配列でない、ストレージの種類がオブジェクトでない、ドメインのキーが 253 文字を超えるか `a-z 0-9 . _ - [ ] :` 以外の文字を含む、ドメインが 5,000 個（`IMPORT_MAX_HOSTS`）を超える、のどれかでファイルごと断る（ドメインはそのまま保存のキーになり、本物のエクスポートには `URL.hostname` しか入らないため。`file:` のページから来る空のドメインは通す）。メモと色は `cleanDetails` で整え、文字列でない `cookieDomain` は捨てる。ファイルの `bytes` は使わず、いつも計算し直す（エクスポートでは `buildExport` が `bytes` を外すので、ファイルの形は変わらない）
   - 同じドメイン・同じ名前があれば、ファイル全体で1回だけ「上書き / スキップ / 両方残す（`名前 (2)` …）/ キャンセル」を選ぶ。上書きは並び順の位置を保ち、新しい名前は一覧に見えている順（並び順にない既存の名前も含む）の末尾に足す。ドメインのキーはファイルのまま書く
   - 同じ名前があるかの確認も混ぜる処理も、ファイルに出てくるホストのキーだけを読み書きする。書くのは中身が変わったホスト（`mergeImport` の `changedHosts`）だけで、そのキー・`snapshotHosts`・並び順を1回の `set`（`setSnapshotsAndOrders`）で書く（途中で失敗して一部のホストだけ取り込まれた状態にしないため）。選んだあとに保存データを読み直してから混ぜる（ダイアログを開いている間にポップアップで保存・変更したものを消さないため）。スナップショットを読んで書き戻す処理は、ポップアップ・設定画面のどちらからでも `withSnapshotLock`（`lib/snapshot.js`。Web Locks の `snapshots`。入れ子にはできない）で1つずつ行う
-- 全データ削除は、すべてのキーを読んで `snapshots/` `backups/` で始まるキー・`snapshotHosts` `backupHosts`・古い形の `snapshots` `backups` を消し、並び順・適用中・`volatileCookies`・`cookieChecks` を空にする。`settings` `groups` `language` は残す（どれも設定のため）。索引を当てにせず全部のキーを見るので、索引から漏れたキーも消える
+- 全データ削除は、すべてのキーを読んで `snapshots/` `backups/` で始まるキー・`snapshotHosts` `backupHosts`・古い形の `snapshots` `backups` を消し、並び順・適用中・`volatileCookies`・`cookieChecks` を空にする。`settings` `groups` `language` は残す（どれも設定のため）。`schemaVersion` も残す（形は変わらないため）。索引を当てにせず全部のキーを見るので、索引から漏れたキーも消える
 
 ### UI 構成
 
@@ -134,7 +134,7 @@ graph TD
 
   root --> lib["lib/"]
   lib --> storage_js["storage.js｜chrome.storage.local ラッパー（キーと既定値の表、ホストごとのキーと索引）"]
-  lib --> snapshot_js["snapshot.js｜スナップショット CRUD・古い形からの移し替え（migrateStorage）"]
+  lib --> snapshot_js["snapshot.js｜スナップショット CRUD・保存データの形の変換（migrateStorage・SCHEMA_VERSION）"]
   lib --> domain_js["domain.js｜ホストが範囲に入るか（isWithin）・Cookie の範囲の正規化"]
   lib --> view_js["snapshot-view.js｜色ラベル・メモ・グループのチップの表示（ポップアップ・設定画面で共通）"]
   lib --> handlers_js["web-storage-handlers.js / indexeddb-handler.js｜ページの保存領域の読み書き（コンテンツスクリプトの非モジュール）"]
@@ -220,6 +220,8 @@ graph TD
   // 値とその索引は1回の set で書き、空になったらキーを先に消してから索引を外す（途中で止まっても、
   // 索引にあってキーのないホストが残るだけで、読む側はそれを飛ばす）
   "snapshotHosts": ["example.com"],
+  // 保存データの形のバージョン（lib/snapshot.js の SCHEMA_VERSION）。ないのは 1.0.33 までの形で 1 とみなす。全データ削除でも消さない
+  "schemaVersion": 2,
   "snapshotOrder": { "example.com": ["スナップショット名", ...] },
   // グループのベースでは、どのホストのスナップショットかも残す { host, name }
   "activeSnapshots": { "example.org": "スナップショット名", "example.com": { "host": "app.example.com", "name": "スナップショット名" } },
@@ -246,10 +248,13 @@ graph TD
 }
 ```
 
-- **古い形からの移し替え**: 以前の版はすべてのスナップショットを `snapshots` の1つのキーに、すべてのバックアップを `backups` の1つのキーに置いていた。ポップアップと設定画面は `init` でスナップショットを読む前に `migrateStorage()`（`lib/snapshot.js`）を待つ（ポップアップは言語の読み込み・タブの取得と並べて走らせる）。ほかのライブラリ関数からは呼ばず、結果も覚えておかない（`withSnapshotLock` は入れ子にできないので、ロックの中から待たせない）。Service Worker はスナップショットを読まないので移し替えない
-  - 古いキーがなければ何もしない。あれば `withSnapshotLock` の中で読み直し、ホストごとのキーと索引（各スナップショットに `bytes` を付けて）を1回の `set` で書いてから、古い2つのキーを消す
-  - すでにホストごとのキーがあるホストは飛ばす（移し替えの前の保存や、版を戻して上げ直したときの新しいデータを残すため）
-  - 失敗したら古いキーは残り、何も表示せず（ポップアップ・設定画面は `console.error` に出して開く処理を続ける）、次に開いたときにもう一度試す
+- **保存データの形の変換**: 保存データの形は `schemaVersion` で表す。ポップアップと設定画面は `init` でスナップショットを読む前に `migrateStorage()`（`lib/snapshot.js`）を待つ（ポップアップは言語の読み込み・タブの取得と並べて走らせる）。ほかのライブラリ関数からは呼ばない（`withSnapshotLock` は入れ子にできないので、ロックの中から待たせない）。Service Worker はスナップショットを読まないので変換しない
+  - `schemaVersion` が `SCHEMA_VERSION` 以上なら何もしない（開くたびの負担は `get` 1回）。古ければ `withSnapshotLock` の中で読み直し、`MIGRATIONS[n]`（バージョン n を n + 1 にする）を順に流し、全部終わってから `schemaVersion` を書く
+  - 形を変えるときは `SCHEMA_VERSION` を1つ上げ、`MIGRATIONS` に変換を足す。変換は何度流しても同じ結果になるように書く（途中で失敗すると、次に開いたときに最初から流し直すため）
+  - 失敗したらバージョンは書かず、何も表示せず（ポップアップ・設定画面は `console.error` に出して開く処理を続ける）、次に開いたときにもう一度試す
+  - 版を戻す（ダウングレード）ことは考えない
+- **バージョン1 → 2（`toPerHostKeys`）**: 1.0.33 までは、すべてのスナップショットを `snapshots` の1つのキーに、すべてのバックアップを `backups` の1つのキーに置いていた。これをホストごとのキーと索引（各スナップショットに `bytes` を付けて）にして1回の `set` で書き、古い2つのキーを消す
+  - すでにホストごとのキーがあるホストは、そちらを残す。スナップショットは古い方にしかない名前だけを足す（変換に失敗したあとも画面は使え、そこでの保存を次の変換で消さないため）
   - オブジェクトでない値（`null`・文字列・配列）のホストやスナップショットは移さずに捨てる（壊れた1件のために毎回失敗し続けないため）
 
 ## 技術方針
@@ -291,7 +296,7 @@ graph TD
   - `chrome._holdGet(match)` は、`match`（`get` が求めるキー名の配列。`get(null)` なら保存されている全キー）に合う次の `get` を、その時点の値で結果を作ったまま止め、返した `release()` で解く。読み込み中に書き込みが入る競合のテストに使う
   - `var` グローバルとして書かれた非モジュールスクリプト（`lib/web-storage-handlers.js` `lib/indexeddb-handler.js` `lib/storage-digest.js` `content/content-script.js`）は `import` できないため、`tests/support/load-script.js` でソースを読み込み `Function` コンストラクタでスコープを分離しつつ実行し、生成されたハンドラを取り出してテストする
 - **E2Eテスト**: [Playwright](https://playwright.dev/)。`launchPersistentContext` に `--load-extension` を渡して本拡張機能を実際の Chromium に読み込み、ポップアップ・設定画面の操作を検証する。テストページのポートは `tests/e2e/test-page.js` に集約されており、`TK3_E2E_PORT` で上書きできる
-  - 保存データを用意するときは `seedSnapshots(page, data, orders)`（`tests/e2e/fixtures.js`）で、拡張機能のページから `lib/storage.js` の `setSnapshots` `setSnapshotOrders` を通して書く（キーの形をテストに書かないため）。読むときは `readStorage(page, 関数名, ...引数)`。古い形の `snapshots` `backups` を `chrome.storage.local.set` で直に書くのは、移し替えを確かめるテストだけ
+  - 保存データを用意するときは `seedSnapshots(page, data, orders)`（`tests/e2e/fixtures.js`）で、拡張機能のページからホストごとのキーと索引を書く（キーの先頭は `lib/storage.js` の `SNAPSHOT_PREFIX` を使う）。ユニットテストで全体を用意・確認するときは `tests/support/storage-seed.js` の `setSnapshots` `setBackups` `getBackups`（今の形で書き、`schemaVersion` も記録する。拡張機能本体は全体を一度に書かないので、本体には置かない）。読むときは `readStorage(page, 関数名, ...引数)`。古い形の `snapshots` `backups` を `chrome.storage.local.set` で直に書くのは、移し替えを確かめるテストだけ
   - Cookie の読み取りに要るホスト権限は実行時に Chrome のダイアログで求めるが、Playwright はこれを操作できない。Cookie を扱うテスト（`tests/e2e/cookies.spec.js`）は `test.use({ grantHostPermissions: true })` で、manifest にホスト権限を足した拡張機能のコピーを一時フォルダに作って読み込む。テストページの `/cookies/` は毎回値の変わる `csrf` と、`/cookies/login?user=名前` でだけ変わる `sid` を返す
   - グループのテスト（`tests/e2e/groups.spec.js`）は `--host-resolver-rules` で `example.test` と `*.example.test` をテストサーバーに向ける（`localhost` ではドメイン Cookie が当てにならないため）。`/group/login?user=名前` は `Domain=example.test` の `gsid` を返す
 - **実装中に手元で流すテストは、変更に関係するものだけにする**（例: `npx vitest run tests/unit/popup.test.js`、`npx playwright test tests/e2e/popup.spec.js`）。全テストは CI（GitHub Actions）で流すので、手元で `npm test` や `npm run test:e2e` を丸ごと流さなくてよい

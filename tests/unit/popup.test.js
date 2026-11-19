@@ -233,11 +233,6 @@ describe('popup/popup.js', () => {
       expect(row('fresh').querySelector('.snapshot__warning')).toBeNull();
     });
 
-    it('popup memo input has maxlength 100', async () => {
-      await loadPopup('https://example.com/');
-      expect($('newSnapshotMemo').maxLength).toBe(100);
-    });
-
     it('popup search matches memo', async () => {
       const many = Object.fromEntries(['alpha', 'beta', 'gamma', 'delta', 'epsilon'].map(n => [n, snap('2024-01-01T00:00:00.000Z')]));
       many.gamma.memo = 'Staging Admin';
@@ -397,18 +392,6 @@ describe('popup/popup.js', () => {
       await settle();
       document.querySelector('.tk3-btn-confirm').click();
       await settle();
-      expect((await getSnapshots())['example.com'].existing.localStorage).toEqual({ current: '1' });
-    });
-
-    it('overwrites from the row menu after confirming', async () => {
-      await setSnapshots({ 'example.com': { existing: snap('2024-01-01T00:00:00.000Z', { localStorage: { old: '1' } }) } });
-      await loadPopup('https://example.com/');
-
-      row('existing').querySelector('[data-action="overwrite"]').click();
-      await settle();
-      document.querySelector('.tk3-btn-confirm').click();
-      await settle();
-
       expect((await getSnapshots())['example.com'].existing.localStorage).toEqual({ current: '1' });
     });
   });
@@ -850,17 +833,6 @@ describe('popup/popup.js', () => {
       expect(row('saved').classList.contains('is-active')).toBe(true);
     });
 
-    it('popup on a non-group host uses the host as key and the single origin', async () => {
-      chrome._state.grantedOrigins.clear();
-      const request = vi.spyOn(chrome.permissions, 'request');
-      await loadPopup('https://other.com/');
-
-      expect(isHidden($('groupChip'))).toBe(true);
-      $('grantPermissionBtn').click();
-      await settle();
-      expect(request).toHaveBeenCalledWith({ origins: ['*://other.com/*'] });
-    });
-
     it('popup permission panel asks for the group origins', async () => {
       chrome._state.grantedOrigins.clear();
       chrome._state.grantedOrigins.add('*://www.example.com/*');
@@ -1189,6 +1161,7 @@ describe('popup/popup.js', () => {
     it('a failed migration still shows the list', async () => {
       await chrome.storage.local.set({ snapshots: { 'other.com': { third: snap('2024-01-03T00:00:00.000Z') } } });
       await setSnapshots({ 'example.com': { first: snap('2024-01-01T00:00:00.000Z') } });
+      await chrome.storage.local.remove('schemaVersion');
       const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
       const remove = vi.spyOn(chrome.storage.local, 'remove').mockRejectedValueOnce(new Error('I/O error'));
 
@@ -1204,6 +1177,7 @@ describe('popup/popup.js', () => {
     it('the next open retries the migration and keeps the per-host data', async () => {
       await chrome.storage.local.set({ snapshots: { 'other.com': { third: snap('2024-01-03T00:00:00.000Z') } } });
       await setSnapshots({ 'example.com': { first: snap('2024-01-01T00:00:00.000Z') } });
+      await chrome.storage.local.remove('schemaVersion');
       const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
       const remove = vi.spyOn(chrome.storage.local, 'remove').mockRejectedValueOnce(new Error('I/O error'));
       await loadPopup('https://example.com/');

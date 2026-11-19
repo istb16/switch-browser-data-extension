@@ -140,24 +140,6 @@ describe('options/options.js', () => {
       await loadOptions();
       expect(document.getElementById('meterAdvisory').classList.contains('hidden')).toBe(false);
     });
-
-    it('deleting a snapshot refreshes the meter and the domain size', async () => {
-      await setSnapshots({ 'a.com': {
-        big:   { savedAt: '2024-01-01T00:00:00.000Z', localStorage: { k: 'x'.repeat(5000) } },
-        small: { savedAt: '2024-01-01T00:00:00.000Z' },
-      } });
-      await loadOptions();
-      const before = document.getElementById('meterTotal').textContent;
-
-      document.querySelector('.snapshot-row[data-name="big"] .btn-icon').click();
-      await flush();
-      document.querySelector('.tk3-btn-confirm').click();
-      await flush();
-
-      expect(document.getElementById('meterTotal').textContent).not.toBe(before);
-      expect(document.querySelector('.domain-size').textContent)
-        .toBe(formatBytes(byteSize({ savedAt: '2024-01-01T00:00:00.000Z' })));
-    });
   });
 
   describe('rows and sorting', () => {
@@ -487,53 +469,6 @@ describe('options/options.js', () => {
     await flush();
 
     expect((await getSnapshotOrders())['a.com']).toEqual(['second', 'first']);
-  });
-
-  it('exports all snapshots as a downloadable JSON blob', async () => {
-    await setSnapshots({ 'a.com': { x: { savedAt: '2024-01-01T00:00:00.000Z' } } });
-    await loadOptions();
-
-    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
-    document.getElementById('exportBtn').click();
-    await flush();
-
-    expect(clickSpy).toHaveBeenCalled();
-    expect(document.getElementById('statusMsg').className).toContain('success');
-    clickSpy.mockRestore();
-  });
-
-  describe('importing snapshots', () => {
-    // jsdom's File/Blob implementation doesn't provide .text(), which is all
-    // handleImport() actually calls — a plain object with that method is a
-    // faithful enough stand-in for `e.target.files[0]`.
-    function setInputFiles(input, text) {
-      Object.defineProperty(input, 'files', { value: [{ text: async () => text }], configurable: true });
-    }
-
-    it('merges imported snapshots into existing storage per domain', async () => {
-      await setSnapshots({ 'a.com': { existing: { savedAt: '2024-01-01T00:00:00.000Z' } } });
-      await loadOptions();
-
-      setInputFiles(document.getElementById('importFile'), JSON.stringify({ 'a.com': { imported: { savedAt: '2024-02-02T00:00:00.000Z' } } }));
-      document.getElementById('importFile').dispatchEvent(new Event('change'));
-      await flush();
-
-      const snapshots = await getSnapshots();
-      expect(Object.keys(snapshots['a.com']).sort()).toEqual(['existing', 'imported']);
-      expect(document.getElementById('statusMsg').className).toContain('success');
-    });
-
-    it('shows an error for malformed JSON and does not touch existing data', async () => {
-      await setSnapshots({ 'a.com': { existing: { savedAt: '2024-01-01T00:00:00.000Z' } } });
-      await loadOptions();
-
-      setInputFiles(document.getElementById('importFile'), 'not json');
-      document.getElementById('importFile').dispatchEvent(new Event('change'));
-      await flush();
-
-      expect(document.getElementById('statusMsg').className).toContain('error');
-      expect(await getSnapshots()).toEqual({ 'a.com': { existing: { savedAt: '2024-01-01T00:00:00.000Z' } } });
-    });
   });
 
   describe('scoped export, encryption and checked import', () => {

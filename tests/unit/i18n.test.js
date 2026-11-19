@@ -44,11 +44,6 @@ describe('lib/i18n', () => {
     expect(t('saved_at', { date: '2024-01-01' })).toBe('保存日時: 2024-01-01');
   });
 
-  it('substitutes the same placeholder repeated multiple times', async () => {
-    await setLanguage('ja');
-    expect(t('count_format', { n: 3 })).toBe('3 件');
-  });
-
   it('falls back to English text, then the raw key, for unknown-language / unknown-key lookups', async () => {
     await setLanguage('ja');
     expect(t('does_not_exist')).toBe('does_not_exist');

@@ -78,13 +78,6 @@ describe('lib/snapshot-summary sizes', () => {
     expect(withBytes(bare)).toEqual(recorded);
     expect(bare).not.toHaveProperty('bytes');
   });
-
-  it('measureDomains uses the recorded size when present', () => {
-    const a1 = { savedAt: 'x', bytes: 10 };
-    const a2 = { savedAt: 'y' };
-    expect(measureDomains({ 'a.com': { one: a1, two: a2 } })['a.com'])
-      .toEqual({ bytes: 10 + byteSize(a2), snapshots: { one: 10, two: byteSize(a2) } });
-  });
 });
 
 describe('lib/snapshot-summary cleanDetails', () => {

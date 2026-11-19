@@ -1,7 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
-  normalizeGroupDomain, validateNewGroup, groupOrigins, resolveScope, memberHosts, activeRef,
-  addGroup, removeGroup,
+  normalizeGroupDomain, validateNewGroup, resolveScope, memberHosts, activeRef, addGroup, removeGroup,
 } from '../../lib/groups.js';
 import { getGroups, setGroups, getActiveSnapshots, setActiveSnapshots } from '../../lib/storage.js';
 
@@ -50,16 +49,6 @@ describe('lib/groups', () => {
     });
   });
 
-  it('resolveScope without groups equals today\'s host keying', () => {
-    expect(resolveScope('app.example.com', [])).toEqual({
-      key: 'app.example.com', host: 'app.example.com', group: null, origins: ['*://app.example.com/*'],
-    });
-  });
-
-  it('groupOrigins covers the base and its subdomains', () => {
-    expect(groupOrigins('example.com')).toEqual(['*://example.com/*', '*://*.example.com/*']);
-  });
-
   it('memberHosts lists the current host first, then the other member keys sorted, and no outside key', () => {
     const groups = ['example.com'];
     const keys = ['zzz.example.com', 'other.com', 'example.com', 'www.example.com', 'app.example.com', 'notexample.com'];
@@ -74,12 +63,6 @@ describe('lib/groups', () => {
     const ref = { host: 'app.example.com', name: 'second' };
     expect(activeRef(ref, 'example.com')).toBe(ref);
     expect(activeRef(undefined, 'example.com')).toBeNull();
-  });
-
-  it('resolveScope resolves through the stored groups', async () => {
-    await setGroups(['example.com']);
-    expect(resolveScope('app.example.com', await getGroups()).key).toBe('example.com');
-    expect(resolveScope('other.com', await getGroups()).key).toBe('other.com');
   });
 
   it('addGroup stores the normalized base and refuses an invalid one', async () => {

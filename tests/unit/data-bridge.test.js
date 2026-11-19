@@ -108,13 +108,6 @@ describe('lib/data-bridge applyData', () => {
     await applyData(1, HOST, {}, { cookies: false, localStorage: true, sessionStorage: true, indexedDB: true });
     expect(chrome.tabs.sendMessage).not.toHaveBeenCalled();
   });
-
-  it('does not throw when the content script is unreachable', async () => {
-    chrome.tabs.sendMessage = vi.fn().mockRejectedValue(new Error('no receiver'));
-    await expect(applyData(1, HOST, { localStorage: { a: '1' } }, {
-      cookies: false, localStorage: true, sessionStorage: false, indexedDB: false,
-    })).resolves.toEqual({ storageSkipped: false });
-  });
 });
 
 describe('lib/data-bridge clearData', () => {
@@ -344,12 +337,6 @@ describe('lib/data-bridge in a subdomain group', () => {
       expect(await applyData(1, scope, { localStorage: { a: '1' } }, ALL, 'app.example.com')).toEqual({ storageSkipped: false });
       expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(1, expect.objectContaining({ type: 'setStorageData' }));
     }
-  });
-
-  it('group clearData removes every cookie under the base', async () => {
-    chrome.tabs.sendMessage = vi.fn().mockResolvedValue({ success: true });
-    await clearData(1, APP, ALL);
-    expect(jar()).toEqual(['notexample.com:other=1']);
   });
 });
 

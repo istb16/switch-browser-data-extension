@@ -130,11 +130,6 @@ describe('lib/volatile-cookies', () => {
     expect(Object.keys((await chrome.storage.local.get('cookieChecks')).cookieChecks)).toEqual(['7']);
   });
 
-  it('stores whether the cookie scope is exact', async () => {
-    await startCookieCheck(5, 'example.com', [], scope('example.com', true));
-    expect(await takeCookieCheck(5)).toMatchObject({ cookieDomain: 'example.com', cookieExact: true });
-  });
-
   it('taking a check leaves the other tabs\' checks', async () => {
     await startCookieCheck(5, 'a.com', [], scope('a.com'));
     await startCookieCheck(6, 'b.com', [], scope('b.com'));

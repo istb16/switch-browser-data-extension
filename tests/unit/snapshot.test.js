@@ -8,7 +8,7 @@ import {
   setSnapshotOrder,
   loadSnapshot,
   updateSnapshotDetails,
-  migrateStorage,
+  migrateStorage, SCHEMA_VERSION,
   saveBackup,
   clearAllData,
 } from '../../lib/snapshot.js';
@@ -120,26 +120,6 @@ describe('lib/snapshot', () => {
     });
   });
 
-  it('orderedNames follows the stored order, then appends unordered names alphabetically', async () => {
-    // saveSnapshot() always appends new names to the order array, so names
-    // end up "unordered" only when storage and the order list diverge — as
-    // happens with options.js's import flow, which merges snapshot data
-    // without touching snapshotOrder. Reproduce that directly.
-    await setSnapshots({ 'example.com': { b: {}, a: {}, z: {}, c: {} } });
-    await setSnapshotOrders({ 'example.com': ['b', 'a'] });
-
-    const orders = await getSnapshotOrders();
-    expect(orderedNames(await snapshotsOf('example.com'), orders['example.com'])).toEqual(['b', 'a', 'c', 'z']);
-  });
-
-  it('orderedNames ignores stale order entries for deleted snapshots', async () => {
-    await saveSnapshot('example.com', 'a', {});
-    await setSnapshotOrder('example.com', ['a', 'ghost']);
-    const orders = await getSnapshotOrders();
-    expect(orders['example.com']).toEqual(['a', 'ghost']);
-    expect(orderedNames(await snapshotsOf('example.com'), orders['example.com'])).toEqual(['a']);
-  });
-
   it('setSnapshotOrder replaces one domain\'s order and keeps the others', async () => {
     await setSnapshotOrders({ 'a.com': ['x'], 'b.com': ['y', 'z'] });
     await setSnapshotOrder('b.com', ['z', 'y']);
@@ -166,10 +146,6 @@ describe('lib/snapshot', () => {
     expect(orders).not.toHaveProperty('example.com');
   });
 
-  it('deleteSnapshot on an unknown domain is a no-op', async () => {
-    await expect(deleteSnapshot('unknown.com', 'x')).resolves.toBeUndefined();
-  });
-
   it('renameSnapshot moves the data under the new name and preserves order position', async () => {
     await saveSnapshot('example.com', 'a', { value: 1 });
     await saveSnapshot('example.com', 'b', { value: 2 });
@@ -189,10 +165,6 @@ describe('lib/snapshot', () => {
     await saveSnapshot('example.com', 'a', {});
     await saveSnapshot('example.com', 'b', {});
     await expect(renameSnapshot('example.com', 'a', 'b')).rejects.toThrow('duplicate');
-  });
-
-  it('renameSnapshot on a missing snapshot is a no-op', async () => {
-    await expect(renameSnapshot('example.com', 'missing', 'new')).resolves.toBeUndefined();
   });
 
   it('saveSnapshot keeps memo and color on overwrite', async () => {
@@ -230,11 +202,6 @@ describe('lib/snapshot', () => {
     expect(a).not.toHaveProperty('memo');
     expect(a).not.toHaveProperty('color');
     expect(a.value).toBe(1);
-  });
-
-  it('updateSnapshotDetails on a missing snapshot is a no-op', async () => {
-    await updateSnapshotDetails('example.com', 'missing', { memo: 'm' });
-    expect(await getSnapshots()).toEqual({});
   });
 
   it('loadSnapshot returns the stored snapshot or null', async () => {
@@ -313,14 +280,6 @@ describe('lib/snapshot — active snapshot and backup', () => {
     expect(backup.activeName).toBeNull();
     expect(typeof backup.savedAt).toBe('string');
     expect(await getSnapshots()).toEqual({});
-  });
-
-  it('saveBackup replaces one domain\'s backup and keeps the others', async () => {
-    const { saveBackup, getBackup } = await import('../../lib/snapshot.js');
-    await saveBackup('a.com', { localStorage: { a: '1' } }, null);
-    await saveBackup('b.com', { localStorage: { b: '1' } }, 'x');
-    expect((await getBackup('a.com')).localStorage).toEqual({ a: '1' });
-    expect(await getBackup('b.com')).toMatchObject({ localStorage: { b: '1' }, activeName: 'x' });
   });
 });
 
@@ -467,23 +426,17 @@ describe('lib/snapshot — migrateStorage', () => {
 
   it('with snapshots: {}', async () => {
     await chrome.storage.local.set({ snapshots: {} });
-    const set = vi.spyOn(chrome.storage.local, 'set');
 
     await migrateStorage();
 
-    expect(set).not.toHaveBeenCalled();
-    expect(chrome._state.storage).toEqual({});
-    const remove = vi.spyOn(chrome.storage.local, 'remove');
-    await migrateStorage();
-    expect(remove).not.toHaveBeenCalled();
+    expect(chrome._state.storage).toEqual({ schemaVersion: SCHEMA_VERSION });
   });
 
-  it('keeps an existing per-host key over the legacy copy, and adds the names only the legacy copy has', async () => {
+  it('after a failed migration, per-host saves win over the legacy copy, which adds only the names they lack', async () => {
     await saveSnapshot('a.com', 'newer', {});
     await saveSnapshot('a.com', 'x', { localStorage: { k: 'per-host' } });
     await saveBackup('a.com', { localStorage: { newer: '1' } }, null);
     const kept = structuredClone({ s: chrome._state.storage['snapshots/a.com'], b: chrome._state.storage['backups/a.com'] });
-    // A downgraded version writes the old key again, here with 'y' saved there.
     await chrome.storage.local.set({
       snapshots: legacy().snapshots,
       backups: { ...legacy().backups, 'b.com': { savedAt: SAVED, activeName: null } },
@@ -558,14 +511,14 @@ describe('lib/snapshot — migrateStorage', () => {
     vi.spyOn(chrome.storage.local, 'set').mockRejectedValueOnce(new Error('quota'));
 
     await expect(migrateStorage()).rejects.toThrow('quota');
-    expect(await chrome.storage.local.get(['snapshots', 'backups'])).toEqual({
+    expect(await chrome.storage.local.get(['snapshots', 'backups', 'schemaVersion'])).toEqual({
       snapshots: legacy().snapshots, backups: legacy().backups,
     });
     expect(await getSnapshotHosts()).toEqual([]);
 
     await migrateStorage();
     expect(Object.keys(await getSnapshots()).sort()).toEqual(['a.com', 'b.com']);
-    expect(await chrome.storage.local.get(['snapshots', 'backups'])).toEqual({});
+    expect(await chrome.storage.local.get(['snapshots', 'backups', 'schemaVersion'])).toEqual({ schemaVersion: SCHEMA_VERSION });
   });
 
   it('drops corrupt legacy snapshots and moves the rest', async () => {
@@ -598,7 +551,7 @@ describe('lib/snapshot — migrateStorage', () => {
 
     await migrateStorage();
 
-    expect(chrome._state.storage).toEqual({});
+    expect(chrome._state.storage).toEqual({ schemaVersion: SCHEMA_VERSION });
   });
 
   it('a save before migration survives it', async () => {

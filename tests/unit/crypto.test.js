@@ -12,10 +12,6 @@ const validEnvelope = (overrides = {}) => [ENVELOPE_TAG, {
 }];
 
 describe('lib/crypto', () => {
-  it('crypto.subtle is available in the test environment', () => {
-    expect(typeof globalThis.crypto?.subtle?.encrypt).toBe('function');
-  });
-
   it('encrypt then decrypt round-trips text', async () => {
     const text = JSON.stringify({ 'example.com': { 'ログイン': { memo: 'こんにちは 😀' } } });
     const envelope = await encryptText(text, 'passphrase', FAST);

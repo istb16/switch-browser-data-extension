@@ -1,7 +1,9 @@
 // Whole-store seeding and reading for tests, in the extension's per-host key
 // layout (one key per host plus an index). The extension itself only ever
-// writes one host, or the hosts an import touches, at a time.
+// writes one host, or the hosts an import touches, at a time. The data is in
+// the current layout, so the current schema version is recorded with it.
 import { SNAPSHOT_PREFIX, BACKUP_PREFIX } from '../../lib/storage.js';
+import { SCHEMA_VERSION } from '../../lib/snapshot.js';
 
 const isEmpty = value => value == null || Object.keys(value).length === 0;
 
@@ -13,6 +15,7 @@ async function replaceAll(prefix, indexKey, values) {
   await chrome.storage.local.set({
     ...Object.fromEntries(kept.map(host => [prefix + host, values[host]])),
     [indexKey]: kept,
+    schemaVersion: SCHEMA_VERSION,
   });
 }
 

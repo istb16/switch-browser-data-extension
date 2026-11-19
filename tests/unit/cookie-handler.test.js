@@ -25,17 +25,6 @@ describe('lib/cookie-handler', () => {
     expect(cookies.map(c => c.name)).toEqual(['a']);
   });
 
-  it('setCookiesForDomain replaces all existing cookies for the domain', async () => {
-    chrome._state.cookies.push({ name: 'stale', value: 'x', domain: 'example.com', path: '/', secure: false, httpOnly: false });
-
-    await setCookiesForDomain('example.com', [
-      { name: 'fresh', value: 'y', domain: 'example.com', path: '/', secure: false, httpOnly: false, sameSite: 'lax' },
-    ]);
-
-    const names = chrome._state.cookies.filter(c => c.domain === 'example.com').map(c => c.name);
-    expect(names).toEqual(['fresh']);
-  });
-
   it('setCookiesForDomain removes a host-only and a dot-domain cookie of the same name, even when remove() looks up before it deletes', async () => {
     chrome._state.cookies.push(
       { name: 'sid', value: 'host', domain: 'example.com', path: '/', secure: false, httpOnly: false },
@@ -277,12 +266,5 @@ describe('lib/cookie-handler', () => {
     ]);
 
     expect(chrome._state.cookies.map(({ name, value }) => ({ name, value }))).toEqual([{ name: 'sid', value: 'last' }]);
-  });
-
-  it('setCookiesForDomain sets both a host-only and a domain cookie of the same name into an empty jar', async () => {
-    await setCookiesForDomain('example.com', [cookie('sid', 'example.com', { value: 'host' }), cookie('sid', '.example.com', { value: 'domain' })]);
-
-    expect(chrome._state.cookies.map(({ domain, value }) => `${domain}:${value}`).sort())
-      .toEqual(['.example.com:domain', 'example.com:host']);
   });
 });

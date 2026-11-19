@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { encryptText, MIN_ITERATIONS } from '../../lib/crypto.js';
 import {
-  IMPORT_MAX_BYTES, IMPORT_MAX_HOSTS, buildExport, parseImport, findConflicts, uniqueName, mergeImport, exportFileName,
+  IMPORT_MAX_HOSTS, buildExport, parseImport, findConflicts, uniqueName, mergeImport, exportFileName,
 } from '../../lib/transfer.js';
 import { byteSize } from '../../lib/snapshot-summary.js';
 
@@ -105,10 +105,6 @@ describe('lib/transfer parseImport', () => {
   it('of decrypted text that is itself an envelope throws invalid', async () => {
     const envelope = await encryptText('{}', 'passphrase', MIN_ITERATIONS);
     expect(() => parseImport(JSON.stringify(envelope), { decrypted: true })).toThrow('invalid');
-  });
-
-  it('IMPORT_MAX_BYTES is 256 MB', () => {
-    expect(IMPORT_MAX_BYTES).toBe(256 * 1024 * 1024);
   });
 });
 

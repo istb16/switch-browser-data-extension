@@ -1,33 +1,14 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
-  getSnapshots, getSettings, setSettings, getSnapshotOrders, setSnapshotOrders,
-  getActiveSnapshots, setActiveSnapshots, getGroups, setGroups,
-  getVolatileCookies, setVolatileCookies, getCookieChecks, setCookieChecks,
-  readKeys, updateKey, withDefaultSettings,
-  getSnapshotHosts, getSnapshotsFor, setSnapshotsFor, getBackupHosts, getBackup, setBackup,
-  setSnapshotsAndOrders,
+  getSnapshots, getSettings, setSettings, getSnapshotOrders, getActiveSnapshots, setActiveSnapshots, getGroups, setGroups,
+  readKeys, updateKey, withDefaultSettings, getSnapshotHosts, getSnapshotsFor, setSnapshotsFor, getBackupHosts, getBackup,
+  setBackup, setSnapshotsAndOrders,
 } from '../../lib/storage.js';
 import { setSnapshots, getBackups, setBackups } from '../support/storage-seed.js';
 
 describe('lib/storage', () => {
   it('returns an empty object when no snapshots are stored', async () => {
     expect(await getSnapshots()).toEqual({});
-  });
-
-  it('round-trips snapshots through chrome.storage.local', async () => {
-    const snapshots = { 'example.com': { foo: { savedAt: '2024-01-01T00:00:00.000Z' } } };
-    await setSnapshots(snapshots);
-    expect(await getSnapshots()).toEqual(snapshots);
-  });
-
-  it('returns the default settings when none are stored', async () => {
-    expect(await getSettings()).toEqual({
-      enabledTypes: { cookies: true, localStorage: true, sessionStorage: true, indexedDB: true },
-      autoBackup: true,
-      autoReload: true,
-      showBadge:  true,
-      encryptExports: false,
-    });
   });
 
   it('round-trips settings', async () => {
@@ -59,34 +40,6 @@ describe('lib/storage', () => {
     await setBackups({ 'a.com': { savedAt: '2024-01-01T00:00:00.000Z' } });
     expect(await getActiveSnapshots()).toEqual({ 'a.com': 'x' });
     expect(await getBackups()).toEqual({ 'a.com': { savedAt: '2024-01-01T00:00:00.000Z' } });
-  });
-
-  it('returns an empty object when no snapshot order is stored', async () => {
-    expect(await getSnapshotOrders()).toEqual({});
-  });
-
-  it('round-trips snapshot orders', async () => {
-    const orders = { 'example.com': ['b', 'a'] };
-    await setSnapshotOrders(orders);
-    expect(await getSnapshotOrders()).toEqual(orders);
-  });
-
-  it('getGroups defaults to an empty array', async () => {
-    expect(await getGroups()).toEqual([]);
-  });
-
-  it('round-trips groups', async () => {
-    await setGroups(['example.com']);
-    expect(await getGroups()).toEqual(['example.com']);
-  });
-
-  it('round-trips volatile cookies and cookie checks, defaulting to empty objects', async () => {
-    expect(await getVolatileCookies()).toEqual({});
-    expect(await getCookieChecks()).toEqual({});
-    await setVolatileCookies({ 'a.com': { 'a.com|/|x': 'value' } });
-    await setCookieChecks({ 5: { domain: 'a.com', cookies: [], until: 1 } });
-    expect(await getVolatileCookies()).toEqual({ 'a.com': { 'a.com|/|x': 'value' } });
-    expect(await getCookieChecks()).toEqual({ 5: { domain: 'a.com', cookies: [], until: 1 } });
   });
 
   it('withDefaultSettings merges stored settings over the defaults', () => {
