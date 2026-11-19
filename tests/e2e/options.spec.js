@@ -1,4 +1,4 @@
-import { test, expect, reloadAndWait } from './fixtures.js';
+import { test, expect, reloadAndWait, seedSnapshots, readStorage } from './fixtures.js';
 
 async function openOptions(context, extensionId, pane = '') {
   const page = await context.newPage();
@@ -45,12 +45,10 @@ test.describe('options page', () => {
   test('renaming a snapshot updates it in place without collapsing other open domains', async ({ context, extensionId }) => {
     const page = await openOptions(context, extensionId, '#snapshots');
 
-    await page.evaluate(() => chrome.storage.local.set({
-      snapshots: {
-        'a.example.com': { first: { savedAt: new Date().toISOString() } },
-        'b.example.com': { other: { savedAt: new Date().toISOString() } },
-      },
-    }));
+    await seedSnapshots(page, {
+      'a.example.com': { first: { savedAt: new Date().toISOString() } },
+      'b.example.com': { other: { savedAt: new Date().toISOString() } },
+    });
     await reloadAndWait(page);
 
     const domainItems = page.locator('.domain-item');
@@ -72,9 +70,9 @@ test.describe('options page', () => {
 
   test('rejects a rename to a name that already exists in the domain', async ({ context, extensionId }) => {
     const page = await openOptions(context, extensionId, '#snapshots');
-    await page.evaluate(() => chrome.storage.local.set({
-      snapshots: { 'a.example.com': { first: { savedAt: new Date().toISOString() }, second: { savedAt: new Date().toISOString() } } },
-    }));
+    await seedSnapshots(page, {
+      'a.example.com': { first: { savedAt: new Date().toISOString() }, second: { savedAt: new Date().toISOString() } },
+    });
     await reloadAndWait(page);
     await page.locator('.domain-header').click();
 
@@ -92,12 +90,10 @@ test.describe('options page', () => {
 
   test('deleting a snapshot removes only that row, keeps the domain visible at 0, and keeps other domains open', async ({ context, extensionId }) => {
     const page = await openOptions(context, extensionId, '#snapshots');
-    await page.evaluate(() => chrome.storage.local.set({
-      snapshots: {
-        'a.example.com': { only: { savedAt: new Date().toISOString() } },
-        'b.example.com': { other: { savedAt: new Date().toISOString() } },
-      },
-    }));
+    await seedSnapshots(page, {
+      'a.example.com': { only: { savedAt: new Date().toISOString() } },
+      'b.example.com': { other: { savedAt: new Date().toISOString() } },
+    });
     await reloadAndWait(page);
 
     const domainItems = page.locator('.domain-item');
@@ -125,9 +121,9 @@ test.describe('options page', () => {
 
   test('export downloads a JSON file containing the stored snapshots', async ({ context, extensionId }) => {
     const page = await openOptions(context, extensionId, '#data');
-    await page.evaluate(() => chrome.storage.local.set({
-      snapshots: { 'a.example.com': { first: { savedAt: new Date().toISOString(), localStorage: { a: '1' } } } },
-    }));
+    await seedSnapshots(page, {
+      'a.example.com': { first: { savedAt: new Date().toISOString(), localStorage: { a: '1' } } },
+    });
     await reloadAndWait(page);
 
     const [download] = await Promise.all([
@@ -143,7 +139,7 @@ test.describe('options page', () => {
   test('encrypted export downloads an envelope and re-imports with the passphrase', async ({ context, extensionId }) => {
     const page = await openOptions(context, extensionId, '#data');
     const snapshot = { savedAt: new Date().toISOString(), localStorage: { a: '1' } };
-    await page.evaluate(s => chrome.storage.local.set({ snapshots: { 'a.example.com': { first: s } } }), snapshot);
+    await seedSnapshots(page, { 'a.example.com': { first: snapshot } });
     await reloadAndWait(page);
 
     await page.locator('#toggleEncryptExports').check();
@@ -169,24 +165,22 @@ test.describe('options page', () => {
     expect(envelope[0]).toBe('switch-browser-data-encrypted');
     expect(text).not.toContain('a.example.com');
 
-    await page.evaluate(() => chrome.storage.local.set({ snapshots: {} }));
+    await seedSnapshots(page, {});
     await reloadAndWait(page);
     await page.locator('#importFile').setInputFiles({ name: 'export.json', mimeType: 'application/json', buffer: Buffer.from(text) });
     await dialog.locator('input[type="password"]').fill('correct horse');
     await dialog.locator('.tk3-btn-confirm').click();
     await expect(page.locator('#statusMsg')).toHaveClass(/success/, { timeout: 15_000 });
 
-    const stored = await page.evaluate(() => chrome.storage.local.get('snapshots'));
-    expect(stored.snapshots).toEqual({ 'a.example.com': { first: snapshot } });
+    const { bytes, ...first } = (await readStorage(page, 'getSnapshots'))['a.example.com'].first;
+    expect(first).toEqual(snapshot);
+    expect(bytes).toBeGreaterThan(0);
   });
 
   test('import conflict "keep both" adds a renamed row', async ({ context, extensionId }) => {
     const page = await openOptions(context, extensionId, '#data');
     const savedAt = new Date().toISOString();
-    await page.evaluate(at => chrome.storage.local.set({
-      snapshots: { 'a.example.com': { first: { savedAt: at } } },
-      snapshotOrder: { 'a.example.com': ['first'] },
-    }), savedAt);
+    await seedSnapshots(page, { 'a.example.com': { first: { savedAt } } }, { 'a.example.com': ['first'] });
     await reloadAndWait(page);
 
     const file = JSON.stringify({ 'a.example.com': { first: { savedAt, localStorage: { b: '2' } } } });
@@ -204,9 +198,7 @@ test.describe('options page', () => {
 
   test('clearing all data empties storage and shows the empty state', async ({ context, extensionId }) => {
     const page = await openOptions(context, extensionId, '#data');
-    await page.evaluate(() => chrome.storage.local.set({
-      snapshots: { 'a.example.com': { first: { savedAt: new Date().toISOString() } } },
-    }));
+    await seedSnapshots(page, { 'a.example.com': { first: { savedAt: new Date().toISOString() } } });
     await reloadAndWait(page);
 
     await page.locator('#clearAllBtn').click();
@@ -214,15 +206,14 @@ test.describe('options page', () => {
 
     await page.locator('.nav-link[data-pane="snapshots"]').click();
     await expect(page.locator('.empty-state')).toBeVisible();
-    const stored = await page.evaluate(() => chrome.storage.local.get('snapshots'));
-    expect(stored.snapshots ?? {}).toEqual({});
+    expect(await readStorage(page, 'getSnapshots')).toEqual({});
+    const keys = Object.keys(await page.evaluate(() => chrome.storage.local.get(null)));
+    expect(keys.filter(key => key.startsWith('snapshots'))).toEqual([]);
   });
 
   test('the confirm dialog is a native modal that Esc and clicking outside both cancel', async ({ context, extensionId }) => {
     const page = await openOptions(context, extensionId, '#data');
-    await page.evaluate(() => chrome.storage.local.set({
-      snapshots: { 'a.example.com': { first: { savedAt: new Date().toISOString() } } },
-    }));
+    await seedSnapshots(page, { 'a.example.com': { first: { savedAt: new Date().toISOString() } } });
     await reloadAndWait(page);
 
     const dialog = page.locator('dialog.tk3-dialog');
@@ -239,15 +230,12 @@ test.describe('options page', () => {
     await page.mouse.click(5, 5);
     await expect(dialog).toHaveCount(0);
 
-    const stored = await page.evaluate(() => chrome.storage.local.get('snapshots'));
-    expect(Object.keys(stored.snapshots)).toEqual(['a.example.com']);
+    expect(Object.keys(await readStorage(page, 'getSnapshots'))).toEqual(['a.example.com']);
   });
 
   test('the Enter that confirms an IME conversion does not commit a rename', async ({ context, extensionId }) => {
     const page = await openOptions(context, extensionId, '#snapshots');
-    await page.evaluate(() => chrome.storage.local.set({
-      snapshots: { 'a.example.com': { first: { savedAt: new Date().toISOString() } } },
-    }));
+    await seedSnapshots(page, { 'a.example.com': { first: { savedAt: new Date().toISOString() } } });
     await reloadAndWait(page);
 
     await page.locator('.domain-item .domain-header').click();
@@ -257,7 +245,36 @@ test.describe('options page', () => {
     await input.dispatchEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true });
 
     await expect(input).toBeVisible();
-    const stored = await page.evaluate(() => chrome.storage.local.get('snapshots'));
-    expect(Object.keys(stored.snapshots['a.example.com'])).toEqual(['first']);
+    expect(Object.keys((await readStorage(page, 'getSnapshots'))['a.example.com'])).toEqual(['first']);
+  });
+
+  test('legacy storage is migrated in the browser', async ({ context, extensionId }) => {
+    const page = await openOptions(context, extensionId, '#snapshots');
+    const savedAt = new Date().toISOString();
+    const big = { savedAt, localStorage: { k: 'x'.repeat(4000) } };
+    const small = { savedAt };
+    await page.evaluate(seed => chrome.storage.local.set(seed), {
+      snapshots: { 'a.example.com': { small, big }, 'b.example.com': { other: small } },
+      backups: { 'a.example.com': { savedAt, activeName: null, localStorage: {} } },
+      snapshotOrder: { 'a.example.com': ['small', 'big'] },
+    });
+    await reloadAndWait(page);
+
+    const domainItems = page.locator('.domain-item');
+    await expect(domainItems.locator('.domain-name')).toHaveText(['a.example.com', 'b.example.com']);
+    await domainItems.nth(0).locator('.domain-header').click();
+    await expect(domainItems.nth(0).locator('.snapshot-row')).toHaveCount(2);
+    expect(await domainItems.nth(0).locator('.snapshot-row').evaluateAll(rows => rows.map(r => r.dataset.name)))
+      .toEqual(['small', 'big']);
+    const encoded = value => Buffer.byteLength(JSON.stringify(value));
+    await expect(domainItems.nth(0).locator('.snapshot-row[data-name="big"] .snapshot-size'))
+      .toHaveText(`${(encoded(big) / 1024).toFixed(1)} KB`);
+
+    const stored = await page.evaluate(() => chrome.storage.local.get(null));
+    expect(stored).not.toHaveProperty('snapshots');
+    expect(stored).not.toHaveProperty('backups');
+    expect(stored.snapshotHosts.sort()).toEqual(['a.example.com', 'b.example.com']);
+    expect(stored['snapshots/a.example.com'].big.bytes).toBe(encoded(big));
+    expect(stored['backups/a.example.com']).toEqual({ savedAt, activeName: null, localStorage: {} });
   });
 });

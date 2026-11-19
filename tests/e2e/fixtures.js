@@ -66,6 +66,20 @@ export async function waitForReady(page) {
   await page.locator('body[data-ready="true"]').waitFor();
 }
 
+// Seeds through the extension's own storage module, so tests follow its key
+// layout. `page` must be an extension page.
+export async function seedSnapshots(page, data, orders = {}) {
+  await page.evaluate(async ([snapshots, snapshotOrders]) => {
+    const { setSnapshots, setSnapshotOrders } = await import('/lib/storage.js');
+    await Promise.all([setSnapshots(snapshots), setSnapshotOrders(snapshotOrders)]);
+  }, [data, orders]);
+}
+
+// Reads through the extension's storage module; `page` must be an extension page.
+export async function readStorage(page, fn, ...args) {
+  return page.evaluate(async ([name, rest]) => (await import('/lib/storage.js'))[name](...rest), [fn, args]);
+}
+
 export async function reloadAndWait(page) {
   await page.reload();
   await waitForReady(page);

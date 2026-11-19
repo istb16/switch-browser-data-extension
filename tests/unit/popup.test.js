@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import {
-  setSnapshots, getSnapshots, setSettings, getSettings, setActiveSnapshots, getActiveSnapshots, getBackups, setGroups,
+  setSnapshots, getSnapshots, setSettings, getSettings, setActiveSnapshots, getActiveSnapshots, getBackups, setBackups,
+  setGroups,
 } from '../../lib/storage.js';
 import { byteSize, formatBytes } from '../../lib/snapshot-summary.js';
 
@@ -443,7 +444,7 @@ describe('popup/popup.js', () => {
       await loadPopup('https://example.com/');
       const set = chrome.storage.local.set;
       chrome.storage.local.set = async items => {
-        if ('backups' in items) throw new Error('QUOTA_BYTES quota exceeded');
+        if ('backups/example.com' in items) throw new Error('QUOTA_BYTES quota exceeded');
         return set(items);
       };
 
@@ -674,7 +675,7 @@ describe('popup/popup.js', () => {
     });
 
     it('touches nothing, and keeps the existing backup, when the page can\'t be reached', async () => {
-      await chrome.storage.local.set({ backups: { 'example.com': { savedAt: '2024-01-01T00:00:00.000Z', activeName: null, localStorage: { earlier: '1' } } } });
+      await setBackups({ 'example.com': { savedAt: '2024-01-01T00:00:00.000Z', activeName: null, localStorage: { earlier: '1' } } });
       chrome.tabs.sendMessage = vi.fn(async () => {
         throw new Error('Receiving end does not exist.');
       });
@@ -1088,6 +1089,26 @@ describe('popup/popup.js', () => {
       expect(Object.keys(stored['www.example.com'])).toEqual(['mine']);
       expect((await getActiveSnapshots())['example.com']).toBeUndefined();
       expect(rowNames()).toEqual(['mine']);
+    });
+  });
+
+  describe('storage from an older version', () => {
+    it('legacy data shows on the first open', async () => {
+      await chrome.storage.local.set({
+        snapshots: { 'example.com': {
+          first:  snap('2024-01-01T00:00:00.000Z', { localStorage: { a: '1' } }),
+          second: snap('2024-01-02T00:00:00.000Z'),
+        }, 'other.com': { third: snap('2024-01-03T00:00:00.000Z') } },
+        backups: { 'example.com': { savedAt: '2024-01-04T00:00:00.000Z', activeName: null, localStorage: { b: '2' } } },
+        snapshotOrder: { 'example.com': ['second', 'first'] },
+      });
+
+      await loadPopup('https://example.com/');
+
+      expect(rowNames()).toEqual(['second', 'first']);
+      expect($('undoBar').classList.contains('hidden')).toBe(false);
+      expect(await chrome.storage.local.get(['snapshots', 'backups'])).toEqual({});
+      expect(Object.keys(await getSnapshots()).sort()).toEqual(['example.com', 'other.com']);
     });
   });
 

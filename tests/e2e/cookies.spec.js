@@ -1,4 +1,4 @@
-import { test, expect, openPopupFor } from './fixtures.js';
+import { test, expect, openPopupFor, readStorage } from './fixtures.js';
 import { TEST_PAGE_ORIGIN } from './test-page.js';
 
 // Cookies need the host permission; this copy of the extension has it from install.
@@ -31,7 +31,8 @@ test('learns the cookie the site rewrites on its own, and still flags an account
   await site.goto(loginUrl('bob'));
   await expect(site.locator('h1')).toHaveText('signed in as: bob');
   await saveAs(popup, 'bob');
-  expect((await storageGet(popup, 'snapshots')).localhost.bob.cookies.map(c => c.name).sort()).toEqual(['csrf', 'sid']);
+  expect((await readStorage(popup, 'getSnapshotsFor', ['localhost'])).localhost.bob.cookies.map(c => c.name).sort())
+    .toEqual(['csrf', 'sid']);
 
   // Loading reloads the page; the service worker then compares the cookies it
   // finds with those just applied. csrf was rewritten by the server, sid was not.

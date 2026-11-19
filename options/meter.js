@@ -1,6 +1,7 @@
 import { t } from '../lib/i18n.js';
 import { $ } from '../lib/ui.js';
 import { formatBytes } from '../lib/snapshot-summary.js';
+import { getBackupHosts, BACKUP_PREFIX } from '../lib/storage.js';
 
 const METER_DOMAIN_SEGMENTS = 5;
 // unlimitedStorage lifts the quota, but the popup reads and rewrites the whole
@@ -8,9 +9,10 @@ const METER_DOMAIN_SEGMENTS = 5;
 const METER_ADVISORY_BYTES = 50 * 1024 * 1024;
 
 export async function renderMeter(sizes) {
+  const backupKeys = (await getBackupHosts()).map(host => BACKUP_PREFIX + host);
   const [total, backups] = await Promise.all([
     chrome.storage.local.getBytesInUse(null),
-    chrome.storage.local.getBytesInUse('backups'),
+    chrome.storage.local.getBytesInUse(backupKeys),
   ]);
   const largest = Object.entries(sizes)
     .map(([domain, { bytes }]) => ({ domain, bytes }))

@@ -1,22 +1,50 @@
 import { describe, it, expect } from 'vitest';
 import { encryptText, MIN_ITERATIONS } from '../../lib/crypto.js';
 import {
-  IMPORT_MAX_BYTES, buildExport, parseImport, findConflicts, uniqueName, mergeImport, exportFileName,
+  IMPORT_MAX_BYTES, IMPORT_MAX_HOSTS, buildExport, parseImport, findConflicts, uniqueName, mergeImport, exportFileName,
 } from '../../lib/transfer.js';
+import { byteSize } from '../../lib/snapshot-summary.js';
 
 const SAVED_AT = '2026-01-01T00:00:00.000Z';
 const snap = (extra = {}) => ({ savedAt: SAVED_AT, cookies: [], localStorage: {}, ...extra });
 const parse = value => parseImport(JSON.stringify(value));
+const sized = file => Object.fromEntries(Object.entries(file).map(([domain, entries]) => [
+  domain,
+  Object.fromEntries(Object.entries(entries).map(([name, s]) => [name, { ...s, bytes: byteSize(s) }])),
+]));
 
 describe('lib/transfer parseImport', () => {
   it('accepts the legacy plain shape', () => {
     const file = { 'example.com': { A: snap({ cookies: [{ name: 'sid', value: '1' }], sessionStorage: { k: 'v' } }) } };
-    expect(parse(file)).toEqual({ encrypted: false, data: file });
+    expect(parse(file)).toEqual({ encrypted: false, data: sized(file) });
   });
 
   it('accepts an entry without memo, color, cookieDomain or indexedDBDigest', () => {
     const file = { 'example.com': { A: { savedAt: SAVED_AT } } };
-    expect(parse(file).data).toEqual(file);
+    expect(parse(file).data).toEqual(sized(file));
+  });
+
+  it('recomputes bytes', () => {
+    const { data } = parse({ 'a.com': { wrong: snap({ bytes: 1 }), none: snap() } });
+    expect(data['a.com'].wrong.bytes).toBe(byteSize(snap()));
+    expect(data['a.com'].none.bytes).toBe(byteSize(snap()));
+  });
+
+  it('rejects bad domain keys', () => {
+    for (const domain of ['a b.com', 'a/b.com', 'A.com', 'x'.repeat(254)]) {
+      expect(() => parse({ [domain]: { A: snap() } })).toThrow('invalid');
+    }
+    const many = Object.fromEntries(Array.from({ length: IMPORT_MAX_HOSTS + 1 }, (_, i) => [`h${i}.com`, {}]));
+    expect(() => parse(many)).toThrow('invalid');
+  });
+
+  it('accepts hostnames, IPv6 hosts and the empty domain', () => {
+    const file = { 'example.com': { A: snap() }, '[::1]': { A: snap() }, localhost: { A: snap() }, '': { A: snap() } };
+    expect(parse(file).data).toEqual(sized(file));
+    expect(IMPORT_MAX_HOSTS).toBe(5000);
+    const most = Object.fromEntries(Array.from({ length: IMPORT_MAX_HOSTS }, (_, i) => [`h${i}.com`, {}]));
+    expect(() => parse(most)).not.toThrow();
+    expect(() => parse({ ['x'.repeat(253)]: {} })).not.toThrow();
   });
 
   it('flags an encrypted envelope', async () => {
@@ -68,7 +96,7 @@ describe('lib/transfer parseImport', () => {
       A: snap({ memo: 123, color: 'pink', cookieDomain: 5 }),
       B: snap({ memo: 'x'.repeat(300), color: 'green', cookieDomain: 'example.com' }),
     } });
-    expect(data['example.com'].A).toEqual(snap());
+    expect(data['example.com'].A).toEqual(sized({ d: { A: snap() } }).d.A);
     expect(data['example.com'].B.memo).toBe('x'.repeat(100));
     expect(data['example.com'].B.color).toBe('green');
     expect(data['example.com'].B.cookieDomain).toBe('example.com');
@@ -95,7 +123,15 @@ describe('lib/transfer buildExport', () => {
 
   it('import keeps memo, color and cookieDomain', () => {
     const file = { 'a.com': { A: snap({ memo: 'note', color: 'red', cookieDomain: 'a.com' }) } };
-    expect(parseImport(JSON.stringify(buildExport(file))).data).toEqual(file);
+    expect(parseImport(JSON.stringify(buildExport(file))).data).toEqual(sized(file));
+  });
+
+  it('leaves out bytes', () => {
+    const stored = sized(all);
+    expect(buildExport(stored)).toEqual(all);
+    expect(buildExport(stored, { domain: 'a.com' })).toEqual({ 'a.com': all['a.com'] });
+    expect(buildExport(stored, { domain: 'a.com', name: 'B' })).toEqual({ 'a.com': { B: all['a.com'].B } });
+    expect(JSON.stringify(buildExport(stored))).not.toContain('bytes');
   });
 
   it('exportFileName names the scope', () => {

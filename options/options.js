@@ -1,6 +1,6 @@
 import { initI18n, t, applyI18n, setLanguage, getSavedLangSetting } from '../lib/i18n.js';
 import { getSettings, setSettings } from '../lib/storage.js';
-import { clearAllData } from '../lib/snapshot.js';
+import { clearAllData, migrateStorage } from '../lib/snapshot.js';
 import { showConfirm } from '../lib/dialog.js';
 import { $, notify } from '../lib/ui.js';
 import { renderDomainList } from './domain-list.js';
@@ -27,6 +27,7 @@ async function init() {
   await initI18n();
   applyI18n();
   renderVersionFooter();
+  await migrateStorage();
 
   $('langSelect').value = await getSavedLangSetting();
   $('langSelect').addEventListener('change', handleLanguageChange);

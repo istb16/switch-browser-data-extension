@@ -1,4 +1,4 @@
-import { test, expect, openPopupFor, waitForReady } from './fixtures.js';
+import { test, expect, openPopupFor, waitForReady, readStorage } from './fixtures.js';
 import { TEST_PAGE_URL } from './test-page.js';
 
 async function disableCookieCollection(context, extensionId) {
@@ -178,7 +178,7 @@ test('clears the site\'s localStorage, sessionStorage and IndexedDB, and the und
   // The test page writes greeting/counter again on load when they are missing,
   // so check right away for the cleared IndexedDB and the backup instead.
   await expect.poll(() => targetPage.evaluate(() => indexedDB.databases().then(dbs => dbs.map(d => d.name)))).toEqual([]);
-  const backup = await popup.evaluate(() => chrome.storage.local.get('backups').then(r => r.backups.localhost));
+  const backup = await readStorage(popup, 'getBackup', 'localhost');
   expect(backup.localStorage.greeting).toBe('hello');
   expect(Object.keys(backup.indexedDB)).toEqual(['e2e']);
 
@@ -205,6 +205,40 @@ test('the undo bar restores the state from before the load', async ({ context, e
   await expect.poll(() => targetPage.evaluate(() => localStorage.getItem('greeting'))).toBe('changed');
   // snap1 was the active snapshot before the load, so it is again, now flagged as changed.
   await expect(row(popup, 'snap1').locator('.badge--modified')).toBeVisible();
+});
+
+test('legacy storage is migrated in the browser', async ({ context, extensionId }) => {
+  await disableCookieCollection(context, extensionId);
+
+  const targetPage = await context.newPage();
+  await targetPage.goto(TEST_PAGE_URL);
+  await expect.poll(() => targetPage.evaluate(() => localStorage.getItem('greeting'))).toBe('hello');
+
+  const seeder = await context.newPage();
+  await seeder.goto(`chrome-extension://${extensionId}/options/options.html`);
+  await waitForReady(seeder);
+  const savedAt = new Date().toISOString();
+  await seeder.evaluate(seed => chrome.storage.local.set(seed), {
+    snapshots: { localhost: {
+      first:  { savedAt, localStorage: { greeting: 'from first' }, sessionStorage: {} },
+      second: { savedAt, localStorage: { greeting: 'from second' }, sessionStorage: {} },
+    } },
+    backups: { localhost: { savedAt, activeName: null, localStorage: { greeting: 'from backup' }, sessionStorage: {} } },
+    snapshotOrder: { localhost: ['second', 'first'] },
+  });
+  await seeder.close();
+
+  const popup = await openPopupFor(context, extensionId, targetPage);
+  await expect(popup.locator('#snapshotList .snapshot .snapshot__name')).toHaveText(['second', 'first']);
+  await expect(popup.locator('#undoBar')).toBeVisible();
+
+  await popup.locator('#undoBtn').click();
+  await expect.poll(() => targetPage.evaluate(() => localStorage.getItem('greeting'))).toBe('from backup');
+
+  const stored = await popup.evaluate(() => chrome.storage.local.get(null));
+  expect(stored).not.toHaveProperty('snapshots');
+  expect(stored).not.toHaveProperty('backups');
+  expect(Object.keys(stored['snapshots/localhost'])).toEqual(['first', 'second']);
 });
 
 test('the row menu opens from its button and deletes the snapshot', async ({ context, extensionId }) => {

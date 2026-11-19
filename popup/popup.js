@@ -2,6 +2,7 @@ import { initI18n, t, applyI18n } from '../lib/i18n.js';
 import { getSettings, getGroups } from '../lib/storage.js';
 import { requestHostPermission, hasHostPermission } from '../lib/data-bridge.js';
 import { resolveScope } from '../lib/groups.js';
+import { migrateStorage } from '../lib/snapshot.js';
 import { fillGroupChip } from '../lib/snapshot-view.js';
 import { $ } from '../lib/ui.js';
 import { state } from './context.js';
@@ -26,6 +27,7 @@ setRowActions({
 async function init() {
   await initI18n();
   applyI18n();
+  await migrateStorage();
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   state.activeTab = tab;

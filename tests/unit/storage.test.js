@@ -4,6 +4,7 @@ import {
   getActiveSnapshots, setActiveSnapshots, getBackups, setBackups, getGroups, setGroups,
   getVolatileCookies, setVolatileCookies, getCookieChecks, setCookieChecks,
   readKeys, updateKey, withDefaultSettings,
+  getSnapshotHosts, getSnapshotsFor, setSnapshotsFor, getBackupHosts, getBackup, setBackup,
 } from '../../lib/storage.js';
 
 describe('lib/storage', () => {
@@ -144,6 +145,95 @@ describe('lib/storage', () => {
 
     expect(set).not.toHaveBeenCalled();
     expect(await getGroups()).toEqual(['example.com']);
+  });
+
+  describe('per-host keys', () => {
+    const snap = { savedAt: '2024-01-01T00:00:00.000Z' };
+
+    it('setSnapshotsFor writes the host key and index in one set', async () => {
+      const set = vi.spyOn(chrome.storage.local, 'set');
+
+      await setSnapshotsFor('a.com', { x: snap });
+
+      expect(set).toHaveBeenCalledTimes(1);
+      expect(set).toHaveBeenCalledWith({ 'snapshots/a.com': { x: snap }, snapshotHosts: ['a.com'] });
+      expect(await getSnapshotHosts()).toEqual(['a.com']);
+    });
+
+    it('an empty host removes the key, then the index entry', async () => {
+      await setSnapshotsFor('a.com', { x: snap });
+      await setSnapshotsFor('b.com', { y: snap });
+      const remove = vi.spyOn(chrome.storage.local, 'remove');
+      const set = vi.spyOn(chrome.storage.local, 'set');
+
+      await setSnapshotsFor('a.com', {});
+
+      expect(remove).toHaveBeenCalledWith('snapshots/a.com');
+      expect(set).toHaveBeenCalledWith({ snapshotHosts: ['b.com'] });
+      expect(remove.mock.invocationCallOrder[0]).toBeLessThan(set.mock.invocationCallOrder[0]);
+      expect(chrome._state.storage).not.toHaveProperty('snapshots/a.com');
+      expect(await getSnapshotHosts()).toEqual(['b.com']);
+    });
+
+    it('remove rejects → nothing changed', async () => {
+      await setSnapshotsFor('a.com', { x: snap });
+      vi.spyOn(chrome.storage.local, 'remove').mockRejectedValueOnce(new Error('io'));
+
+      await expect(setSnapshotsFor('a.com', {})).rejects.toThrow('io');
+
+      expect(await getSnapshotHosts()).toEqual(['a.com']);
+      expect(await getSnapshots()).toEqual({ 'a.com': { x: snap } });
+    });
+
+    it('the index update rejects after the key is removed', async () => {
+      await setSnapshotsFor('a.com', { x: snap });
+      vi.spyOn(chrome.storage.local, 'set').mockRejectedValueOnce(new Error('io'));
+
+      await expect(setSnapshotsFor('a.com', {})).rejects.toThrow('io');
+
+      expect(await getSnapshotHosts()).toEqual(['a.com']);
+      expect(await getSnapshots()).toEqual({});
+      await setSnapshotsFor('a.com', { y: snap });
+      expect(await getSnapshots()).toEqual({ 'a.com': { y: snap } });
+      expect(await getSnapshotHosts()).toEqual(['a.com']);
+    });
+
+    it('getSnapshotsFor reads only the asked hosts and skips a missing key', async () => {
+      await setSnapshots({ 'a.com': { x: snap }, 'b.com': { y: snap } });
+      await chrome.storage.local.set({ snapshotHosts: ['a.com', 'b.com', 'gone.com'] });
+      const get = vi.spyOn(chrome.storage.local, 'get');
+
+      expect(await getSnapshotsFor(['a.com', 'gone.com'])).toEqual({ 'a.com': { x: snap } });
+
+      expect(get).toHaveBeenCalledWith(['snapshots/a.com', 'snapshots/gone.com']);
+      expect(await getSnapshots()).toEqual({ 'a.com': { x: snap }, 'b.com': { y: snap } });
+    });
+
+    it('setSnapshots replaces the whole store through the index', async () => {
+      await setSnapshots({ 'a.com': { x: snap }, 'b.com': { y: snap } });
+      await setSnapshots({ 'b.com': { z: snap }, 'c.com': {} });
+
+      expect(await getSnapshots()).toEqual({ 'b.com': { z: snap } });
+      expect(await getSnapshotHosts()).toEqual(['b.com']);
+      expect(chrome._state.storage).not.toHaveProperty('snapshots/a.com');
+    });
+
+    it('backups live under one key per host', async () => {
+      expect(await getBackup('a.com')).toBeNull();
+      await setBackup('a.com', snap);
+      await setBackup('b.com', snap);
+      expect(await getBackup('a.com')).toEqual(snap);
+      expect(await getBackupHosts()).toEqual(['a.com', 'b.com']);
+      expect(chrome._state.storage['backups/b.com']).toEqual(snap);
+
+      await setBackup('a.com', null);
+      expect(await getBackups()).toEqual({ 'b.com': snap });
+    });
+
+    it('accepts the empty host of file: pages', async () => {
+      await setSnapshotsFor('', { x: snap });
+      expect(await getSnapshots()).toEqual({ '': { x: snap } });
+    });
   });
 
   it('updateKey passes an updater error on and writes nothing', async () => {

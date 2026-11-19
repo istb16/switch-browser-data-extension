@@ -2,7 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { setSnapshots, setSnapshotOrders, getSnapshots, getSnapshotOrders, setSettings, getSettings } from '../../lib/storage.js';
+import {
+  setSnapshots, setSnapshotOrders, getSnapshots, getSnapshotOrders, setSettings, getSettings, getBackups, setBackups,
+} from '../../lib/storage.js';
 import { byteSize, formatBytes } from '../../lib/snapshot-summary.js';
 import { encryptText, ENVELOPE_TAG, MIN_ITERATIONS } from '../../lib/crypto.js';
 import { IMPORT_MAX_BYTES } from '../../lib/transfer.js';
@@ -24,6 +26,8 @@ const optionsHtml = readFileSync(path.join(repoRoot, 'options/options.html'), 'u
 const bodyHtml = optionsHtml.match(/<body>([\s\S]*)<\/body>/)[1];
 
 const flush = () => new Promise(resolve => setTimeout(resolve, 0));
+// Import records each snapshot's size.
+const sized = snapshot => ({ ...snapshot, bytes: byteSize(snapshot) });
 
 async function loadOptions() {
   document.body.innerHTML = bodyHtml;
@@ -43,7 +47,8 @@ describe('options/options.js', () => {
     // The chrome mock has no getBytesInUse; measure the mock's storage instead.
     chrome.storage.local.getBytesInUse = vi.fn(async keys => {
       const stored = chrome._state.storage;
-      return keys == null ? byteSize(stored) : (keys in stored ? byteSize(stored[keys]) : 0);
+      if (keys == null) return byteSize(stored);
+      return [keys].flat().reduce((sum, key) => sum + (key in stored ? byteSize(stored[key]) : 0), 0);
     });
   });
 
@@ -85,8 +90,9 @@ describe('options/options.js', () => {
         snapshots[domain] = { s: { savedAt: '2024-01-01T00:00:00.000Z', localStorage: { k: 'x'.repeat((i + 1) * 100) } } };
       }
       await setSnapshots(snapshots);
+      await setBackups({ 'a.com': { savedAt: '2024-01-01T00:00:00.000Z' } });
       const total = 100_000;
-      chrome.storage.local.getBytesInUse = vi.fn(async keys => (keys == null ? total : keys === 'backups' ? 2_000 : 0));
+      chrome.storage.local.getBytesInUse = vi.fn(async keys => (keys == null ? total : keys.includes('backups/a.com') ? 2_000 : 0));
       await loadOptions();
 
       const segs = segments();
@@ -623,7 +629,7 @@ describe('options/options.js', () => {
       await submitDialog('correct horse');
       await waitFor(() => status().textContent.startsWith('インポートしました'));
 
-      expect(await getSnapshots()).toEqual({ 'a.com': { x: snapshot } });
+      expect(await getSnapshots()).toEqual({ 'a.com': { x: sized(snapshot) } });
       expect(status().className).toContain('success');
     });
 
@@ -646,7 +652,7 @@ describe('options/options.js', () => {
       await loadOptions();
       const get = chrome.storage.local.get.bind(chrome.storage.local);
       vi.spyOn(chrome.storage.local, 'get').mockImplementation(async keys => {
-        if (keys === 'snapshots') throw new Error('storage failure');
+        if (keys === 'snapshotHosts') throw new Error('storage failure');
         return get(keys);
       });
       const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -777,19 +783,19 @@ describe('options/options.js', () => {
 
       it('overwrite replaces the same name in place and appends the new one', async () => {
         await importWithConflict(0);
-        expect(await getSnapshots()).toEqual({ 'a.com': { x: fresh, y: extra } });
+        expect(await getSnapshots()).toEqual({ 'a.com': { x: sized(fresh), y: sized(extra) } });
         expect((await getSnapshotOrders())['a.com']).toEqual(['x', 'y']);
         expect(status().textContent).toBe('インポートしました（追加 1 件・上書き 1 件・別名で追加 0 件・スキップ 0 件）');
       });
 
       it('skip keeps the existing snapshot', async () => {
         await importWithConflict(1);
-        expect(await getSnapshots()).toEqual({ 'a.com': { x: old, y: extra } });
+        expect(await getSnapshots()).toEqual({ 'a.com': { x: old, y: sized(extra) } });
       });
 
       it('keep both adds the imported one under a new name', async () => {
         await importWithConflict(2);
-        expect(await getSnapshots()).toEqual({ 'a.com': { x: old, 'x (2)': fresh, y: extra } });
+        expect(await getSnapshots()).toEqual({ 'a.com': { x: old, 'x (2)': sized(fresh), y: sized(extra) } });
         expect((await getSnapshotOrders())['a.com']).toEqual(['x', 'x (2)', 'y']);
       });
 
@@ -807,7 +813,7 @@ describe('options/options.js', () => {
         dialog().querySelectorAll('button')[1].click();
         await waitFor(() => status().textContent.startsWith('インポートしました'));
 
-        expect(await getSnapshots()).toEqual({ 'a.com': { x: old, popup: old, y: extra }, 'p.com': { p: old } });
+        expect(await getSnapshots()).toEqual({ 'a.com': { x: old, popup: old, y: sized(extra) }, 'p.com': { p: old } });
         expect(await getSnapshotOrders()).toEqual({ 'a.com': ['x', 'popup', 'y'], 'p.com': ['p'] });
       });
 
@@ -971,14 +977,15 @@ describe('options/options.js', () => {
         'www.example.com': { w: { savedAt: SAVED } },
       });
       await setSnapshotOrders({ 'app.example.com': ['a'], 'www.example.com': ['w'] });
-      await chrome.storage.local.set({ backups: { 'app.example.com': { savedAt: SAVED, activeName: null } } });
-      const before = await chrome.storage.local.get(['snapshots', 'snapshotOrder', 'backups']);
+      await setBackups({ 'app.example.com': { savedAt: SAVED, activeName: null } });
+      const read = async () => ({ snapshots: await getSnapshots(), orders: await getSnapshotOrders(), backups: await getBackups() });
+      const before = await read();
       await loadOptions();
 
       await submitGroup('example.com');
       await answer(true);
 
-      expect(await chrome.storage.local.get(['snapshots', 'snapshotOrder', 'backups'])).toEqual(before);
+      expect(await read()).toEqual(before);
     });
 
     it('shows a group chip on member hosts only', async () => {
@@ -1029,6 +1036,27 @@ describe('options/options.js', () => {
     });
   });
 
+  describe('storage from an older version', () => {
+    const SAVED = '2024-01-01T00:00:00.000Z';
+
+    it('legacy data shows on the first open', async () => {
+      const x = { savedAt: SAVED, localStorage: { k: 'v' } };
+      await chrome.storage.local.set({
+        snapshots: { 'a.com': { x, y: { savedAt: SAVED } }, 'b.com': { z: { savedAt: SAVED } } },
+        backups: { 'a.com': { savedAt: SAVED, activeName: null } },
+        snapshotOrder: { 'a.com': ['y', 'x'] },
+      });
+
+      await loadOptions();
+
+      expect(domainItems().map(item => item.querySelector('.domain-name').textContent)).toEqual(['a.com', 'b.com']);
+      expect([...domainItems()[0].querySelectorAll('.snapshot-row')].map(r => r.dataset.name)).toEqual(['y', 'x']);
+      expect(await chrome.storage.local.get(['snapshots', 'backups'])).toEqual({});
+      expect((await getSnapshots())['a.com'].x).toEqual({ ...x, bytes: byteSize(x) });
+      expect(await getBackups()).toEqual({ 'a.com': { savedAt: SAVED, activeName: null } });
+    });
+  });
+
   describe('clearing all data', () => {
     it('deletes everything after confirming', async () => {
       await setSnapshots({ 'a.com': { x: { savedAt: '2024-01-01T00:00:00.000Z' } } });
@@ -1040,8 +1068,9 @@ describe('options/options.js', () => {
       await flush();
 
       expect(await getSnapshots()).toEqual({});
-      expect(await chrome.storage.local.get(['snapshotOrder', 'activeSnapshots', 'backups']))
-        .toEqual({ snapshotOrder: {}, activeSnapshots: {}, backups: {} });
+      expect(await getBackups()).toEqual({});
+      expect(await chrome.storage.local.get(['snapshotOrder', 'activeSnapshots']))
+        .toEqual({ snapshotOrder: {}, activeSnapshots: {} });
       expect(document.querySelector('.empty-state')).not.toBeNull();
     });
 

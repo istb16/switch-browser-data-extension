@@ -1,5 +1,7 @@
 import { t } from '../lib/i18n.js';
-import { getSnapshots, setSnapshots, getSettings, getSnapshotOrders, setSnapshotOrders } from '../lib/storage.js';
+import {
+  getSnapshots, getSnapshotsFor, setSnapshotsFor, getSettings, getSnapshotOrders, setSnapshotOrders,
+} from '../lib/storage.js';
 import { withSnapshotLock } from '../lib/snapshot.js';
 import { showFormDialog, showChoice } from '../lib/dialog.js';
 import { notify, reportError } from '../lib/ui.js';
@@ -31,7 +33,8 @@ export async function handleExport(scope, button) {
   button.disabled = true;
   try {
     const { encryptExports } = await getSettings();
-    const text = JSON.stringify(buildExport(await getSnapshots(), scope), null, 2);
+    const snapshots = scope.domain ? await getSnapshotsFor([scope.domain]) : await getSnapshots();
+    const text = JSON.stringify(buildExport(snapshots, scope), null, 2);
     if (!encryptExports) {
       downloadExport(text, scope);
       notify('status_exported_plain');
@@ -121,7 +124,8 @@ export async function handleImport(e, onImported) {
       parsed = parseImport(await decryptEnvelope(parsed.envelope, passphrase), { decrypted: true });
     }
 
-    const conflicts = findConflicts(await getSnapshots(), parsed.data);
+    const hosts = Object.keys(parsed.data);
+    const conflicts = findConflicts(await getSnapshotsFor(hosts), parsed.data);
     let strategy = 'skip';
     if (conflicts.length > 0) {
       const shown = conflicts.slice(0, CONFLICT_NAMES_SHOWN).map(c => `${c.domain} / ${c.name}`);
@@ -137,9 +141,11 @@ export async function handleImport(e, onImported) {
     // Read again after the dialog: the popup may have saved, renamed or deleted
     // snapshots while it was open, and merging into the earlier read would undo that.
     const merged = await withSnapshotLock(async () => {
-      const [existing, orders] = await Promise.all([getSnapshots(), getSnapshotOrders()]);
+      const [existing, orders] = await Promise.all([getSnapshotsFor(hosts), getSnapshotOrders()]);
       const result = mergeImport(existing, orders, parsed.data, strategy);
-      await Promise.all([setSnapshots(result.snapshots), setSnapshotOrders(result.orders)]);
+      // One host at a time: each write updates the shared host index.
+      for (const host of hosts) await setSnapshotsFor(host, result.snapshots[host]);
+      await setSnapshotOrders(result.orders);
       return result;
     });
     await onImported();

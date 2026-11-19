@@ -8,10 +8,18 @@ import {
   setSnapshotOrder,
   loadSnapshot,
   updateSnapshotDetails,
+  migrateStorage,
+  saveBackup,
+  clearAllData,
 } from '../../lib/snapshot.js';
 import {
   getSnapshots, getSnapshotOrders, setSnapshots, setSnapshotOrders, getSettings, setSettings, getGroups, setGroups,
+  getBackups, getSnapshotHosts, getBackupHosts,
 } from '../../lib/storage.js';
+import { byteSize } from '../../lib/snapshot-summary.js';
+import { removeGroup } from '../../lib/groups.js';
+
+const SAVED = '2024-01-01T00:00:00.000Z';
 
 async function snapshotsOf(domain) {
   return (await getSnapshots())[domain] ?? {};
@@ -324,8 +332,30 @@ describe('lib/snapshot — clearAllData', () => {
 
     await clearAllData();
 
-    expect(await chrome.storage.local.get(['snapshots', 'snapshotOrder', 'activeSnapshots', 'backups']))
-      .toEqual({ snapshots: {}, snapshotOrder: {}, activeSnapshots: {}, backups: {} });
+    expect(await getSnapshots()).toEqual({});
+    expect(await getBackups()).toEqual({});
+    expect(await chrome.storage.local.get(['snapshotOrder', 'activeSnapshots']))
+      .toEqual({ snapshotOrder: {}, activeSnapshots: {} });
+    expect(Object.keys(chrome._state.storage).filter(key => key.includes('/'))).toEqual([]);
+  });
+
+  it('clearAllData removes unlisted and legacy keys too', async () => {
+    const { clearAllData } = await import('../../lib/snapshot.js');
+    await chrome.storage.local.set({
+      'snapshots/x.com': { a: { savedAt: SAVED } },
+      'backups/x.com': { savedAt: SAVED },
+      snapshots: { 'y.com': {} },
+      backups: {},
+      language: 'en',
+    });
+    await setSettings({ ...(await getSettings()), autoReload: false });
+    await setGroups(['example.com']);
+
+    await clearAllData();
+
+    expect(Object.keys(chrome._state.storage).sort()).toEqual([
+      'activeSnapshots', 'cookieChecks', 'groups', 'language', 'settings', 'snapshotOrder', 'volatileCookies',
+    ]);
   });
 
   it('clearAllData keeps groups and settings', async () => {
@@ -339,5 +369,224 @@ describe('lib/snapshot — clearAllData', () => {
 
     expect(await getGroups()).toEqual(['example.com']);
     expect(await getSettings()).toEqual(settings);
+  });
+});
+
+describe('lib/snapshot — per-host keys', () => {
+  it('save, overwrite and detail edit record bytes', async () => {
+    const sizeWithoutBytes = ({ bytes, ...rest }) => byteSize(rest);
+
+    await saveSnapshot('a.com', 'x', { localStorage: { k: 'v' }, bytes: 1 });
+    let x = await loadSnapshot('a.com', 'x');
+    expect(x.bytes).toBe(sizeWithoutBytes(x));
+
+    await saveSnapshot('a.com', 'x', { localStorage: { k: 'a longer value' } });
+    x = await loadSnapshot('a.com', 'x');
+    expect(x.bytes).toBe(sizeWithoutBytes(x));
+
+    await updateSnapshotDetails('a.com', 'x', { memo: 'a memo that adds bytes', color: 'red' });
+    x = await loadSnapshot('a.com', 'x');
+    expect(x.bytes).toBe(sizeWithoutBytes(x));
+  });
+
+  it('save writes only that host\'s key', async () => {
+    await saveSnapshot('a.com', 'x', {});
+    const get = vi.spyOn(chrome.storage.local, 'get');
+    const set = vi.spyOn(chrome.storage.local, 'set');
+
+    await saveSnapshot('b.com', 'y', {});
+
+    const keys = [...get.mock.calls.flatMap(([k]) => [k].flat()), ...set.mock.calls.flatMap(([items]) => Object.keys(items))];
+    expect(keys).not.toContain('snapshots/a.com');
+    expect(await getSnapshotHosts()).toEqual(['a.com', 'b.com']);
+  });
+
+  it('rename, delete and detail edit of a missing entry change nothing', async () => {
+    await saveSnapshot('a.com', 'x', { value: 1 });
+    const before = structuredClone(chrome._state.storage);
+
+    await renameSnapshot('a.com', 'missing', 'new');
+    await renameSnapshot('b.com', 'missing', 'new');
+    await deleteSnapshot('b.com', 'missing');
+    await updateSnapshotDetails('a.com', 'missing', { memo: 'm' });
+    await updateSnapshotDetails('b.com', 'missing', { memo: 'm' });
+
+    expect(chrome._state.storage).toEqual(before);
+  });
+
+  it('saveBackup writes one host\'s key', async () => {
+    await saveBackup('a.com', { localStorage: { a: '1' } }, null);
+    const set = vi.spyOn(chrome.storage.local, 'set');
+
+    await saveBackup('b.com', { localStorage: { b: '1' } }, null);
+
+    const written = set.mock.calls.flatMap(([items]) => Object.keys(items));
+    expect(written).toContain('backups/b.com');
+    expect(written).not.toContain('backups/a.com');
+    expect(await getBackupHosts()).toEqual(['a.com', 'b.com']);
+  });
+});
+
+describe('lib/snapshot — migrateStorage', () => {
+  const legacy = () => ({
+    snapshots: {
+      'a.com': { x: { savedAt: SAVED, localStorage: { k: 'v' } }, y: { savedAt: SAVED } },
+      'b.com': { z: { savedAt: SAVED, cookies: [] } },
+    },
+    backups: { 'a.com': { savedAt: SAVED, activeName: 'x' } },
+    snapshotOrder: { 'a.com': ['y', 'x'] },
+  });
+
+  it('moves legacy snapshots and backups to per-host keys', async () => {
+    const seed = legacy();
+    await chrome.storage.local.set(seed);
+
+    await migrateStorage();
+
+    const snapshots = await getSnapshots();
+    for (const [host, entries] of Object.entries(seed.snapshots)) {
+      for (const [name, snapshot] of Object.entries(entries)) {
+        expect(snapshots[host][name]).toEqual({ ...snapshot, bytes: byteSize(snapshot) });
+      }
+    }
+    expect(await getBackups()).toEqual(seed.backups);
+    expect(await getSnapshotOrders()).toEqual(seed.snapshotOrder);
+    expect(await chrome.storage.local.get(['snapshots', 'backups'])).toEqual({});
+  });
+
+  it('with only legacy backups', async () => {
+    await chrome.storage.local.set({ backups: legacy().backups });
+
+    await migrateStorage();
+
+    expect(await getBackups()).toEqual(legacy().backups);
+    expect(await getSnapshotHosts()).toEqual([]);
+    expect(await chrome.storage.local.get(['snapshots', 'backups'])).toEqual({});
+  });
+
+  it('with snapshots: {}', async () => {
+    await chrome.storage.local.set({ snapshots: {} });
+    const set = vi.spyOn(chrome.storage.local, 'set');
+
+    await migrateStorage();
+
+    expect(set).not.toHaveBeenCalled();
+    expect(chrome._state.storage).toEqual({});
+    const remove = vi.spyOn(chrome.storage.local, 'remove');
+    await migrateStorage();
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it('keeps an existing per-host key over the legacy copy', async () => {
+    await saveSnapshot('a.com', 'newer', {});
+    await saveBackup('a.com', { localStorage: { newer: '1' } }, null);
+    const kept = structuredClone({ s: chrome._state.storage['snapshots/a.com'], b: chrome._state.storage['backups/a.com'] });
+    await chrome.storage.local.set({
+      snapshots: legacy().snapshots,
+      backups: { ...legacy().backups, 'b.com': { savedAt: SAVED, activeName: null } },
+    });
+
+    await migrateStorage();
+
+    expect((await getSnapshots())['a.com']).toEqual(kept.s);
+    expect(Object.keys((await getSnapshots())['b.com'])).toEqual(['z']);
+    expect((await getBackups())['a.com']).toEqual(kept.b);
+    expect((await getBackups())['b.com']).toEqual({ savedAt: SAVED, activeName: null });
+    expect(await getSnapshotHosts()).toEqual(['a.com', 'b.com']);
+    expect(await chrome.storage.local.get(['snapshots', 'backups'])).toEqual({});
+  });
+
+  it('on a migrated store writes nothing', async () => {
+    await chrome.storage.local.set(legacy());
+    await migrateStorage();
+    const set = vi.spyOn(chrome.storage.local, 'set');
+    const remove = vi.spyOn(chrome.storage.local, 'remove');
+
+    await migrateStorage();
+
+    expect(set).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it('reruns after a crash before the legacy remove', async () => {
+    await chrome.storage.local.set(legacy());
+    await migrateStorage();
+    const once = structuredClone(chrome._state.storage);
+
+    chrome._state.storage = {};
+    await chrome.storage.local.set(legacy());
+    vi.spyOn(chrome.storage.local, 'remove').mockRejectedValueOnce(new Error('crash'));
+    await expect(migrateStorage()).rejects.toThrow('crash');
+    expect(await chrome.storage.local.get('snapshots')).toHaveProperty('snapshots');
+    await migrateStorage();
+
+    expect(chrome._state.storage).toEqual(once);
+  });
+
+  it('a failed migration leaves the legacy keys and can be retried', async () => {
+    await chrome.storage.local.set(legacy());
+    vi.spyOn(chrome.storage.local, 'set').mockRejectedValueOnce(new Error('quota'));
+
+    await expect(migrateStorage()).rejects.toThrow('quota');
+    expect(await chrome.storage.local.get(['snapshots', 'backups'])).toEqual({
+      snapshots: legacy().snapshots, backups: legacy().backups,
+    });
+    expect(await getSnapshotHosts()).toEqual([]);
+
+    await migrateStorage();
+    expect(Object.keys(await getSnapshots()).sort()).toEqual(['a.com', 'b.com']);
+    expect(await chrome.storage.local.get(['snapshots', 'backups'])).toEqual({});
+  });
+
+  it('a save before migration survives it', async () => {
+    await chrome.storage.local.set(legacy());
+
+    await saveSnapshot('a.com', 'fresh', { localStorage: { f: '1' } });
+    await migrateStorage();
+
+    const snapshots = await getSnapshots();
+    expect(snapshots['a.com'].fresh.localStorage).toEqual({ f: '1' });
+    expect(Object.keys(snapshots['b.com'])).toEqual(['z']);
+  });
+
+  describe('with a non-reentrant lock', () => {
+    let restore;
+
+    beforeEach(() => {
+      // Requests run one after another; a request made inside a held lock
+      // would wait forever, as with Web Locks.
+      let tail = Promise.resolve();
+      const locks = {
+        request: vi.fn((name, task) => {
+          const run = tail.then(() => task());
+          tail = run.catch(() => {});
+          return run;
+        }),
+      };
+      const descriptor = Object.getOwnPropertyDescriptor(navigator, 'locks');
+      Object.defineProperty(navigator, 'locks', { value: locks, configurable: true });
+      restore = () => {
+        if (descriptor) Object.defineProperty(navigator, 'locks', descriptor);
+        else delete navigator.locks;
+      };
+    });
+
+    afterEach(() => restore());
+
+    it('migration and every mutator complete', async () => {
+      await chrome.storage.local.set(legacy());
+
+      await expect(Promise.all([
+        migrateStorage(),
+        saveSnapshot('c.com', 'n', {}),
+        deleteSnapshot('a.com', 'y'),
+        renameSnapshot('b.com', 'z', 'w'),
+        updateSnapshotDetails('c.com', 'n', { memo: 'm' }),
+        saveBackup('c.com', {}, null),
+        removeGroup('example.com'),
+      ])).resolves.toBeDefined();
+      await expect(clearAllData()).resolves.toBeUndefined();
+      expect(navigator.locks.request).toHaveBeenCalled();
+    });
   });
 });
