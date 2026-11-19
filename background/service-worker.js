@@ -1,5 +1,11 @@
 import { getActiveSnapshots, getSettings } from '../lib/storage.js';
 import { badgeText } from '../lib/badge.js';
+import { getCookiesForDomain } from '../lib/cookie-handler.js';
+import { hasHostPermission } from '../lib/data-bridge.js';
+import { takeCookieCheck, learnVolatileCookies } from '../lib/volatile-cookies.js';
+
+// Scripts on the page may still set cookies just after the load completes.
+const SETTLE_MS = 3000;
 
 // The badge is drawn by the browser, not a page, so it cannot read the --tk-*
 // tokens; these are --tk-blue and its text color from lib/tk-base.css.
@@ -42,8 +48,19 @@ chrome.runtime.onStartup.addListener(() => {
   updateAllTabs();
 });
 
+// The first page load after a snapshot is applied shows which cookies the site
+// rewrites by itself; those are then left out of the popup's change check.
+async function checkCookiesAfterLoad(tabId) {
+  const check = await takeCookieCheck(tabId);
+  // Without the host permission getAll() returns nothing, which would look like
+  // every cookie had disappeared.
+  if (!check || !await hasHostPermission(check.domain)) return;
+  await learnVolatileCookies(check.domain, check.cookies, await getCookiesForDomain(check.domain));
+}
+
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.url || changeInfo.status === 'complete') updateTabs([tab]);
+  if (changeInfo.status === 'complete') setTimeout(() => checkCookiesAfterLoad(tabId), SETTLE_MS);
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {

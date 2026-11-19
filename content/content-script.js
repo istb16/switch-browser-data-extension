@@ -6,7 +6,7 @@
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message.type === 'getStorageData') {
-      handleGet(message.types, message.summary).then(sendResponse).catch(e => sendResponse({ error: e.message }));
+      handleGet(message.types, message.digest).then(sendResponse).catch(e => sendResponse({ error: e.message }));
       return true;
     }
     if (message.type === 'setStorageData') {
@@ -15,13 +15,16 @@
     }
   });
 
-  async function handleGet(types, summary) {
+  async function handleGet(types, digest) {
     const data = {};
     if (types.localStorage)  data.localStorage  = localStorageHandler.read();
     if (types.sessionStorage) data.sessionStorage = sessionStorageHandler.read();
     if (types.indexedDB) {
-      if (summary) data.indexedDBSummary = await indexedDBHandler.summarize();
-      else         data.indexedDB        = await indexedDBHandler.readAll();
+      const indexedDB = await indexedDBHandler.readAll();
+      // Only the digest crosses to the popup; the records are passed through the
+      // same JSON round trip messaging applies, to hash what a snapshot holds.
+      if (digest) data.indexedDBDigest = storageDigest.digest(JSON.parse(JSON.stringify(indexedDB)));
+      else        data.indexedDB       = indexedDB;
     }
     return data;
   }

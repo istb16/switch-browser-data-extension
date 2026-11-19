@@ -25,7 +25,9 @@ Chrome / Edge 向けブラウザ拡張機能。ドメインごとに Cookie・lo
 - **読み込み**: 一覧の行をクリック（または数字キー・`Enter`）→ 現在のデータをそのスナップショットに丸ごと置き換え
   - 自動バックアップが有効なら、読み込む直前の状態をドメインごとに1件だけ残し、確認なしで読み込む（「戻す」で復元。戻すと置き換えた状態が新しいバックアップになるので、もう一度押すと元に戻る）。無効なら読み込み前に確認する
   - 自動リロードが有効なら、読み込み後にタブを再読み込みする
-- **適用中の表示**: 最後に読み込み・保存したスナップショットをドメインごとに記録し、一覧に「適用中」、拡張機能アイコンのバッジに名前の先頭2文字を表示する。ポップアップを開いたときに今のデータと比べ、違えば「変更あり」を表示する。Cookie は値を毎回書き換えるサイトが多いため、どの Cookie があるか（名前・ドメイン・パス）だけを比べる。IndexedDB は読み出しを軽くするため、ストアごとの件数だけを比べる
+- **適用中の表示**: 最後に読み込み・保存したスナップショットをドメインごとに記録し、一覧に「適用中」、拡張機能アイコンのバッジに名前の先頭2文字を表示する。ポップアップを開いたときに今のデータと比べ、違えば「変更あり」を表示し、何が変わったかをツールチップに出す
+  - Cookie は値まで比べる。ただしサイトが自分で書き換える Cookie は除く。読み込み後の最初のページ読み込み（60秒以内）で、Service Worker が適用した Cookie と比べて値が変わったものを「値は比べない」、増減したものを「比べない」としてドメインごとに覚える（`volatileCookies`）
+  - IndexedDB はページ側（コンテンツスクリプト）で中身のハッシュ（`lib/storage-digest.js`）だけを計算して受け渡す。スナップショット側のハッシュは保存時に `indexedDBDigest` として一緒に残す
 - **名前の変更・削除**: 各行のメニューから行う（削除は確認あり）
 
 ### ドメイン管理
@@ -87,6 +89,8 @@ graph TD
   lib --> compare_js["data-compare.js｜スナップショットと現在のデータの比較"]
   lib --> menu_js["menu.js｜行メニュー（popover + focusgroup）"]
   lib --> rename_js["inline-rename.js｜その場での名前変更（ポップアップ・設定画面で共通）"]
+  lib --> digest_js["storage-digest.js｜データのハッシュ（コンテンツスクリプトとポップアップで共通の非モジュール）"]
+  lib --> volatile_js["volatile-cookies.js｜サイトが自分で書き換える Cookie の記録"]
   lib --> etc_js["badge.js / time.js / dialog.js / i18n.js / ui.js"]
   lib --> tk_base["tk-base.css｜tk3 apps の共通デザインの土台（手を加えない）"]
 
@@ -143,6 +147,10 @@ graph TD
   },
   "snapshotOrder": { "example.com": ["スナップショット名", ...] },
   "activeSnapshots": { "example.com": "スナップショット名" },
+  // サイトが自分で書き換える Cookie。"value": 有無だけ比べる / "any": 比べない
+  "volatileCookies": { "example.com": { "example.com|/|名前": "value" } },
+  // 読み込み直後の Cookie の確認待ち（タブ ID ごと、60秒で期限切れ）
+  "cookieChecks": { "123": { "domain": "example.com", "cookies": [], "until": 0 } },
   // 読み込み直前の状態。ドメインごとに1件。スナップショット一覧・エクスポートには含めない
   "backups": {
     "example.com": { "savedAt": "...", "activeName": "スナップショット名 | null", "cookies": [], ... }
@@ -191,7 +199,7 @@ graph TD
 
 ### 自動テスト
 
-- **ユニットテスト**: [Vitest](https://vitest.dev/)。`tests/unit/` に配置。対象は `lib/` 配下のロジックに加え、`popup/popup.js` `options/options.js`（jsdomにHTMLを読み込み、DOM操作込みで検証）。`chrome.*` API は `tests/support/chrome-mock.js` のインメモリモックを使う。`var` グローバルとして書かれた非モジュールスクリプト（`lib/web-storage-handlers.js` `lib/indexeddb-handler.js` `content/content-script.js`）は `import` できないため、`tests/support/load-script.js` でソースを読み込み `Function` コンストラクタでスコープを分離しつつ実行し、生成されたハンドラを取り出してテストする
+- **ユニットテスト**: [Vitest](https://vitest.dev/)。`tests/unit/` に配置。対象は `lib/` 配下のロジックに加え、`popup/popup.js` `options/options.js`（jsdomにHTMLを読み込み、DOM操作込みで検証）。`chrome.*` API は `tests/support/chrome-mock.js` のインメモリモックを使う。`var` グローバルとして書かれた非モジュールスクリプト（`lib/web-storage-handlers.js` `lib/indexeddb-handler.js` `lib/storage-digest.js` `content/content-script.js`）は `import` できないため、`tests/support/load-script.js` でソースを読み込み `Function` コンストラクタでスコープを分離しつつ実行し、生成されたハンドラを取り出してテストする
 - **E2Eテスト**: [Playwright](https://playwright.dev/)。`launchPersistentContext` に `--load-extension` を渡して本拡張機能を実際の Chromium に読み込み、ポップアップ・設定画面の操作を検証する。テストページのポートは `tests/e2e/test-page.js` に集約されており、`TK3_E2E_PORT` で上書きできる
 - テスト用の依存関係（Vitest, Playwright, jsdom, fake-indexeddb など）は devDependencies としてのみ追加可。拡張機能本体のランタイムコードに外部ライブラリを追加することは引き続き禁止
 

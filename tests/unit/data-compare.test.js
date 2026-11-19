@@ -1,43 +1,69 @@
 import { describe, it, expect } from 'vitest';
-import { hasChanges, summarizeIndexedDB } from '../../lib/data-compare.js';
+import { findChanges, findVolatileCookies, withDigests } from '../../lib/data-compare.js';
 
 const ALL = { cookies: true, localStorage: true, sessionStorage: true, indexedDB: true };
+const cookie = (name, value, extra = {}) => ({ name, value, domain: 'a.com', path: '/', ...extra });
+const idb = records => ({ db: { version: 1, stores: { s: { keyPath: 'id', autoIncrement: false, records } } } });
 
-describe('lib/data-compare', () => {
-  it('reports no change when the data is the same, whatever the key order', () => {
-    const snapshot = { localStorage: { a: '1', b: '2' } };
-    const current  = { localStorage: { b: '2', a: '1' } };
-    expect(hasChanges(snapshot, current, ALL)).toBe(false);
+describe('lib/data-compare findChanges', () => {
+  it('reports nothing when the data is the same, whatever the key order', () => {
+    expect(findChanges({ localStorage: { a: '1', b: '2' } }, { localStorage: { b: '2', a: '1' } }, ALL)).toEqual([]);
   });
 
-  it('reports a change in a storage value', () => {
-    expect(hasChanges({ localStorage: { a: '1' } }, { localStorage: { a: '2' } }, ALL)).toBe(true);
-    expect(hasChanges({ sessionStorage: {} }, { sessionStorage: { a: '1' } }, ALL)).toBe(true);
-  });
-
-  it('compares which cookies exist, not their values, expiry or order', () => {
-    const sid   = { name: 'sid', value: 'abc', domain: 'a.com', path: '/', expirationDate: 1 };
-    const other = { name: '__cf_bm', value: 'x', domain: 'a.com', path: '/' };
-    expect(hasChanges(
-      { cookies: [sid, other] },
-      { cookies: [{ ...other, value: 'rotated' }, { ...sid, value: 'new', expirationDate: 999 }] },
+  it('names each storage type that changed', () => {
+    expect(findChanges(
+      { localStorage: { a: '1' }, sessionStorage: {} },
+      { localStorage: { a: '2' }, sessionStorage: { x: '1' } },
       ALL,
-    )).toBe(false);
-    expect(hasChanges({ cookies: [sid, other] }, { cookies: [other] }, ALL)).toBe(true);
-    expect(hasChanges({ cookies: [other] }, { cookies: [other, sid] }, ALL)).toBe(true);
+    )).toEqual(['localStorage', 'sessionStorage']);
   });
 
-  it('compares IndexedDB by record counts, against full data or a summary', () => {
-    const full = { db: { version: 1, stores: { s: { keyPath: 'id', autoIncrement: false, records: [{ id: 1 }, { id: 2 }] } } } };
-    expect(summarizeIndexedDB(full)).toEqual({ db: { version: 1, stores: { s: 2 } } });
-    expect(hasChanges({ indexedDB: full }, { indexedDBSummary: { db: { version: 1, stores: { s: 2 } } } }, ALL)).toBe(false);
-    expect(hasChanges({ indexedDB: full }, { indexedDBSummary: { db: { version: 1, stores: { s: 3 } } } }, ALL)).toBe(true);
-    expect(hasChanges({ indexedDB: full }, { indexedDBSummary: {} }, ALL)).toBe(true);
+  it('compares cookie values, ignoring expiry and order', () => {
+    const sid = cookie('sid', 'abc', { expirationDate: 1 });
+    expect(findChanges({ cookies: [sid, cookie('t', '1')] }, { cookies: [cookie('t', '1'), { ...sid, expirationDate: 9 }] }, ALL)).toEqual([]);
+    expect(findChanges({ cookies: [sid] }, { cookies: [{ ...sid, value: 'other-account' }] }, ALL)).toEqual(['Cookie: sid']);
+    expect(findChanges({ cookies: [sid] }, { cookies: [] }, ALL)).toEqual(['Cookie: sid']);
+  });
+
+  it('compares only the presence of cookies learned to change by themselves, and skips ones learned to come and go', () => {
+    const volatile = { 'a.com|/|csrf': 'value', 'a.com|/|__cf_bm': 'any' };
+    expect(findChanges(
+      { cookies: [cookie('csrf', '1'), cookie('__cf_bm', 'x')] },
+      { cookies: [cookie('csrf', '2')] },
+      ALL, volatile,
+    )).toEqual([]);
+    expect(findChanges({ cookies: [cookie('csrf', '1')] }, { cookies: [] }, ALL, volatile)).toEqual(['Cookie: csrf']);
+  });
+
+  it('compares IndexedDB by content, using stored digests when present', () => {
+    const saved = withDigests({ indexedDB: idb([{ id: 1, v: 'a' }]) });
+    expect(saved.indexedDBDigest).toMatch(/^[0-9a-f]{14}$/);
+    expect(findChanges(saved, { indexedDBDigest: storageDigest.digest(idb([{ v: 'a', id: 1 }])) }, ALL)).toEqual([]);
+    expect(findChanges(saved, { indexedDBDigest: storageDigest.digest(idb([{ id: 1, v: 'b' }])) }, ALL)).toEqual(['IndexedDB']);
+    expect(findChanges({ indexedDB: idb([{ id: 1 }]) }, { indexedDB: idb([{ id: 2 }]) }, ALL)).toEqual(['IndexedDB']);
   });
 
   it('skips types that are disabled or missing on either side', () => {
-    expect(hasChanges({ localStorage: { a: '1' } }, { localStorage: { a: '2' } }, { ...ALL, localStorage: false })).toBe(false);
-    expect(hasChanges({ cookies: [{ name: 'a' }] }, {}, ALL)).toBe(false);
-    expect(hasChanges({}, { localStorage: { a: '1' } }, ALL)).toBe(false);
+    expect(findChanges({ localStorage: { a: '1' } }, { localStorage: { a: '2' } }, { ...ALL, localStorage: false })).toEqual([]);
+    expect(findChanges({ cookies: [cookie('a', '1')] }, {}, ALL)).toEqual([]);
+    expect(findChanges({}, { localStorage: { a: '1' }, indexedDBDigest: 'x' }, ALL)).toEqual([]);
+  });
+});
+
+describe('lib/data-compare findVolatileCookies', () => {
+  it('marks rewritten cookies "value" and cookies that came or went "any"', () => {
+    expect(findVolatileCookies(
+      [cookie('sid', 's'), cookie('csrf', '1'), cookie('gone', 'x')],
+      [cookie('sid', 's'), cookie('csrf', '2'), cookie('new', 'y')],
+    )).toEqual({ 'a.com|/|csrf': 'value', 'a.com|/|gone': 'any', 'a.com|/|new': 'any' });
+  });
+});
+
+describe('lib/storage-digest', () => {
+  it('gives the same digest for the same data in any key order, and a different one otherwise', () => {
+    expect(storageDigest.digest({ a: 1, b: [1, { c: 'x' }] })).toBe(storageDigest.digest({ b: [1, { c: 'x' }], a: 1 }));
+    expect(storageDigest.digest({ a: 1 })).not.toBe(storageDigest.digest({ a: 2 }));
+    expect(storageDigest.digest(['ab'])).not.toBe(storageDigest.digest(['a', 'b']));
+    expect(storageDigest.digest({ a: null })).not.toBe(storageDigest.digest({}));
   });
 });

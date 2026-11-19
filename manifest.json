@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "__MSG_name__",
-  "version": "1.0.15",
+  "version": "1.0.16",
   "default_locale": "ja",
   "description": "__MSG_description__",
   "permissions": ["cookies", "storage", "scripting", "activeTab", "tabs"],
@@ -33,6 +33,7 @@
       "js": [
         "lib/web-storage-handlers.js",
         "lib/indexeddb-handler.js",
+        "lib/storage-digest.js",
         "content/content-script.js"
       ],
       "run_at": "document_idle",

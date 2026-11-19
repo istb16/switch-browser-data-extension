@@ -5,7 +5,8 @@ import {
 } from '../lib/snapshot.js';
 import { getSettings } from '../lib/storage.js';
 import { collectData, applyData, requestHostPermission } from '../lib/data-bridge.js';
-import { hasChanges } from '../lib/data-compare.js';
+import { findChanges, withDigests } from '../lib/data-compare.js';
+import { getVolatileCookiesFor, startCookieCheck } from '../lib/volatile-cookies.js';
 import { showConfirm } from '../lib/dialog.js';
 import { setupMenu } from '../lib/menu.js';
 import { bindInlineRename } from '../lib/inline-rename.js';
@@ -22,7 +23,8 @@ let settings = null;
 let snapshots = {};
 let names = [];
 let activeName = null;
-let modified = false;
+// What differs from the active snapshot, as labels; empty when nothing does.
+let changes = [];
 let busy = false;
 // Bumped by every action that changes the page data or the active snapshot, so a
 // change check that started before it can tell its result is stale.
@@ -76,7 +78,7 @@ async function refresh() {
   snapshots = domainSnapshots;
   names = orderedNames;
   activeName = active && snapshots[active] ? active : null;
-  if (!activeName) modified = false;
+  if (!activeName) changes = [];
   renderList();
   await renderUndo();
 }
@@ -85,10 +87,13 @@ async function detectChanges() {
   const name = activeName;
   if (!name) return;
   const version = dataVersion;
-  const current = await collectData(activeTab.id, currentDomain, settings.enabledTypes, { interactive: false, summary: true });
+  const [current, volatile] = await Promise.all([
+    collectData(activeTab.id, currentDomain, settings.enabledTypes, { interactive: false, digest: true }),
+    getVolatileCookiesFor(currentDomain),
+  ]);
   if (version !== dataVersion || name !== activeName) return;
-  modified = hasChanges(snapshots[name], current, settings.enabledTypes);
-  if (modified) renderList();
+  changes = findChanges(snapshots[name], current, settings.enabledTypes, volatile);
+  if (changes.length) renderList();
 }
 
 function renderList() {
@@ -109,7 +114,8 @@ function buildRow(name, index) {
   const isActive = name === activeName;
   row.dataset.name = name;
   row.classList.toggle('is-active', isActive);
-  row.classList.toggle('is-modified', isActive && modified);
+  const isModified = isActive && changes.length > 0;
+  row.classList.toggle('is-modified', isModified);
 
   row.querySelector('.snapshot__name').textContent = name;
   const meta = row.querySelector('.snapshot__meta');
@@ -121,7 +127,8 @@ function buildRow(name, index) {
   activeBadge.classList.toggle('hidden', !isActive);
   const modifiedBadge = row.querySelector('.badge--modified');
   modifiedBadge.textContent = t('badge_modified');
-  modifiedBadge.classList.toggle('hidden', !(isActive && modified));
+  modifiedBadge.classList.toggle('hidden', !isModified);
+  modifiedBadge.title = isModified ? t('modified_detail', { items: changes.join(' / ') }) : '';
 
   const key = row.querySelector('.snapshot__key');
   if (index < 9) key.textContent = String(index + 1);
@@ -324,9 +331,9 @@ async function handleOverwrite(name) {
 async function saveCurrentAs(name) {
   try {
     const data = await collectData(activeTab.id, currentDomain, settings.enabledTypes);
-    await saveSnapshot(currentDomain, name, data);
+    await saveSnapshot(currentDomain, name, withDigests(data));
     await setActiveSnapshot(currentDomain, name);
-    modified = false;
+    changes = [];
     await refresh();
     showStatus($('statusMsg'), t('status_saved', { name }), 'success');
     return true;
@@ -335,6 +342,12 @@ async function saveCurrentAs(name) {
     console.error(e);
     return false;
   }
+}
+
+// Must run before the reload, so the service worker finds the check when the
+// reloaded page completes.
+async function watchCookiesAfterApply(data) {
+  if (settings.enabledTypes.cookies && data.cookies) await startCookieCheck(activeTab.id, currentDomain, data.cookies);
 }
 
 function handleLoad(name) {
@@ -354,7 +367,8 @@ function handleLoad(name) {
       }
       await applyData(activeTab.id, currentDomain, snapshot, types);
       await setActiveSnapshot(currentDomain, name);
-      modified = false;
+      changes = [];
+      await watchCookiesAfterApply(snapshot);
       if (settings.autoReload) await chrome.tabs.reload(activeTab.id);
       showStatus($('statusMsg'), t('status_loaded', { name }), 'success');
     } catch (e) {
@@ -381,7 +395,10 @@ async function handleUndo() {
       await saveBackup(currentDomain, current, activeName);
       const restoredName = backup.activeName && snapshots[backup.activeName] ? backup.activeName : null;
       await setActiveSnapshot(currentDomain, restoredName);
-      modified = restoredName ? hasChanges(snapshots[restoredName], backup, types) : false;
+      changes = restoredName
+        ? findChanges(snapshots[restoredName], backup, types, await getVolatileCookiesFor(currentDomain))
+        : [];
+      await watchCookiesAfterApply(backup);
       if (settings.autoReload) await chrome.tabs.reload(activeTab.id);
       showStatus($('statusMsg'), t('status_restored'), 'success');
     } catch (e) {

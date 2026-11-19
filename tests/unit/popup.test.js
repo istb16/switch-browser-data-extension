@@ -130,7 +130,7 @@ describe('popup/popup.js', () => {
     let releaseCheck;
     const plain = chrome.tabs.sendMessage;
     chrome.tabs.sendMessage = vi.fn((tabId, message) => {
-      if (message.summary) return new Promise(resolve => { releaseCheck = () => resolve({ localStorage: { stale: 'x' } }); });
+      if (message.digest) return new Promise(resolve => { releaseCheck = () => resolve({ localStorage: { stale: 'x' } }); });
       return plain(tabId, message);
     });
     await loadPopup('https://example.com/');
@@ -298,6 +298,47 @@ describe('popup/popup.js', () => {
       firstMain.focus();
       firstMain.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }));
       expect(document.activeElement).toBe(row('second').querySelector('.snapshot__main'));
+    });
+  });
+
+  describe('cookies', () => {
+    const sid = value => ({ name: 'sid', value, domain: 'example.com', path: '/', secure: true, httpOnly: true, sameSite: 'lax' });
+
+    beforeEach(async () => {
+      chrome._state.grantedOrigins.add('*://example.com/*');
+      await setSnapshots({ 'example.com': {
+        first:  snap('2024-01-01T00:00:00.000Z', { cookies: [sid('account-a')], localStorage: { current: '1' } }),
+        second: snap('2024-01-01T00:00:00.000Z', { cookies: [sid('account-b')] }),
+      } });
+      await setActiveSnapshots({ 'example.com': 'first' });
+    });
+
+    it('flags a changed cookie value and names it in the badge tooltip', async () => {
+      chrome._state.cookies = [sid('account-b')];
+      await loadPopup('https://example.com/');
+
+      const badge = row('first').querySelector('.badge--modified');
+      expect(badge.classList.contains('hidden')).toBe(false);
+      expect(badge.title).toContain('Cookie: sid');
+    });
+
+    it('does not flag a cookie the site was seen rewriting by itself', async () => {
+      chrome._state.cookies = [sid('account-b')];
+      await chrome.storage.local.set({ volatileCookies: { 'example.com': { 'example.com|/|sid': 'value' } } });
+      await loadPopup('https://example.com/');
+
+      expect(row('first').querySelector('.badge--modified').classList.contains('hidden')).toBe(true);
+    });
+
+    it('records the applied cookies for the service worker before reloading', async () => {
+      await loadPopup('https://example.com/');
+
+      row('second').querySelector('.snapshot__main').click();
+      await settle();
+
+      const { cookieChecks } = await chrome.storage.local.get('cookieChecks');
+      expect(cookieChecks[1]).toMatchObject({ domain: 'example.com', cookies: [sid('account-b')] });
+      expect(chrome._state.reloadedTabs).toEqual([1]);
     });
   });
 

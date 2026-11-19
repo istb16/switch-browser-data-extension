@@ -78,6 +78,45 @@ test('save then load round-trips real localStorage/sessionStorage, reloads the t
   await expect.poll(() => loadPopup.evaluate(id => chrome.action.getBadgeText({ tabId: id }), tabId)).toBe('sn');
 });
 
+// Puts one record in a real IndexedDB store of the test page, replacing the store's contents.
+async function putRecord(page, record) {
+  await page.evaluate(rec => new Promise((resolve, reject) => {
+    const req = indexedDB.open('e2e', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('items', { keyPath: 'id' });
+    req.onerror = () => reject(req.error);
+    req.onsuccess = () => {
+      const tx = req.result.transaction('items', 'readwrite');
+      tx.objectStore('items').clear();
+      tx.objectStore('items').put(rec);
+      tx.oncomplete = () => { req.result.close(); resolve(); };
+      tx.onerror = () => reject(tx.error);
+    };
+  }), record);
+}
+
+test('an IndexedDB edit that keeps the record count still shows as a change', async ({ context, extensionId }) => {
+  await disableCookieCollection(context, extensionId);
+
+  const targetPage = await context.newPage();
+  await targetPage.goto(TEST_PAGE_URL);
+  await putRecord(targetPage, { id: 1, name: 'before' });
+
+  const savePopup = await openPopupFor(context, extensionId, targetPage);
+  await saveAs(savePopup, 'idb');
+  await savePopup.close();
+
+  const samePopup = await openPopupFor(context, extensionId, targetPage);
+  await samePopup.waitForTimeout(500);
+  await expect(row(samePopup, 'idb').locator('.badge--modified')).toBeHidden();
+  await samePopup.close();
+
+  await putRecord(targetPage, { id: 1, name: 'after' });
+  const popup = await openPopupFor(context, extensionId, targetPage);
+  const badge = row(popup, 'idb').locator('.badge--modified');
+  await expect(badge).toBeVisible();
+  await expect(badge).toHaveAttribute('title', /IndexedDB/);
+});
+
 test('the undo bar restores the state from before the load', async ({ context, extensionId }) => {
   await disableCookieCollection(context, extensionId);
 

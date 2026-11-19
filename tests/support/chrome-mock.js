@@ -2,6 +2,16 @@ function clone(value) {
   return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 }
 
+// A chrome.events.Event stand-in whose listeners tests can fire.
+function event() {
+  const listeners = [];
+  return {
+    addListener(fn) { listeners.push(fn); },
+    removeListener(fn) { listeners.splice(listeners.indexOf(fn), 1); },
+    dispatch(...args) { listeners.forEach(fn => fn(...args)); },
+  };
+}
+
 export function createChromeMock() {
   const state = {
     storage: {},
@@ -44,6 +54,7 @@ export function createChromeMock() {
           state.storage = {};
         },
       },
+      onChanged: event(),
     },
 
     cookies: {
@@ -73,6 +84,7 @@ export function createChromeMock() {
       async reload(tabId) {
         state.reloadedTabs.push(tabId);
       },
+      onUpdated: event(),
       // Overridden per-test with vi.fn() where message round-tripping matters.
       sendMessage: async () => {
         throw new Error('Could not establish connection. Receiving end does not exist.');
@@ -85,6 +97,8 @@ export function createChromeMock() {
         removeListener(fn) { state.messageHandlers = state.messageHandlers.filter(h => h !== fn); },
       },
       openOptionsPage() {},
+      onInstalled: event(),
+      onStartup: event(),
       getManifest() { return clone(state.manifest); },
     },
 

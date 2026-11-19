@@ -19,7 +19,7 @@ describe('content/content-script (non-module message router)', () => {
     let listener;
     const chromeStub = { runtime: { onMessage: { addListener: fn => { listener = fn; } } } };
 
-    loadGlobalScript('content/content-script.js', { chrome: chromeStub, localStorageHandler, sessionStorageHandler, indexedDBHandler }, []);
+    loadGlobalScript('content/content-script.js', { chrome: chromeStub, localStorageHandler, sessionStorageHandler, indexedDBHandler, storageDigest }, []);
     onMessage = (message, sendResponse) => listener(message, {}, sendResponse);
   });
 
@@ -44,9 +44,12 @@ describe('content/content-script (non-module message router)', () => {
     expect(result).toEqual({ indexedDB: {} });
   });
 
-  it('getStorageData with summary returns IndexedDB as counts under indexedDBSummary', async () => {
-    const result = await sendAndAwait({ type: 'getStorageData', summary: true, types: { localStorage: false, sessionStorage: false, indexedDB: true } });
-    expect(result).toEqual({ indexedDBSummary: {} });
+  it('getStorageData with digest returns only a digest of IndexedDB, matching one taken from the full data', async () => {
+    const types = { localStorage: false, sessionStorage: false, indexedDB: true };
+    const full = await sendAndAwait({ type: 'getStorageData', types });
+    const result = await sendAndAwait({ type: 'getStorageData', digest: true, types });
+    expect(Object.keys(result)).toEqual(['indexedDBDigest']);
+    expect(result.indexedDBDigest).toBe(storageDigest.digest(full.indexedDB));
   });
 
   it('setStorageData writes only the requested + present storage types', async () => {
