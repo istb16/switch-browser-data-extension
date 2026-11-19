@@ -12,6 +12,19 @@ function event() {
   };
 }
 
+function withinDomain(host, domain) {
+  return host === domain || host.endsWith(`.${domain}`);
+}
+
+// "*://*.example.com/*" covers example.com and every subdomain, as in Chrome.
+function originCovers(granted, requested) {
+  if (granted === requested) return true;
+  const g = granted.match(/^([^:]+):\/\/\*\.([^/]+)(\/.*)$/);
+  const r = requested.match(/^([^:]+):\/\/([^/]+)(\/.*)$/);
+  if (!g || !r || g[1] !== r[1] || g[3] !== r[3]) return false;
+  return withinDomain(r[2].replace(/^\*\./, ''), g[2]);
+}
+
 export function createChromeMock() {
   const state = {
     storage: {},
@@ -57,22 +70,32 @@ export function createChromeMock() {
       onChanged: event(),
     },
 
+    // As in Chrome, a cookie whose domain starts with "." is a domain cookie
+    // and any other is host-only.
     cookies: {
       async getAll(details = {}) {
-        return clone(state.cookies).filter(c => !details.domain || c.domain === details.domain);
+        const filter = details.domain?.replace(/^\./, '');
+        return clone(state.cookies).filter(c => !filter || withinDomain(c.domain.replace(/^\./, ''), filter));
       },
       async set(details) {
-        // Real chrome.cookies.set() derives `domain` from `url` when the
-        // caller doesn't pass one explicitly — cookie-handler.js relies on
-        // exactly that, so the mock must replicate it.
-        const domain = details.domain ?? new URL(details.url).hostname;
-        const cookie = { storeId: '0', ...details, domain };
-        state.cookies = state.cookies.filter(c => !(c.name === cookie.name && c.domain === cookie.domain));
+        // Real chrome.cookies.set() stores a host-only cookie for the url's
+        // host when no `domain` is passed, and a "."-prefixed domain cookie
+        // when one is.
+        const domain = details.domain == null
+          ? new URL(details.url).hostname
+          : `.${details.domain.replace(/^\./, '')}`;
+        const cookie = { storeId: '0', ...details, domain, path: details.path ?? '/' };
+        state.cookies = state.cookies.filter(c => !(c.name === cookie.name && c.domain === cookie.domain && c.path === cookie.path));
         state.cookies.push(cookie);
         return clone(cookie);
       },
       async remove(details) {
-        state.cookies = state.cookies.filter(c => c.name !== details.name);
+        const url = new URL(details.url);
+        const index = state.cookies.findIndex(c => c.name === details.name
+          && c.path === url.pathname
+          && (c.domain.startsWith('.') ? withinDomain(url.hostname, c.domain.slice(1)) : c.domain === url.hostname));
+        if (index === -1) return null;
+        state.cookies.splice(index, 1);
         return { url: details.url, name: details.name };
       },
     },
@@ -114,10 +137,14 @@ export function createChromeMock() {
 
     permissions: {
       async contains({ origins }) {
-        return origins.every(origin => state.grantedOrigins.has(origin));
+        return origins.every(origin => [...state.grantedOrigins].some(granted => originCovers(granted, origin)));
       },
       async request({ origins }) {
         origins.forEach(origin => state.grantedOrigins.add(origin));
+        return true;
+      },
+      async remove({ origins }) {
+        origins.forEach(origin => state.grantedOrigins.delete(origin));
         return true;
       },
     },

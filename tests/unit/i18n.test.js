@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { initI18n, t, applyI18n, setLanguage, getSavedLangSetting } from '../../lib/i18n.js';
+import { initI18n, t, applyI18n, setLanguage, getSavedLangSetting, MESSAGES } from '../../lib/i18n.js';
 
 describe('lib/i18n', () => {
   beforeEach(async () => {
@@ -49,6 +49,10 @@ describe('lib/i18n', () => {
   it('falls back to English text, then the raw key, for unknown-language / unknown-key lookups', async () => {
     await setLanguage('ja');
     expect(t('does_not_exist')).toBe('does_not_exist');
+  });
+
+  it('ja and en have the same keys', () => {
+    expect(Object.keys(MESSAGES.ja).sort()).toEqual(Object.keys(MESSAGES.en).sort());
   });
 
   it('applyI18n fills in data-i18n, data-i18n-placeholder, data-i18n-title and data-i18n-option', async () => {

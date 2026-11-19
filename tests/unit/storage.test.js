@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   getSnapshots, setSnapshots, getSettings, setSettings, getSnapshotOrders, setSnapshotOrders,
-  getActiveSnapshots, setActiveSnapshots, getBackups, setBackups,
+  getActiveSnapshots, setActiveSnapshots, getBackups, setBackups, getGroups, setGroups,
 } from '../../lib/storage.js';
 
 describe('lib/storage', () => {
@@ -21,6 +21,7 @@ describe('lib/storage', () => {
       autoBackup: true,
       autoReload: true,
       showBadge:  true,
+      encryptExports: false,
     });
   });
 
@@ -30,6 +31,7 @@ describe('lib/storage', () => {
       autoBackup: false,
       autoReload: true,
       showBadge:  false,
+      encryptExports: true,
     };
     await setSettings(settings);
     expect(await getSettings()).toEqual(settings);
@@ -42,6 +44,7 @@ describe('lib/storage', () => {
     expect(settings.autoBackup).toBe(true);
     expect(settings.autoReload).toBe(true);
     expect(settings.showBadge).toBe(true);
+    expect(settings.encryptExports).toBe(false);
   });
 
   it('round-trips active snapshots and backups', async () => {
@@ -61,5 +64,14 @@ describe('lib/storage', () => {
     const orders = { 'example.com': ['b', 'a'] };
     await setSnapshotOrders(orders);
     expect(await getSnapshotOrders()).toEqual(orders);
+  });
+
+  it('getGroups defaults to an empty array', async () => {
+    expect(await getGroups()).toEqual([]);
+  });
+
+  it('round-trips groups', async () => {
+    await setGroups(['example.com']);
+    expect(await getGroups()).toEqual(['example.com']);
   });
 });

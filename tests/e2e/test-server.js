@@ -36,10 +36,28 @@ function serveCookiePages(req, res, url) {
   res.end(`<!doctype html><title>tk3 e2e cookie page</title><h1>signed in as: ${user || '(none)'}</h1>`);
 }
 
+// /group/: gsid is a domain cookie for example.test, shared by every subdomain;
+// it changes only through /group/login?user=NAME.
+function serveGroupPages(req, res, url) {
+  if (url.pathname === '/group/login') {
+    const setCookie = `gsid=${encodeURIComponent(url.searchParams.get('user') ?? '')}; Domain=example.test; Path=/`;
+    res.writeHead(302, { 'Set-Cookie': setCookie, Location: '/group/' });
+    res.end();
+    return;
+  }
+  const user = (parseCookies(req.headers.cookie).gsid ?? '').replace(/[^\w-]/g, '');
+  res.writeHead(200, { 'Content-Type': 'text/html' });
+  res.end(`<!doctype html><title>tk3 e2e group page</title><h1>group user: ${user || '(none)'}</h1>`);
+}
+
 createServer((req, res) => {
   const url = new URL(req.url, `http://localhost:${TEST_PAGE_PORT}`);
   if (url.pathname.startsWith('/cookies/')) {
     serveCookiePages(req, res, url);
+    return;
+  }
+  if (url.pathname.startsWith('/group/')) {
+    serveGroupPages(req, res, url);
     return;
   }
   res.writeHead(200, { 'Content-Type': 'text/html' });

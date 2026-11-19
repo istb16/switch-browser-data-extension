@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { findChanges, findVolatileCookies, withDigests, describeChanges } from '../../lib/data-compare.js';
+import { findChanges, findVolatileCookies, withDigests, describeChanges, isCookieExpired } from '../../lib/data-compare.js';
 
 const ALL = { cookies: true, localStorage: true, sessionStorage: true, indexedDB: true };
 const cookie = (name, value, extra = {}) => ({ name, value, domain: 'a.com', path: '/', ...extra });
@@ -60,6 +60,15 @@ describe('lib/data-compare findChanges', () => {
     expect(findChanges({ localStorage: { a: '1' } }, { localStorage: { a: '2' } }, { ...ALL, localStorage: false })).toEqual([]);
     expect(findChanges({ cookies: [cookie('a', '1')] }, {}, ALL)).toEqual([]);
     expect(findChanges({}, { localStorage: { a: '1' }, indexedDBDigest: 'x' }, ALL)).toEqual([]);
+  });
+});
+
+describe('lib/data-compare isCookieExpired', () => {
+  it('is true at the expiry instant', () => {
+    const now = Date.parse('2026-01-01T12:00:00Z');
+    expect(isCookieExpired(cookie('a', '1', { expirationDate: now / 1000 }), now)).toBe(true);
+    expect(isCookieExpired(cookie('a', '1', { expirationDate: (now + 1000) / 1000 }), now)).toBe(false);
+    expect(isCookieExpired(cookie('a', '1'), now)).toBe(false);
   });
 });
 

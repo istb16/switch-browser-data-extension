@@ -1,8 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { setSnapshots, getSnapshots, setSettings, getSettings, setActiveSnapshots, getActiveSnapshots, getBackups } from '../../lib/storage.js';
+import {
+  setSnapshots, getSnapshots, setSettings, getSettings, setActiveSnapshots, getActiveSnapshots, getBackups, setGroups,
+} from '../../lib/storage.js';
+import { byteSize, formatBytes } from '../../lib/snapshot-summary.js';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../');
 const popupHtml = readFileSync(path.join(repoRoot, 'popup/popup.html'), 'utf-8');
@@ -165,6 +168,138 @@ describe('popup/popup.js', () => {
     $('searchInput').dispatchEvent(new Event('input'));
     expect(rows()).toHaveLength(0);
     expect($('noMatch').classList.contains('hidden')).toBe(false);
+  });
+
+  describe('memo, colour and preview', () => {
+    const NOW = Date.UTC(2025, 0, 1);
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('popup row shows chip, memo and preview', async () => {
+      const tagged = snap('2024-01-01T00:00:00.000Z', {
+        cookies: [{ name: 'a', value: '1', domain: 'example.com', path: '/' }, { name: 'b', value: '2', domain: 'example.com', path: '/' }],
+        localStorage: { x: '1', y: '2', z: '3' },
+        indexedDB: { db: {} },
+        memo: 'admin account',
+        color: 'green',
+      });
+      await setSnapshots({ 'example.com': { tagged, odd: snap('2024-01-01T00:00:00.000Z', { color: 'pink' }) } });
+      await loadPopup('https://example.com/');
+
+      const r = row('tagged');
+      expect(r.querySelector('.snapshot__chip').classList.contains('snapshot__chip--green')).toBe(true);
+      expect(r.querySelector('.snapshot__chip').classList.contains('hidden')).toBe(false);
+      expect(r.querySelector('.snapshot__memo').textContent).toBe('admin account');
+      const preview = r.querySelector('.snapshot__preview');
+      expect(preview.textContent).toBe(`Cookie 2 · LS 3 · IDB 1 · ${formatBytes(byteSize(tagged))}`);
+      expect(preview.title).toContain('localStorage');
+      expect(preview.title).toContain('IndexedDB');
+
+      expect(row('odd').querySelector('.snapshot__chip')).toBeNull();
+      expect(row('odd').querySelector('.snapshot__memo')).toBeNull();
+    });
+
+    it('popup preview shows a zero count', async () => {
+      await setSnapshots({ 'example.com': { empty: snap('2024-01-01T00:00:00.000Z', { localStorage: {} }) } });
+      await loadPopup('https://example.com/');
+
+      expect(row('empty').querySelector('.snapshot__preview').textContent).toMatch(/^LS 0 · \d+ B$/);
+    });
+
+    it('popup preview of a snapshot with no types is the size alone', async () => {
+      const bare = snap('2024-01-01T00:00:00.000Z');
+      await setSnapshots({ 'example.com': { bare } });
+      await loadPopup('https://example.com/');
+
+      const text = row('bare').querySelector('.snapshot__preview').textContent;
+      expect(text).toBe(formatBytes(byteSize(bare)));
+      expect(text).not.toContain('·');
+    });
+
+    it('popup row warns only with an expired cookie', async () => {
+      vi.spyOn(Date, 'now').mockReturnValue(NOW);
+      await setSnapshots({ 'example.com': {
+        expired: snap('2024-01-01T00:00:00.000Z', { cookies: [{ name: 'a', value: '1', domain: 'example.com', path: '/', expirationDate: NOW / 1000 }] }),
+        fresh:   snap('2024-01-01T00:00:00.000Z', { cookies: [{ name: 'a', value: '1', domain: 'example.com', path: '/', expirationDate: NOW / 1000 + 1 }] }),
+      } });
+      await loadPopup('https://example.com/');
+
+      const warning = row('expired').querySelector('.snapshot__warning');
+      expect(warning.classList.contains('hidden')).toBe(false);
+      expect(warning.getAttribute('aria-label')).toBeTruthy();
+      expect(row('fresh').querySelector('.snapshot__warning')).toBeNull();
+    });
+
+    it('popup memo input has maxlength 100', async () => {
+      await loadPopup('https://example.com/');
+      expect($('newSnapshotMemo').maxLength).toBe(100);
+    });
+
+    it('popup search matches memo', async () => {
+      const many = Object.fromEntries(['alpha', 'beta', 'gamma', 'delta', 'epsilon'].map(n => [n, snap('2024-01-01T00:00:00.000Z')]));
+      many.gamma.memo = 'Staging Admin';
+      await setSnapshots({ 'example.com': many });
+      await loadPopup('https://example.com/');
+
+      $('searchInput').value = 'admin';
+      $('searchInput').dispatchEvent(new Event('input'));
+      expect(rowNames()).toEqual(['gamma']);
+    });
+
+    it('popup save form stores memo and colour; edit dialog updates them', async () => {
+      await loadPopup('https://example.com/');
+
+      $('saveBtn').click();
+      $('newSnapshotName').value = 'tagged';
+      $('newSnapshotMemo').value = 'first memo';
+      $('saveForm').querySelector('input[name="newSnapshotColor"][value="red"]').checked = true;
+      $('confirmSaveBtn').click();
+      await settle();
+
+      let stored = (await getSnapshots())['example.com'].tagged;
+      expect(stored).toMatchObject({ memo: 'first memo', color: 'red' });
+      expect(row('tagged').querySelector('.snapshot__memo').textContent).toBe('first memo');
+      // Closing the form resets it for the next save.
+      expect($('newSnapshotMemo').value).toBe('');
+      expect($('saveForm').querySelector('input[name="newSnapshotColor"]:checked').value).toBe('');
+
+      row('tagged').querySelector('[data-action="edit"]').click();
+      await settle();
+      const dialog = document.querySelector('dialog');
+      const memoInput = dialog.querySelector('input[type="text"]');
+      expect(memoInput.value).toBe('first memo');
+      expect(memoInput.maxLength).toBe(100);
+      expect(dialog.querySelector('input[type="radio"]:checked').value).toBe('red');
+      memoInput.value = 'second memo';
+      dialog.querySelector('input[type="radio"][value="blue"]').checked = true;
+      dialog.querySelector('.tk3-btn-confirm').click();
+      await settle();
+
+      stored = (await getSnapshots())['example.com'].tagged;
+      expect(stored).toMatchObject({ memo: 'second memo', color: 'blue' });
+      expect(row('tagged').querySelector('.snapshot__chip--blue')).not.toBeNull();
+      expect($('statusMsg').className).toContain('success');
+
+      row('tagged').querySelector('[data-action="edit"]').click();
+      await settle();
+      document.querySelector('dialog').querySelector('.tk3-btn-cancel').click();
+      await settle();
+      expect((await getSnapshots())['example.com'].tagged).toMatchObject({ memo: 'second memo', color: 'blue' });
+    });
+
+    it('keeps the memo and colour when overwriting from the row menu', async () => {
+      await setSnapshots({ 'example.com': { tagged: snap('2024-01-01T00:00:00.000Z', { memo: 'keep', color: 'amber' }) } });
+      await loadPopup('https://example.com/');
+
+      row('tagged').querySelector('.actions-menu [data-action="overwrite"]').click();
+      await settle();
+      document.querySelector('.tk3-btn-confirm').click();
+      await settle();
+
+      expect((await getSnapshots())['example.com'].tagged).toMatchObject({ memo: 'keep', color: 'amber', localStorage: { current: '1' } });
+    });
   });
 
   it('marks the active snapshot, and flags it when the page data has changed since', async () => {
@@ -486,6 +621,58 @@ describe('popup/popup.js', () => {
       expect((await chrome.storage.local.get('cookieChecks')).cookieChecks).toEqual({});
     });
 
+    it('keeps the pending cookie checks when the cookies type is turned off', async () => {
+      const checks = { 1: { domain: 'example.com', cookies: [sid], until: Date.now() + 60_000 } };
+      await chrome.storage.local.set({ cookieChecks: checks });
+      await setSettings({ ...(await getSettings()), enabledTypes: { cookies: false, localStorage: true, sessionStorage: true, indexedDB: true } });
+      await loadPopup('https://example.com/');
+
+      $('clearSiteBtn').click();
+      await settle();
+      document.querySelector('.tk3-btn-confirm').click();
+      await settle();
+
+      expect($('statusMsg').className).toContain('success');
+      expect((await chrome.storage.local.get('cookieChecks')).cookieChecks).toEqual(checks);
+    });
+
+    it('keeps the pending cookie checks when the page can\'t be reached', async () => {
+      const checks = { 1: { domain: 'example.com', cookies: [sid], until: Date.now() + 60_000 } };
+      await chrome.storage.local.set({ cookieChecks: checks });
+      chrome.tabs.sendMessage = vi.fn(async () => {
+        throw new Error('Receiving end does not exist.');
+      });
+      await loadPopup('https://example.com/');
+
+      $('clearSiteBtn').click();
+      await settle();
+      document.querySelector('.tk3-btn-confirm').click();
+      await settle();
+
+      expect($('statusMsg').className).toContain('error');
+      expect((await chrome.storage.local.get('cookieChecks')).cookieChecks).toEqual(checks);
+    });
+
+    it('keeps the pending cookie checks when clearing the page\'s storage fails before the cookies', async () => {
+      const checks = { 1: { domain: 'example.com', cookies: [sid], until: Date.now() + 60_000 } };
+      await chrome.storage.local.set({ cookieChecks: checks });
+      chrome.tabs.sendMessage = vi.fn(async (_tabId, message) => {
+        if (message.type === 'clearStorageData') throw new Error('Receiving end does not exist.');
+        if (message.type === 'ping') return { ok: true };
+        return structuredClone(pageData);
+      });
+      await loadPopup('https://example.com/');
+
+      $('clearSiteBtn').click();
+      await settle();
+      document.querySelector('.tk3-btn-confirm').click();
+      await settle();
+
+      expect($('statusMsg').className).toContain('error');
+      expect(chrome._state.cookies).toEqual([sid]);
+      expect((await chrome.storage.local.get('cookieChecks')).cookieChecks).toEqual(checks);
+    });
+
     it('touches nothing, and keeps the existing backup, when the page can\'t be reached', async () => {
       await chrome.storage.local.set({ backups: { 'example.com': { savedAt: '2024-01-01T00:00:00.000Z', activeName: null, localStorage: { earlier: '1' } } } });
       chrome.tabs.sendMessage = vi.fn(async () => {
@@ -611,6 +798,296 @@ describe('popup/popup.js', () => {
       expect($('statusMsg').className).toContain('error');
       expect(chrome._state.cookies).toEqual([sid]);
       expect((await getActiveSnapshots())['example.com']).toBe('first');
+    });
+  });
+
+  describe('in a subdomain group', () => {
+    const GROUP_ORIGINS = ['*://example.com/*', '*://*.example.com/*'];
+    const cookie = (name, domain, value) => ({ name, value, domain, path: '/', secure: true, httpOnly: false, sameSite: 'lax' });
+    const jar = () => chrome._state.cookies.map(c => `${c.domain}:${c.name}=${c.value}`).sort();
+    const isHidden = el => el.classList.contains('hidden');
+
+    beforeEach(async () => {
+      await setGroups(['example.com']);
+      chrome._state.grantedOrigins.add('*://*.example.com/*');
+    });
+
+    it('popup in a group lists the snapshots of every member host', async () => {
+      await setSnapshots({
+        'www.example.com': { mine: snap('2024-01-01T00:00:00.000Z') },
+        'app.example.com': { theirs: snap('2024-01-01T00:00:00.000Z', { localStorage: { a: '1' } }) },
+        'example.com':     { base: snap('2024-01-01T00:00:00.000Z') },
+        'other.com':       { outside: snap('2024-01-01T00:00:00.000Z') },
+      });
+      await loadPopup('https://www.example.com/');
+
+      expect($('currentDomain').textContent).toBe('www.example.com');
+      expect(isHidden($('groupChip'))).toBe(false);
+      expect($('groupChip').textContent).toContain('example.com');
+      expect(rowNames()).toEqual(['mine', 'theirs', 'base']);
+      expect(row('mine').querySelector('.snapshot__host')).toBeNull();
+      expect(row('mine').querySelector('.actions-menu [data-action="overwrite"]')).not.toBeNull();
+      expect(row('theirs').querySelector('.snapshot__host').textContent).toBe('app.example.com');
+      expect(row('theirs').querySelector('.actions-menu [data-action="overwrite"]')).toBeNull();
+      expect(row('base').querySelector('.snapshot__host').textContent).toBe('example.com');
+    });
+
+    it('popup in a group saves under the current host with cookieDomain set', async () => {
+      chrome._state.cookies = [cookie('parent', '.example.com', 'p'), cookie('sibling', 'app.example.com', 's')];
+      await loadPopup('https://www.example.com/');
+
+      $('saveBtn').click();
+      $('newSnapshotName').value = 'saved';
+      $('confirmSaveBtn').click();
+      await settle();
+
+      const saved = (await getSnapshots())['www.example.com'].saved;
+      expect(saved.cookieDomain).toBe('example.com');
+      expect(saved.cookies.map(c => c.name).sort()).toEqual(['parent', 'sibling']);
+      expect(saved.localStorage).toEqual({ current: '1' });
+      expect((await getActiveSnapshots())['example.com']).toEqual({ host: 'www.example.com', name: 'saved' });
+      expect(row('saved').classList.contains('is-active')).toBe(true);
+    });
+
+    it('popup on a non-group host uses the host as key and the single origin', async () => {
+      chrome._state.grantedOrigins.clear();
+      const request = vi.spyOn(chrome.permissions, 'request');
+      await loadPopup('https://other.com/');
+
+      expect(isHidden($('groupChip'))).toBe(true);
+      $('grantPermissionBtn').click();
+      await settle();
+      expect(request).toHaveBeenCalledWith({ origins: ['*://other.com/*'] });
+    });
+
+    it('popup permission panel asks for the group origins', async () => {
+      chrome._state.grantedOrigins.clear();
+      chrome._state.grantedOrigins.add('*://www.example.com/*');
+      const request = vi.spyOn(chrome.permissions, 'request');
+      await loadPopup('https://www.example.com/');
+
+      expect(isHidden($('permissionPanel'))).toBe(false);
+      expect($('permissionBody').textContent).toContain('example.com');
+      $('grantPermissionBtn').click();
+      await settle();
+      expect(request).toHaveBeenCalledWith({ origins: GROUP_ORIGINS });
+      expect(isHidden($('mainContent'))).toBe(false);
+    });
+
+    it('popup load of another host\'s row reports page data skipped and marks it active', async () => {
+      chrome._state.cookies = [cookie('parent', '.example.com', 'before')];
+      await setSnapshots({ 'app.example.com': { theirs: snap('2024-01-01T00:00:00.000Z', {
+        cookieDomain: 'example.com', cookies: [cookie('parent', '.example.com', 'after')], localStorage: { a: '1' },
+      }) } });
+      await loadPopup('https://www.example.com/');
+
+      row('theirs').querySelector('.snapshot__main').click();
+      await settle();
+
+      expect(chrome.tabs.sendMessage).not.toHaveBeenCalledWith(1, expect.objectContaining({ type: 'setStorageData' }));
+      expect(pageData.localStorage).toEqual({ current: '1' });
+      expect(jar()).toEqual(['.example.com:parent=after']);
+      expect($('statusMsg').className).toContain('success');
+      expect($('statusMsg').textContent).toContain('app.example.com');
+      expect((await getActiveSnapshots())['example.com']).toEqual({ host: 'app.example.com', name: 'theirs' });
+      expect(row('theirs').classList.contains('is-active')).toBe(true);
+      const { cookieChecks } = await chrome.storage.local.get('cookieChecks');
+      expect(cookieChecks[1]).toMatchObject({ domain: 'example.com', origins: GROUP_ORIGINS, cookieDomain: 'example.com' });
+    });
+
+    it('popup load of a pre-group snapshot in a group leaves .base and sibling cookies in place', async () => {
+      chrome._state.cookies = [
+        cookie('parent', '.example.com', 'p'), cookie('sibling', 'www.example.com', 's'), cookie('own', 'app.example.com', 'old'),
+      ];
+      await setSnapshots({ 'app.example.com': { pre: snap('2024-01-01T00:00:00.000Z', { cookies: [cookie('own', 'app.example.com', 'new')] }) } });
+      await loadPopup('https://app.example.com/');
+
+      row('pre').querySelector('.snapshot__main').click();
+      await settle();
+
+      expect(jar()).toEqual(['.example.com:parent=p', 'app.example.com:own=new', 'www.example.com:sibling=s']);
+      const { cookieChecks } = await chrome.storage.local.get('cookieChecks');
+      expect(cookieChecks[1]).toMatchObject({ cookieDomain: 'app.example.com', cookies: [cookie('own', 'app.example.com', 'new')] });
+    });
+
+    it('popup in a group shows no "changed" for a pre-group snapshot when only sibling cookies differ', async () => {
+      chrome._state.cookies = [
+        cookie('own', 'app.example.com', '1'), cookie('sibling', 'www.example.com', 'x'), cookie('parent', '.example.com', 'y'),
+      ];
+      await setSnapshots({ 'app.example.com': { pre: snap('2024-01-01T00:00:00.000Z', { cookies: [cookie('own', 'app.example.com', '1')] }) } });
+      await setActiveSnapshots({ 'example.com': { host: 'app.example.com', name: 'pre' } });
+      await loadPopup('https://app.example.com/');
+
+      expect(row('pre').classList.contains('is-active')).toBe(true);
+      expect(isHidden(row('pre').querySelector('.badge--modified'))).toBe(true);
+    });
+
+    it('popup load of a pre-group snapshot on the base host leaves sibling-host cookies in place', async () => {
+      chrome._state.cookies = [
+        cookie('parent', '.example.com', 'old'), cookie('sibling', 'www.example.com', 's'), cookie('own', 'app.example.com', 'o'),
+      ];
+      await setSnapshots({ 'example.com': { pre: snap('2024-01-01T00:00:00.000Z', { cookies: [cookie('parent', '.example.com', 'new')] }) } });
+      await loadPopup('https://example.com/');
+
+      row('pre').querySelector('.snapshot__main').click();
+      await settle();
+
+      expect(jar()).toEqual(['.example.com:parent=new', 'app.example.com:own=o', 'www.example.com:sibling=s']);
+      const { cookieChecks } = await chrome.storage.local.get('cookieChecks');
+      expect(cookieChecks[1]).toMatchObject({ cookieDomain: 'example.com', cookieExact: true, cookies: [cookie('parent', '.example.com', 'new')] });
+    });
+
+    it('popup on the base host shows no "changed" for a pre-group snapshot when only sibling-host cookies exist', async () => {
+      chrome._state.cookies = [
+        cookie('parent', '.example.com', '1'), cookie('sibling', 'www.example.com', 'x'), cookie('own', 'app.example.com', 'y'),
+      ];
+      await setSnapshots({ 'example.com': { pre: snap('2024-01-01T00:00:00.000Z', { cookies: [cookie('parent', '.example.com', '1')] }) } });
+      await setActiveSnapshots({ 'example.com': { host: 'example.com', name: 'pre' } });
+      await loadPopup('https://example.com/');
+
+      expect(row('pre').classList.contains('is-active')).toBe(true);
+      expect(isHidden(row('pre').querySelector('.badge--modified'))).toBe(true);
+    });
+
+    it('clear-site in a group cancels the pending cookie checks of every member tab', async () => {
+      const until = Date.now() + 60_000;
+      await chrome.storage.local.set({ cookieChecks: {
+        1: { domain: 'example.com', cookies: [], until },
+        2: { domain: 'example.com', cookies: [cookie('parent', '.example.com', 'p')], until },
+        3: { domain: 'other.com', cookies: [], until },
+      } });
+      const base = chrome.tabs.sendMessage;
+      chrome.tabs.sendMessage = vi.fn(async (tabId, message) => {
+        if (message.type === 'clearStorageData') return { success: true, blockedIndexedDB: [] };
+        return base(tabId, message);
+      });
+      await loadPopup('https://www.example.com/');
+
+      $('clearSiteBtn').click();
+      await settle();
+      document.querySelector('.tk3-btn-confirm').click();
+      await settle();
+
+      expect(Object.keys((await chrome.storage.local.get('cookieChecks')).cookieChecks)).toEqual(['3']);
+    });
+
+    it('popup outside a group lists a group-saved snapshot on its host and compares only the host\'s cookies', async () => {
+      await setGroups([]);
+      chrome._state.grantedOrigins.add('*://app.example.com/*');
+      chrome._state.cookies = [cookie('own', 'app.example.com', '1'), cookie('parent', '.example.com', 'changed')];
+      await setSnapshots({ 'app.example.com': { grouped: snap('2024-01-01T00:00:00.000Z', {
+        cookieDomain: 'example.com',
+        cookies: [cookie('own', 'app.example.com', '1'), cookie('parent', '.example.com', 'old'), cookie('sibling', 'www.example.com', 's')],
+      }) } });
+      await setActiveSnapshots({ 'app.example.com': 'grouped' });
+      await loadPopup('https://app.example.com/');
+
+      expect(rowNames()).toEqual(['grouped']);
+      expect(row('grouped').querySelector('.snapshot__host')).toBeNull();
+      expect(row('grouped').classList.contains('is-active')).toBe(true);
+      expect(isHidden(row('grouped').querySelector('.badge--modified'))).toBe(true);
+      expect(row('grouped').querySelector('.snapshot__preview').textContent).toMatch(/^Cookie 1 · /);
+    });
+
+    it('detectChanges ignores localStorage differences for a row of another host', async () => {
+      chrome._state.cookies = [cookie('parent', '.example.com', '1')];
+      await setSnapshots({ 'app.example.com': { theirs: snap('2024-01-01T00:00:00.000Z', {
+        cookieDomain: 'example.com', cookies: [cookie('parent', '.example.com', '1')], localStorage: { other: 'x' },
+      }) } });
+      await setActiveSnapshots({ 'example.com': { host: 'app.example.com', name: 'theirs' } });
+      await loadPopup('https://www.example.com/');
+      expect(isHidden(row('theirs').querySelector('.badge--modified'))).toBe(true);
+
+      chrome._state.cookies = [cookie('parent', '.example.com', '2')];
+      await loadPopup('https://www.example.com/');
+      const badge = row('theirs').querySelector('.badge--modified');
+      expect(isHidden(badge)).toBe(false);
+      expect(badge.title).toContain('Cookie: parent');
+      expect(badge.title).not.toContain('localStorage');
+      expect(row('theirs').querySelector('.changes-menu [data-action="overwrite"]')).toBeNull();
+      expect(row('theirs').querySelector('.changes-menu [data-action="ignore"]')).not.toBeNull();
+    });
+
+    it('undo in a group restores the current host\'s backup', async () => {
+      chrome._state.cookies = [cookie('parent', '.example.com', 'before')];
+      await setSnapshots({ 'app.example.com': { theirs: snap('2024-01-01T00:00:00.000Z', {
+        cookieDomain: 'example.com', cookies: [cookie('parent', '.example.com', 'after')], localStorage: { a: '1' },
+      }) } });
+      await loadPopup('https://www.example.com/');
+      row('theirs').querySelector('.snapshot__main').click();
+      await settle();
+      expect(jar()).toEqual(['.example.com:parent=after']);
+      expect((await getBackups())['www.example.com'].localStorage).toEqual({ current: '1' });
+      pageData.localStorage = { changed: '1' };
+
+      $('undoBtn').click();
+      await settle();
+
+      expect(jar()).toEqual(['.example.com:parent=before']);
+      expect(pageData.localStorage).toEqual({ current: '1' });
+      expect((await getActiveSnapshots())['example.com']).toBeUndefined();
+
+      $('undoBtn').click();
+      await settle();
+      expect((await getActiveSnapshots())['example.com']).toEqual({ host: 'app.example.com', name: 'theirs' });
+    });
+
+    it('clear-site in a group clears the group\'s cookies and only the current page\'s storage', async () => {
+      chrome._state.cookies = [
+        cookie('parent', '.example.com', 'p'), cookie('sibling', 'app.example.com', 's'), cookie('own', 'www.example.com', 'o'),
+        cookie('other', 'other.com', 'x'),
+      ];
+      const base = chrome.tabs.sendMessage;
+      chrome.tabs.sendMessage = vi.fn(async (tabId, message) => {
+        if (message.type === 'clearStorageData') {
+          pageData = {};
+          return { success: true, blockedIndexedDB: [] };
+        }
+        return base(tabId, message);
+      });
+      await loadPopup('https://www.example.com/');
+
+      $('clearSiteBtn').click();
+      await settle();
+      expect(document.querySelector('.tk3-dialog-msg').textContent).toContain('グループ example.com');
+      document.querySelector('.tk3-btn-confirm').click();
+      await settle();
+
+      expect(jar()).toEqual(['other.com:other=x']);
+      const clears = chrome.tabs.sendMessage.mock.calls.filter(([, message]) => message.type === 'clearStorageData');
+      expect(clears).toEqual([[1, { type: 'clearStorageData', types: { localStorage: true, sessionStorage: true, indexedDB: true } }]]);
+      expect((await getBackups())['www.example.com'].cookies.map(c => c.name).sort()).toEqual(['own', 'parent', 'sibling']);
+    });
+
+    it('rename and delete in a group act on the row\'s own host key and keep the active reference right', async () => {
+      await setSnapshots({
+        'www.example.com': { mine: snap('2024-01-01T00:00:00.000Z') },
+        'app.example.com': { theirs: snap('2024-01-01T00:00:00.000Z') },
+      });
+      await setActiveSnapshots({ 'example.com': { host: 'app.example.com', name: 'theirs' } });
+      await loadPopup('https://www.example.com/');
+
+      row('theirs').querySelector('[data-action="rename"]').click();
+      const input = row('theirs').querySelector('.snapshot__rename');
+      input.value = 'renamed';
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+      await settle();
+
+      expect(Object.keys((await getSnapshots())['app.example.com'])).toEqual(['renamed']);
+      expect((await getActiveSnapshots())['example.com']).toEqual({ host: 'app.example.com', name: 'renamed' });
+      expect(row('renamed').classList.contains('is-active')).toBe(true);
+      expect(document.activeElement).toBe(row('renamed').querySelector('.snapshot__main'));
+
+      row('renamed').querySelector('[data-action="delete"]').click();
+      await settle();
+      document.querySelector('.tk3-btn-confirm').click();
+      await settle();
+
+      const stored = await getSnapshots();
+      expect(stored['app.example.com']).toBeUndefined();
+      expect(Object.keys(stored['www.example.com'])).toEqual(['mine']);
+      expect((await getActiveSnapshots())['example.com']).toBeUndefined();
+      expect(rowNames()).toEqual(['mine']);
     });
   });
 

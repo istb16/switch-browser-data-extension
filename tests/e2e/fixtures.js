@@ -31,6 +31,9 @@ export const test = base.extend({
         `--disable-extensions-except=${extensionPath}`,
         `--load-extension=${extensionPath}`,
         '--no-first-run',
+        // Domain cookies on localhost are unreliable, so group tests use
+        // example.test hosts that resolve to the local test server.
+        '--host-resolver-rules=MAP *.example.test 127.0.0.1, MAP example.test 127.0.0.1',
       ],
     });
     await use(context);

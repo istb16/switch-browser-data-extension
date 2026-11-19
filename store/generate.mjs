@@ -16,29 +16,36 @@ const outRoot = path.join(here, 'images');
 const PORT = 41990;
 const HOST = 'app.example.com';
 const SITE = `http://${HOST}:${PORT}/`;
+const GROUP = 'example.com';
+const GROUP_HOST = 'www.example.com';
+const GROUP_SITE = `http://${GROUP_HOST}:${PORT}/`;
 const RUNTIME = ['manifest.json', '_locales', 'background', 'content', 'icons', 'lib', 'options', 'popup'];
 
 const TEXT = {
   ja: {
     names: ['管理者（山田）', '一般ユーザー（佐藤）', '閲覧のみ（ゲスト）', '未ログイン'],
+    memos: ['請求まわりの確認用', '', '権限の制限を確かめる', ''],
+    groupNames: ['公開サイト（会員）', '公開サイト（未ログイン）'],
     shots: [
       ['ログイン状態をワンクリックで切り替え', 'サイトごとに Cookie・localStorage・sessionStorage・IndexedDB を名前を付けて保存'],
       ['切り替え前の状態にすぐ戻せる', '読み込む直前の状態を自動で残すので、間違えても「戻す」で元どおり'],
       ['あとから変わったら知らせる', '適用中のスナップショットと比べて「変更あり」を表示。何が変わったかもわかる'],
-      ['上書き・名前の変更・削除もその場で', '各行のメニューから。キーボードだけでも操作できます'],
+      ['サブドメインをまとめて切り替え', 'example.com と *.example.com の Cookie をグループで保存・切り替え。ほかのサブドメインで保存したものも並ぶ'],
     ],
-    options: ['保存するデータと動作を選べる', 'データ種別・自動バックアップ・自動リロード・エクスポート'],
+    options: ['使用量とデータの管理', 'どのサイトが大きいかを一目で。パスフレーズで暗号化したエクスポートにも対応'],
     tagline: 'ログイン状態をワンクリックで切り替え',
   },
   en: {
     names: ['Admin (Alex)', 'Member (Sam)', 'Viewer (Guest)', 'Signed out'],
+    memos: ['For checking billing', '', 'Tests the restricted role', ''],
+    groupNames: ['Public site (member)', 'Public site (signed out)'],
     shots: [
       ['Switch sign-ins in one click', 'Save cookies, localStorage, sessionStorage and IndexedDB per site, by name'],
       ['Undo a switch right away', 'The state before each load is kept, so Restore brings it back'],
       ['Know when things changed', 'Compares with the active snapshot and shows what changed'],
-      ['Overwrite, rename and delete in place', 'From each row\'s menu, or with the keyboard alone'],
+      ['Switch subdomains together', 'Group example.com and *.example.com to save and switch their cookies as one; snapshots from other subdomains are listed too'],
     ],
-    options: ['Choose what to save and how it behaves', 'Data types, automatic backup and reload, export'],
+    options: ['See usage and manage your data', 'Spot the largest sites at a glance, and export with passphrase encryption'],
     tagline: 'Switch sign-ins in one click',
   },
 };
@@ -74,7 +81,7 @@ async function launch(extDir) {
     args: [
       `--disable-extensions-except=${extDir}`,
       `--load-extension=${extDir}`,
-      `--host-resolver-rules=MAP ${HOST} 127.0.0.1`,
+      `--host-resolver-rules=MAP *.${GROUP} 127.0.0.1`,
       '--no-first-run',
     ],
   });
@@ -104,6 +111,8 @@ async function openPopup(context, id, site) {
 }
 
 const POPUP_MAX = 600;
+const OPTIONS_WIDTH = 920;
+const OPTIONS_MAX_HEIGHT = 1000;
 const NO_SCROLLBARS = 'html { scrollbar-width: none; } ::-webkit-scrollbar { display: none; }';
 
 async function capturePopup(popup) {
@@ -120,29 +129,46 @@ async function capturePopup(popup) {
 const minutesAgo = m => new Date(Date.now() - m * 60_000).toISOString();
 const sidCookie = user => ({ name: 'sid', value: user, domain: HOST, path: '/', secure: false, httpOnly: true, sameSite: 'lax' });
 
-async function seed(page, lang, { active, backup }) {
-  const names = TEXT[lang].names;
+const COLORS = ['blue', 'green', 'amber', null];
+const appSettings = user => JSON.stringify({ theme: 'light', recent: user ? ['dashboard', 'invoices', 'reports'] : [] });
+
+async function seed(page, lang, { active, backup, group = false }) {
+  const { names, memos, groupNames } = TEXT[lang];
   const users = ['yamada', 'sato', 'guest', ''];
   const ages = [60 * 26, 60 * 24 * 3, 60 * 24 * 12, 60 * 24 * 40];
-  const snapshots = Object.fromEntries(names.map((n, i) => [n, {
-    savedAt: minutesAgo(ages[i]),
-    cookies: users[i] ? [sidCookie(users[i])] : [],
-    localStorage: { user: users[i] },
-  }]));
-  await page.evaluate(async ({ lang, snapshots, names, active, backup }) => {
+  const snapshots = {
+    [HOST]: Object.fromEntries(names.map((n, i) => [n, {
+      savedAt: minutesAgo(ages[i]),
+      ...(memos[i] && { memo: memos[i] }),
+      ...(COLORS[i] && { color: COLORS[i] }),
+      cookies: users[i] ? [sidCookie(users[i])] : [],
+      localStorage: { user: users[i], settings: appSettings(users[i]) },
+      sessionStorage: users[i] ? { tab: 'main' } : {},
+    }])),
+  };
+  const snapshotOrder = { [HOST]: names };
+  if (group) {
+    snapshots[GROUP_HOST] = Object.fromEntries(groupNames.map((n, i) => [n, {
+      savedAt: minutesAgo(60 * (5 + i * 30)),
+      ...(i === 0 && { color: 'green' }),
+      cookieDomain: GROUP,
+      cookies: [],
+      localStorage: { cart: i === 0 ? '3' : '0' },
+    }]));
+    snapshotOrder[GROUP_HOST] = groupNames;
+  }
+  let activeSnapshots = {};
+  if (active) activeSnapshots = group ? { [GROUP]: { host: HOST, name: active } } : { [HOST]: active };
+  const backups = backup ? { [HOST]: { savedAt: backup, activeName: null, cookies: [], localStorage: {} } } : {};
+  const groups = group ? [GROUP] : [];
+  await page.evaluate(async data => {
     await chrome.storage.local.clear();
-    await chrome.storage.local.set({
-      language: lang,
-      snapshots: { 'app.example.com': snapshots },
-      snapshotOrder: { 'app.example.com': names },
-      activeSnapshots: active ? { 'app.example.com': active } : {},
-      backups: backup ? { 'app.example.com': { savedAt: backup, activeName: null, cookies: [], localStorage: {} } } : {},
-    });
-  }, { lang, snapshots, names, active, backup });
+    await chrome.storage.local.set(data);
+  }, { language: lang, snapshots, snapshotOrder, activeSnapshots, backups, groups });
 }
 
-async function signIn(site, user) {
-  await site.goto(`${SITE}login?user=${user}`);
+async function signIn(site, user, origin = SITE) {
+  await site.goto(`${origin}login?user=${user}`);
   await site.evaluate(u => localStorage.setItem('user', u), user);
 }
 
@@ -181,23 +207,28 @@ async function popupScenes(context, id, lang) {
   shots.push(await capturePopup(popup));
   await popup.close();
 
-  // 4. A row's menu.
+  // 4. A subdomain group: on www, the snapshots saved on app are listed too.
   await signIn(site, 'yamada');
-  await seed(settings, lang, { active: names[0], backup: minutesAgo(12) });
+  await signIn(site, 'member', GROUP_SITE);
+  await seed(settings, lang, { active: names[0], group: true });
   popup = await openPopup(context, id, site);
-  await popup.locator('.snapshot__more').nth(1).click();
-  await popup.waitForTimeout(400);
+  await popup.locator('#groupChip:not(.hidden)').waitFor();
+  await popup.waitForTimeout(800);
   shots.push(await capturePopup(popup));
   await popup.close();
 
-  // 5. The options page.
-  await settings.setViewportSize({ width: 800, height: 900 });
+  // 5. The options page: storage meter, groups and the domain list.
+  await settings.setViewportSize({ width: OPTIONS_WIDTH, height: 1100 });
+  await settings.goto(`chrome-extension://${id}/options/options.html#snapshots`);
   await settings.reload();
   await settings.locator('body[data-ready="true"]').waitFor();
+  await settings.locator('#meterTotal:not(:empty)').waitFor();
   await settings.addStyleTag({ content: NO_SCROLLBARS });
+  await settings.waitForTimeout(400);
   const optionsBottom = await settings.evaluate(() =>
-    document.getElementById('toggleShowBadge').closest('.section').getBoundingClientRect().bottom);
-  const optionsShot = await settings.screenshot({ clip: { x: 0, y: 0, width: 800, height: Math.ceil(optionsBottom + 8) } });
+    document.getElementById('domainList').closest('.section').getBoundingClientRect().bottom);
+  const optionsHeight = Math.min(Math.ceil(optionsBottom + 8), OPTIONS_MAX_HEIGHT);
+  const optionsShot = await settings.screenshot({ clip: { x: 0, y: 0, width: OPTIONS_WIDTH, height: optionsHeight } });
 
   await site.close();
   await settings.close();

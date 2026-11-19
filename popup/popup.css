@@ -68,6 +68,18 @@ svg {
   white-space: nowrap;
 }
 
+.group-chip {
+  flex: none;
+  font-size: 10px;
+  line-height: 1;
+  padding: 3px 6px;
+  border: 1px solid var(--tk-line);
+  border-radius: 999px;
+  color: var(--tk-muted);
+  background: var(--tk-surface);
+  white-space: nowrap;
+}
+
 .icon-btn {
   display: inline-flex;
   align-items: center;
@@ -279,9 +291,66 @@ kbd {
   white-space: nowrap;
 }
 
+.snapshot__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-inline-size: 0;
+}
+
+.snapshot__chip {
+  inline-size: 10px;
+  block-size: 10px;
+  border-radius: 3px;
+  flex: none;
+}
+
+.snapshot__chip--red   { background: var(--tk-red); }
+.snapshot__chip--amber { background: var(--tk-amber); }
+.snapshot__chip--green { background: var(--tk-green); }
+.snapshot__chip--blue  { background: var(--tk-blue); }
+
+.snapshot__host {
+  flex: 0 1 auto;
+  min-inline-size: 0;
+  font-size: 10px;
+  color: var(--tk-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snapshot__warning {
+  display: inline-flex;
+  flex: none;
+  color: var(--tk-amber);
+}
+
+.snapshot__warning svg {
+  inline-size: 13px;
+  block-size: 13px;
+}
+
 .snapshot__meta {
   font-size: 11px;
   color: var(--tk-muted);
+}
+
+.snapshot__memo {
+  font-size: 11px;
+  color: var(--tk-body);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snapshot__preview {
+  font-family: var(--tk-font-mono);
+  font-size: 10px;
+  color: var(--tk-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .snapshot__key {
@@ -513,6 +582,52 @@ kbd {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.swatches {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+}
+
+.swatches__legend {
+  float: inline-start;
+  margin-inline-end: 4px;
+  font-size: 11px;
+  color: var(--tk-muted);
+}
+
+.swatch {
+  position: relative;
+  display: flex;
+  inline-size: 18px;
+  block-size: 18px;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.swatch input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.swatch--none  { border: 1.5px dashed var(--tk-line-strong); }
+.swatch--red   { background: var(--tk-red); }
+.swatch--amber { background: var(--tk-amber); }
+.swatch--green { background: var(--tk-green); }
+.swatch--blue  { background: var(--tk-blue); }
+
+.swatch:has(input:checked) {
+  box-shadow: 0 0 0 2px var(--tk-surface), 0 0 0 4px var(--tk-ink);
+}
+
+.swatch:has(input:focus-visible) {
+  outline: 2px solid var(--tk-accent);
+  outline-offset: 4px;
 }
 
 .save-form__actions {

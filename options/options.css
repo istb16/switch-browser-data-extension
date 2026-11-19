@@ -17,10 +17,209 @@ body {
 
 .container {
   width: 100%;
-  max-width: 640px;
+  max-width: 880px;
   margin: 0 auto;
   padding: 32px 24px 0;
   flex: 1;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 32px;
+  align-items: start;
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  position: sticky;
+  top: 16px;
+}
+
+.nav-link {
+  display: block;
+  padding: 8px 12px;
+  border-radius: var(--tk-radius-sm);
+  color: var(--tk-body);
+  text-decoration: none;
+  font-size: 13px;
+  transition: background 0.15s;
+}
+
+.nav-link:hover {
+  background: var(--tk-surface-2);
+}
+
+.nav-link[aria-current='page'] {
+  color: var(--tk-accent);
+  font-weight: 600;
+  background: color-mix(in srgb, var(--tk-accent) 10%, var(--tk-surface));
+}
+
+@media (max-width: 720px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
+  }
+
+  .nav {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+    border-bottom: 1px solid var(--tk-line);
+    padding-bottom: 8px;
+  }
+}
+
+.meter-total {
+  font-size: 13px;
+  color: var(--tk-body);
+  margin-bottom: 8px;
+}
+
+#meterTotal {
+  font-weight: 600;
+  color: var(--tk-ink);
+}
+
+.meter-bar {
+  display: flex;
+  height: 12px;
+  border-radius: var(--tk-radius-pill);
+  background: var(--tk-surface-2);
+  overflow: hidden;
+}
+
+.meter-segment {
+  flex: none;
+  height: 100%;
+}
+
+.meter-segment--domain-1 { background: var(--tk-blue); }
+.meter-segment--domain-2 { background: var(--tk-green); }
+.meter-segment--domain-3 { background: var(--tk-amber); }
+.meter-segment--domain-4 { background: var(--tk-red); }
+.meter-segment--domain-5 { background: color-mix(in srgb, var(--tk-blue) 45%, var(--tk-surface)); }
+.meter-segment--backups  { background: var(--tk-line-strong); }
+.meter-segment--other    { background: var(--tk-line); }
+
+.meter-legend {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--tk-body);
+}
+
+.meter-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.meter-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex: none;
+}
+
+.meter-legend-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.meter-legend-size {
+  color: var(--tk-muted);
+  font-family: var(--tk-font-mono);
+}
+
+.meter-advisory {
+  margin-top: 10px;
+  margin-bottom: 0;
+  color: var(--tk-amber);
+}
+
+.sort-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 12px;
+  color: var(--tk-body);
+}
+
+.group-form {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.group-input {
+  flex: 1;
+  min-width: 0;
+  max-width: 320px;
+  background: var(--tk-surface);
+  border: 1px solid var(--tk-line-strong);
+  color: var(--tk-ink);
+  padding: 7px 10px;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+  transition: border-color 0.15s;
+}
+
+.group-input:focus {
+  border-color: var(--tk-accent);
+}
+
+.group-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.group-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px 6px 14px;
+  background: var(--tk-surface);
+  border: 1px solid var(--tk-line);
+  border-radius: var(--tk-radius-sm);
+}
+
+.group-name {
+  font-weight: 600;
+  color: var(--tk-ink);
+}
+
+.group-scope {
+  flex: 1;
+  font-size: 11px;
+  color: var(--tk-muted);
+  font-family: var(--tk-font-mono);
+}
+
+.group-empty {
+  font-size: 12px;
+  color: var(--tk-muted);
+}
+
+.group-chip {
+  font-size: 11px;
+  color: var(--tk-accent);
+  border: 1px solid color-mix(in srgb, var(--tk-accent) 40%, var(--tk-surface));
+  padding: 0 7px;
+  border-radius: var(--tk-radius-pill);
+  white-space: nowrap;
 }
 
 h1 {
@@ -126,6 +325,18 @@ h2 {
   border-radius: var(--tk-radius-pill);
 }
 
+.domain-header-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.domain-size {
+  font-size: 11px;
+  color: var(--tk-muted);
+  font-family: var(--tk-font-mono);
+}
+
 .chevron {
   color: var(--tk-muted);
   font-size: 12px;
@@ -208,9 +419,40 @@ h2 {
   color: var(--tk-danger);
 }
 
+.snapshot-chip {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.snapshot-chip--red   { background: var(--tk-red); }
+.snapshot-chip--amber { background: var(--tk-amber); }
+.snapshot-chip--green { background: var(--tk-green); }
+.snapshot-chip--blue  { background: var(--tk-blue); }
+
+.snapshot-memo {
+  font-size: 12px;
+  color: var(--tk-body);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.snapshot-meta {
+  display: flex;
+  gap: 10px;
+}
+
 .snapshot-date {
   font-size: 11px;
   color: var(--tk-muted);
+}
+
+.snapshot-size {
+  font-size: 11px;
+  color: var(--tk-muted);
+  font-family: var(--tk-font-mono);
 }
 
 .btn-icon {
@@ -237,6 +479,40 @@ h2 {
   background: var(--tk-surface);
   border: 1px solid var(--tk-line);
   border-radius: var(--tk-radius-sm);
+}
+
+.export-hint {
+  margin-top: 10px;
+  margin-bottom: 4px;
+}
+
+.btn-export {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--tk-accent);
+  font: inherit;
+  font-size: 13px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background 0.15s;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.btn-export:hover {
+  background: var(--tk-surface-2);
+}
+
+.btn-export:disabled {
+  color: var(--tk-muted);
+  cursor: progress;
+}
+
+.passphrase-hint {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--tk-muted);
 }
 
 .data-actions {
@@ -303,7 +579,8 @@ h2 {
   background: color-mix(in srgb, var(--tk-danger) 8%, var(--tk-surface));
 }
 
-.lang-select {
+.lang-select,
+.sort-select {
   background: var(--tk-surface);
   /* Control borders must reach 3:1 against the page; --tk-line is for separators only. */
   border: 1px solid var(--tk-line-strong);
@@ -317,7 +594,14 @@ h2 {
   transition: border-color 0.15s;
 }
 
-.lang-select:focus {
+.sort-select {
+  width: auto;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.lang-select:focus,
+.sort-select:focus {
   border-color: var(--tk-accent);
 }
 
