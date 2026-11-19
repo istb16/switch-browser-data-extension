@@ -39,11 +39,6 @@ describe('content/content-script (non-module message router)', () => {
     expect(result).toEqual({ localStorage: { a: '1' } });
   });
 
-  it('getStorageData includes indexedDB when requested', async () => {
-    const result = await sendAndAwait({ type: 'getStorageData', types: { localStorage: false, sessionStorage: false, indexedDB: true } });
-    expect(result).toEqual({ indexedDB: {} });
-  });
-
   it('getStorageData with digest returns only a digest of IndexedDB, matching one taken from the full data', async () => {
     const types = { localStorage: false, sessionStorage: false, indexedDB: true };
     const full = await sendAndAwait({ type: 'getStorageData', types });

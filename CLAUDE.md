@@ -61,16 +61,16 @@ Chrome / Edge 向けブラウザ拡張機能。ドメインごとに Cookie・lo
 ### 設定画面
 
 - 左に項目（全般 / データ種別 / スナップショット / データ管理）、右にその項目だけを出す2列。`location.hash`（`#general` `#data-types` `#snapshots` `#data`）で開く項目を選び、リンクに `aria-current` を付ける。720px より狭いと項目は上に横並び
-- **使用量のメーター**（スナップショット）: `getBytesInUse(null)` の合計と、大きい順に5ドメイン・バックアップ・その他の積み上げ棒。上限に対する割合の棒は出さない（`unlimitedStorage` で 10 MB の上限は外れているので、上限を描くと実在しない天井に見える。手を打てるのは「どのドメインが大きいか」）。50 MB 以上で「大きいとポップアップが遅くなる」と1行だけ知らせる（ポップアップを開くたびに `snapshots` を丸ごと読み、保存のたびに丸ごと書くので、大きさは容量ではなく速さに効く。50 MB は目安で `METER_ADVISORY_BYTES` の定数1つ）
+- **使用量のメーター**（スナップショット）: `getBytesInUse(null)` の合計と、大きい順に5ドメイン・バックアップ・その他の積み上げ棒。ドメインの大きさは各スナップショットの `bytes`（`sizeOf`）の合計、バックアップは `backupHosts` に載る `backups/<ホスト>` のキーの `getBytesInUse` で、描くたびに読む。上限に対する割合の棒は出さない（`unlimitedStorage` で 10 MB の上限は外れているので、上限を描くと実在しない天井に見える。手を打てるのは「どのドメインが大きいか」）。50 MB 以上で「大きいとポップアップが遅くなる」と1行だけ知らせる。ポップアップが読むのは一覧に出すホスト（グループならその全ホスト）のキーと今のホストのバックアップだけだが、知らせの判定はいまも全体の `getBytesInUse(null)` で行う（大きさは容量ではなく速さに効く。50 MB は目安で `METER_ADVISORY_BYTES` の定数1つ）
 - 並び順は「名前 / 大きい順」。大きい順のときは行のドラッグでの並べ替えをしない（見えていない順番を保存してしまうため）。行には色ラベル・メモ・大きさ・保存日時を出す（メモと色の編集はポップアップだけ）
 - **エクスポート**: 全データ・ドメインごと・スナップショットごと。暗号化しないファイルの形はいつも `{ ドメイン: { 名前: スナップショット } }`（古い版でも読める）。グループは書き出さない
 - **暗号化**: 「データ管理」のトグル（`settings.encryptExports`、既定はオフ）をオンにすると、どのエクスポートでもパスフレーズを2回（8文字以上・一致）求める。オフのときはエクスポート後に「ファイルにログイン中のセッションが入っている」と知らせ、トグルを案内する。暗号化するのはエクスポートしたファイルだけで、`chrome.storage.local` は暗号化しない（鍵をデータの横に置くなら守りにならず、ブラウザを開くたびにパスフレーズを求めるとワンクリックで切り替えられなくなるため）
   - ファイルの形（`lib/crypto.js`）は最上位が配列の JSON: `["switch-browser-data-encrypted", { "version": 1, "kdf": "PBKDF2", "hash": "SHA-256", "iterations": 600000, "salt": "base64", "iv": "base64", "data": "base64" }]`。PBKDF2-SHA-256（60万回）で鍵を作り、AES-GCM-256（salt 16バイト、IV 12バイト）で暗号化する。暗号化より前の版はインポートで配列をすべて断るので、中身をドメインとして混ぜずに失敗する
   - 読み込めるのは `iterations` が 100,000〜1,000,000 のものだけ（細工したファイルで何秒も止めないため）。パスフレーズ違いは AES-GCM の検証の失敗でわかる。復号した中身がもう一度暗号化ファイルなら断る
-- **インポート**: 256 MB（`IMPORT_MAX_BYTES`）を超えるファイルは読む前に断る。`parseImport`（`lib/transfer.js`）は形が `{ ドメイン: { 名前: オブジェクト } }` でない、`__proto__` `constructor` `prototype` のキーがある、`savedAt` が日時として読めない、`cookies` がオブジェクトの配列でない、ストレージの種類がオブジェクトでない、のどれかでファイルごと断る。メモと色は `cleanDetails` で整え、文字列でない `cookieDomain` は捨てる
+- **インポート**: 256 MB（`IMPORT_MAX_BYTES`）を超えるファイルは読む前に断る。`parseImport`（`lib/transfer.js`）は形が `{ ドメイン: { 名前: オブジェクト } }` でない、`__proto__` `constructor` `prototype` のキーがある、`savedAt` が日時として読めない、`cookies` がオブジェクトの配列でない、ストレージの種類がオブジェクトでない、ドメインのキーが 253 文字を超えるか `a-z 0-9 . _ - [ ] :` 以外の文字を含む、ドメインが 5,000 個（`IMPORT_MAX_HOSTS`）を超える、のどれかでファイルごと断る（ドメインはそのまま保存のキーになり、本物のエクスポートには `URL.hostname` しか入らないため。`file:` のページから来る空のドメインは通す）。メモと色は `cleanDetails` で整え、文字列でない `cookieDomain` は捨てる。ファイルの `bytes` は使わず、いつも計算し直す（エクスポートでは `buildExport` が `bytes` を外すので、ファイルの形は変わらない）
   - 同じドメイン・同じ名前があれば、ファイル全体で1回だけ「上書き / スキップ / 両方残す（`名前 (2)` …）/ キャンセル」を選ぶ。上書きは並び順の位置を保ち、新しい名前は一覧に見えている順（並び順にない既存の名前も含む）の末尾に足す。ドメインのキーはファイルのまま書く
-  - 選んだあとに保存データを読み直してから混ぜる（ダイアログを開いている間にポップアップで保存・変更したものを消さないため）。`snapshots` を読んで書き戻す処理は、ポップアップ・設定画面のどちらからでも `withSnapshotLock`（`lib/snapshot.js`。Web Locks の `snapshots`）で1つずつ行う
-- 全データ削除は `settings` と `groups` を残す（どちらも設定のため）
+  - 同じ名前があるかの確認も混ぜる処理も、ファイルに出てくるホストのキーだけを読み書きする。書くのは中身が変わったホスト（`mergeImport` の `changedHosts`）だけで、そのキー・`snapshotHosts`・並び順を1回の `set`（`setSnapshotsAndOrders`）で書く（途中で失敗して一部のホストだけ取り込まれた状態にしないため）。選んだあとに保存データを読み直してから混ぜる（ダイアログを開いている間にポップアップで保存・変更したものを消さないため）。スナップショットを読んで書き戻す処理は、ポップアップ・設定画面のどちらからでも `withSnapshotLock`（`lib/snapshot.js`。Web Locks の `snapshots`。入れ子にはできない）で1つずつ行う
+- 全データ削除は、すべてのキーを読んで `snapshots/` `backups/` で始まるキー・`snapshotHosts` `backupHosts`・古い形の `snapshots` `backups` を消し、並び順・適用中・`volatileCookies`・`cookieChecks` を空にする。`settings` `groups` `language` は残す（どれも設定のため）。`schemaVersion` も残す（形は変わらないため）。索引を当てにせず全部のキーを見るので、索引から漏れたキーも消える
 
 ### UI 構成
 
@@ -110,12 +110,21 @@ graph TD
   root --> popup["popup/"]
   popup --> popup_html["popup.html"]
   popup --> popup_css["popup.css"]
-  popup --> popup_js["popup.js"]
+  popup --> popup_js["popup.js｜開くときの処理・権限の案内・イベントの登録"]
+  popup --> popup_context["context.js｜ポップアップの状態と行の識別"]
+  popup --> popup_list["list.js｜一覧の行・変更ありのメニュー・戻すバー"]
+  popup --> popup_actions["actions.js｜再読み込み・変更の確認・各操作"]
+  popup --> popup_save["save-form.js｜保存フォーム（名前・メモ・色）"]
+  popup --> popup_keys["shortcuts.js｜キーボード操作"]
 
   root --> options["options/"]
   options --> options_html["options.html"]
   options --> options_css["options.css"]
-  options --> options_js["options.js"]
+  options --> options_js["options.js｜開くときの処理・項目の切り替え・トグル・言語・全データ削除"]
+  options --> options_list["domain-list.js｜ドメイン一覧と行・並べ替え（読んだ内容を覚えておき、変更があったときだけ読み直す）"]
+  options --> options_meter["meter.js｜使用量のメーター"]
+  options --> options_groups["groups-pane.js｜グループの一覧・追加・削除"]
+  options --> options_transfer["transfer-ui.js｜エクスポート・パスフレーズ・インポート"]
 
   root --> background["background/"]
   background --> sw["service-worker.js｜アイコンのバッジ更新"]
@@ -124,8 +133,11 @@ graph TD
   content --> cs["content-script.js｜localStorage / sessionStorage / IndexedDB 操作"]
 
   root --> lib["lib/"]
-  lib --> storage_js["storage.js｜chrome.storage.local ラッパー"]
-  lib --> snapshot_js["snapshot.js｜スナップショット CRUD"]
+  lib --> storage_js["storage.js｜chrome.storage.local ラッパー（キーと既定値の表、ホストごとのキーと索引）"]
+  lib --> snapshot_js["snapshot.js｜スナップショット CRUD・保存データの形の変換（migrateStorage・SCHEMA_VERSION）"]
+  lib --> domain_js["domain.js｜ホストが範囲に入るか（isWithin）・Cookie の範囲の正規化"]
+  lib --> view_js["snapshot-view.js｜色ラベル・メモ・グループのチップの表示（ポップアップ・設定画面で共通）"]
+  lib --> handlers_js["web-storage-handlers.js / indexeddb-handler.js｜ページの保存領域の読み書き（コンテンツスクリプトの非モジュール）"]
   lib --> cookie_js["cookie-handler.js｜Cookie 保存・復元"]
   lib --> bridge_js["data-bridge.js｜データの収集・適用"]
   lib --> compare_js["data-compare.js｜スナップショットと現在のデータの比較"]
@@ -133,7 +145,7 @@ graph TD
   lib --> rename_js["inline-rename.js｜その場での名前変更（ポップアップ・設定画面で共通）"]
   lib --> digest_js["storage-digest.js｜データのハッシュ（コンテンツスクリプトとポップアップで共通の非モジュール）"]
   lib --> volatile_js["volatile-cookies.js｜サイトが自分で書き換える Cookie の記録"]
-  lib --> summary_js["snapshot-summary.js｜件数・大きさの集計、メモと色の整形"]
+  lib --> summary_js["snapshot-summary.js｜件数の集計、大きさ（bytes の記録と sizeOf）、メモと色の整形"]
   lib --> groups_js["groups.js｜サブドメインのグループと Cookie の範囲"]
   lib --> transfer_js["transfer.js｜エクスポート・インポートの組み立てと検証"]
   lib --> crypto_js["crypto.js｜エクスポートファイルの暗号化（Web Crypto）"]
@@ -159,8 +171,9 @@ graph TD
 ```json
 {
   "manifest_version": 3,
+  "default_locale": "ja",
   "permissions": ["cookies", "storage", "unlimitedStorage", "tabs"],
-  "host_permissions": ["<all_urls>"],
+  "optional_host_permissions": ["<all_urls>"],
   "background": { "service_worker": "background/service-worker.js", "type": "module" },
   "commands": { "_execute_action": { "suggested_key": { "default": "Alt+Shift+S" } } },
   "action": { "default_popup": "popup/popup.html" },
@@ -168,8 +181,14 @@ graph TD
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
-      "js": ["content/content-script.js"],
-      "run_at": "document_idle"
+      "js": [
+        "lib/web-storage-handlers.js",
+        "lib/indexeddb-handler.js",
+        "lib/storage-digest.js",
+        "content/content-script.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
     }
   ]
 }
@@ -178,23 +197,31 @@ graph TD
 ## データ構造（chrome.storage.local）
 
 ```js
-// キー: "snapshots"
 {
-  "snapshots": {
-    "example.com": {
-      "スナップショット名": {
-        "savedAt": "ISO 8601 timestamp",
-        "memo": "1行・100文字まで（任意）",
-        "color": "red | amber | green | blue（任意）",
-        // 集めた Cookie の範囲（グループで保存したときだけ。ないときはこのキーのホスト）
-        "cookieDomain": "example.com",
-        "cookies": [ /* CookieDetails[] */ ],
-        "localStorage": { "key": "value", ... },
-        "sessionStorage": { "key": "value", ... },
-        "indexedDB": { "dbName": { "storeName": [ /* records */ ] } }
-      }
+  // スナップショットはホストごとのキー（"snapshots/" + ホスト）に { 名前: スナップショット } で置く。
+  // file: のページではホストが空なので "snapshots/" というキーもありうる
+  "snapshots/example.com": {
+    "スナップショット名": {
+      "savedAt": "ISO 8601 timestamp",
+      "memo": "1行・100文字まで（任意）",
+      "color": "red | amber | green | blue（任意）",
+      // 集めた Cookie の範囲（グループで保存したときだけ。ないときはこのキーのホスト）
+      "cookieDomain": "example.com",
+      // このスナップショットの JSON（bytes 自身を除く）の UTF-8 のバイト数。保存・上書き・メモと色の編集・
+      // インポート・移し替えのときに記録する。ないものは sizeOf がその場で計算する（書き戻さない）。エクスポートには含めない
+      "bytes": 34816,
+      "cookies": [ /* CookieDetails[] */ ],
+      "localStorage": { "key": "value", ... },
+      "sessionStorage": { "key": "value", ... },
+      "indexedDB": { "dbName": { "storeName": [ /* records */ ] } }
     }
   },
+  // キーのあるホストの一覧（索引）。manifest に minimum_chrome_version がないので getKeys() は使わない。
+  // 値とその索引は1回の set で書き、空になったらキーを先に消してから索引を外す（途中で止まっても、
+  // 索引にあってキーのないホストが残るだけで、読む側はそれを飛ばす）
+  "snapshotHosts": ["example.com"],
+  // 保存データの形のバージョン（lib/snapshot.js の SCHEMA_VERSION）。ないのは 1.0.33 までの形で 1 とみなす。全データ削除でも消さない
+  "schemaVersion": 2,
   "snapshotOrder": { "example.com": ["スナップショット名", ...] },
   // グループのベースでは、どのホストのスナップショットかも残す { host, name }
   "activeSnapshots": { "example.org": "スナップショット名", "example.com": { "host": "app.example.com", "name": "スナップショット名" } },
@@ -203,12 +230,13 @@ graph TD
   // サイトが自分で書き換える Cookie（グループならベースがキー）。"value": 有無だけ比べる / "any": 比べない
   "volatileCookies": { "example.com": { "example.com|/|名前": "value" } },
   // 読み込み直後の Cookie の確認待ち（タブ ID ごと、60秒で期限切れ）。origins は確認に要る権限、
-  // cookieDomain は今の Cookie を読む範囲（cookieExact: true ならそのホストの Cookie だけ）。どちらもない古い記録は domain のホストだけで確かめる
+  // cookieDomain は今の Cookie を読む範囲（cookieExact: true ならそのホストの Cookie だけ）。origins と cookieDomain は
+  // 必須（startCookieCheck は両方を受け取る）。どちらかがない記録（グループ機能より前の形）は読むときに捨て、学習しない
   "cookieChecks": { "123": { "domain": "example.com", "cookies": [], "origins": ["*://example.com/*", "*://*.example.com/*"], "cookieDomain": "example.com", "cookieExact": false, "until": 0 } },
-  // 読み込み直前の状態。ドメインごとに1件。スナップショット一覧・エクスポートには含めない
-  "backups": {
-    "example.com": { "savedAt": "...", "activeName": "スナップショット名 | null", "cookies": [], ... }
-  },
+  // 読み込み直前の状態。ホストごとのキー（"backups/" + ホスト）に1件。スナップショット一覧・エクスポートには含めない
+  "backups/example.com": { "savedAt": "...", "activeName": "スナップショット名 | null", "cookies": [], ... },
+  // バックアップのキーのあるホストの一覧（snapshotHosts と同じ扱い）
+  "backupHosts": ["example.com"],
   // 保存されていないキーは既定値（encryptExports だけ false、ほかは true）で補う。トグルを変えたらその場で保存する
   "settings": {
     "enabledTypes": { "cookies": true, "localStorage": true, "sessionStorage": true, "indexedDB": true },
@@ -219,6 +247,15 @@ graph TD
   }
 }
 ```
+
+- **保存データの形の変換**: 保存データの形は `schemaVersion` で表す。ポップアップと設定画面は `init` でスナップショットを読む前に `migrateStorage()`（`lib/snapshot.js`）を待つ（ポップアップは言語の読み込み・タブの取得と並べて走らせる）。ほかのライブラリ関数からは呼ばない（`withSnapshotLock` は入れ子にできないので、ロックの中から待たせない）。Service Worker はスナップショットを読まないので変換しない
+  - `schemaVersion` が `SCHEMA_VERSION` 以上なら何もしない（開くたびの負担は `get` 1回）。古ければ `withSnapshotLock` の中で読み直し、`MIGRATIONS[n]`（バージョン n を n + 1 にする）を順に流し、全部終わってから `schemaVersion` を書く
+  - 形を変えるときは `SCHEMA_VERSION` を1つ上げ、`MIGRATIONS` に変換を足す。変換は何度流しても同じ結果になるように書く（途中で失敗すると、次に開いたときに最初から流し直すため）
+  - 失敗したらバージョンは書かず、何も表示せず（ポップアップ・設定画面は `console.error` に出して開く処理を続ける）、次に開いたときにもう一度試す
+  - 版を戻す（ダウングレード）ことは考えない
+- **バージョン1 → 2（`toPerHostKeys`）**: 1.0.33 までは、すべてのスナップショットを `snapshots` の1つのキーに、すべてのバックアップを `backups` の1つのキーに置いていた。これをホストごとのキーと索引（各スナップショットに `bytes` を付けて）にして1回の `set` で書き、古い2つのキーを消す
+  - すでにホストごとのキーがあるホストは、そちらを残す。スナップショットは古い方にしかない名前だけを足す（変換に失敗したあとも画面は使え、そこでの保存を次の変換で消さないため）
+  - オブジェクトでない値（`null`・文字列・配列）のホストやスナップショットは移さずに捨てる（壊れた1件のために毎回失敗し続けないため）
 
 ## 技術方針
 
@@ -254,8 +291,12 @@ graph TD
 
 ### 自動テスト
 
-- **ユニットテスト**: [Vitest](https://vitest.dev/)。`tests/unit/` に配置。対象は `lib/` 配下のロジックに加え、`popup/popup.js` `options/options.js`（jsdomにHTMLを読み込み、DOM操作込みで検証）。`chrome.*` API は `tests/support/chrome-mock.js` のインメモリモックを使う。`var` グローバルとして書かれた非モジュールスクリプト（`lib/web-storage-handlers.js` `lib/indexeddb-handler.js` `lib/storage-digest.js` `content/content-script.js`）は `import` できないため、`tests/support/load-script.js` でソースを読み込み `Function` コンストラクタでスコープを分離しつつ実行し、生成されたハンドラを取り出してテストする
+- **ユニットテスト**: [Vitest](https://vitest.dev/)。`tests/unit/` に配置。対象は `lib/` 配下のロジックに加え、`popup/popup.js` `options/options.js`（jsdomにHTMLを読み込み、DOM操作込みで検証）。`chrome.*` API は `tests/support/chrome-mock.js` のインメモリモックを使う。ポップアップ・設定画面は分けたファイルごとではなく、入口（`popup.js` `options.js`）を `vi.resetModules()` のあとに読み込んで確かめる
+  - モックの `storage.local` は、値が変わった書き込み（`set` `remove` `clear`）ごとに `storage.onChanged` のイベントを溜めるだけで、自分からは届けない。テストが `chrome._deliverStorageEvents()` を呼んだときに `'local'` で届ける（タイマーを使わないので fake timers と干渉せず、イベントの前と後のどちらを確かめるかをテストが選べる）。イベントを待つコードのテストでは届け忘れに気をつける
+  - `chrome._holdGet(match)` は、`match`（`get` が求めるキー名の配列。`get(null)` なら保存されている全キー）に合う次の `get` を、その時点の値で結果を作ったまま止め、返した `release()` で解く。読み込み中に書き込みが入る競合のテストに使う
+  - `var` グローバルとして書かれた非モジュールスクリプト（`lib/web-storage-handlers.js` `lib/indexeddb-handler.js` `lib/storage-digest.js` `content/content-script.js`）は `import` できないため、`tests/support/load-script.js` でソースを読み込み `Function` コンストラクタでスコープを分離しつつ実行し、生成されたハンドラを取り出してテストする
 - **E2Eテスト**: [Playwright](https://playwright.dev/)。`launchPersistentContext` に `--load-extension` を渡して本拡張機能を実際の Chromium に読み込み、ポップアップ・設定画面の操作を検証する。テストページのポートは `tests/e2e/test-page.js` に集約されており、`TK3_E2E_PORT` で上書きできる
+  - 保存データを用意するときは `seedSnapshots(page, data, orders)`（`tests/e2e/fixtures.js`）で、拡張機能のページからホストごとのキーと索引を書く（キーの先頭は `lib/storage.js` の `SNAPSHOT_PREFIX` を使う）。ユニットテストで全体を用意・確認するときは `tests/support/storage-seed.js` の `setSnapshots` `setBackups` `getBackups`（今の形で書き、`schemaVersion` も記録する。拡張機能本体は全体を一度に書かないので、本体には置かない）。読むときは `readStorage(page, 関数名, ...引数)`。古い形の `snapshots` `backups` を `chrome.storage.local.set` で直に書くのは、移し替えを確かめるテストだけ
   - Cookie の読み取りに要るホスト権限は実行時に Chrome のダイアログで求めるが、Playwright はこれを操作できない。Cookie を扱うテスト（`tests/e2e/cookies.spec.js`）は `test.use({ grantHostPermissions: true })` で、manifest にホスト権限を足した拡張機能のコピーを一時フォルダに作って読み込む。テストページの `/cookies/` は毎回値の変わる `csrf` と、`/cookies/login?user=名前` でだけ変わる `sid` を返す
   - グループのテスト（`tests/e2e/groups.spec.js`）は `--host-resolver-rules` で `example.test` と `*.example.test` をテストサーバーに向ける（`localhost` ではドメイン Cookie が当てにならないため）。`/group/login?user=名前` は `Domain=example.test` の `gsid` を返す
 - **実装中に手元で流すテストは、変更に関係するものだけにする**（例: `npx vitest run tests/unit/popup.test.js`、`npx playwright test tests/e2e/popup.spec.js`）。全テストは CI（GitHub Actions）で流すので、手元で `npm test` や `npm run test:e2e` を丸ごと流さなくてよい

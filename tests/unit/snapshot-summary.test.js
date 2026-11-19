@@ -1,12 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import {
-  SNAPSHOT_COLORS, MEMO_MAX, cleanDetails, byteSize, formatBytes, summarize, measureDomains,
+  SNAPSHOT_COLORS, MEMO_MAX, cleanDetails, byteSize, formatBytes, summarize, measureDomains, sizeOf, withBytes,
 } from '../../lib/snapshot-summary.js';
 
 const cookie = (name, extra = {}) => ({ name, value: 'v', domain: 'a.com', path: '/', ...extra });
 
 describe('lib/snapshot-summary summarize', () => {
-  it('counts each type and returns null for absent ones', () => {
+  it('returns counts without bytes', () => {
     const snapshot = {
       savedAt: '2026-01-01T00:00:00.000Z',
       cookies: [cookie('a'), cookie('b')],
@@ -15,7 +15,8 @@ describe('lib/snapshot-summary summarize', () => {
     };
     const summary = summarize(snapshot, 0);
     expect([summary.cookies, summary.localStorage, summary.sessionStorage, summary.indexedDB]).toEqual([2, 3, null, 1]);
-    expect(summary.bytes).toBe(byteSize(snapshot));
+    expect(summary.expiredCookies).toBe(0);
+    expect(summary).not.toHaveProperty('bytes');
   });
 
   it('returns 0 for a present empty type and null for an absent one', () => {
@@ -61,6 +62,21 @@ describe('lib/snapshot-summary sizes', () => {
     expect(result['a.com'].snapshots).toEqual({ one: byteSize(a1), two: byteSize(a2) });
     expect(result['a.com'].bytes).toBe(byteSize(a1) + byteSize(a2));
     expect(result['b.com']).toEqual({ bytes: byteSize(b1), snapshots: { one: byteSize(b1) } });
+  });
+
+  it('sizeOf prefers the recorded size', () => {
+    const bare = { savedAt: 'x', localStorage: { k: 'v' } };
+    expect(sizeOf(bare)).toBe(byteSize(bare));
+    expect(sizeOf({ ...bare, bytes: 42 })).toBe(42);
+    expect(sizeOf({ ...bare, bytes: 'x' })).toBe(byteSize(bare));
+  });
+
+  it('withBytes records the size of the snapshot without the field', () => {
+    const bare = { savedAt: 'x', localStorage: { k: 'v' } };
+    const recorded = withBytes({ ...bare, bytes: 1 });
+    expect(recorded).toEqual({ ...bare, bytes: byteSize(bare) });
+    expect(withBytes(bare)).toEqual(recorded);
+    expect(bare).not.toHaveProperty('bytes');
   });
 });
 

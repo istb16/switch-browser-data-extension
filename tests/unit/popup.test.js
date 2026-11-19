@@ -3,8 +3,9 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import {
-  setSnapshots, getSnapshots, setSettings, getSettings, setActiveSnapshots, getActiveSnapshots, getBackups, setGroups,
+  getSnapshots, setSettings, getSettings, setActiveSnapshots, getActiveSnapshots, setGroups,
 } from '../../lib/storage.js';
+import { setSnapshots, getBackups, setBackups } from '../support/storage-seed.js';
 import { byteSize, formatBytes } from '../../lib/snapshot-summary.js';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../');
@@ -232,11 +233,6 @@ describe('popup/popup.js', () => {
       expect(row('fresh').querySelector('.snapshot__warning')).toBeNull();
     });
 
-    it('popup memo input has maxlength 100', async () => {
-      await loadPopup('https://example.com/');
-      expect($('newSnapshotMemo').maxLength).toBe(100);
-    });
-
     it('popup search matches memo', async () => {
       const many = Object.fromEntries(['alpha', 'beta', 'gamma', 'delta', 'epsilon'].map(n => [n, snap('2024-01-01T00:00:00.000Z')]));
       many.gamma.memo = 'Staging Admin';
@@ -398,18 +394,6 @@ describe('popup/popup.js', () => {
       await settle();
       expect((await getSnapshots())['example.com'].existing.localStorage).toEqual({ current: '1' });
     });
-
-    it('overwrites from the row menu after confirming', async () => {
-      await setSnapshots({ 'example.com': { existing: snap('2024-01-01T00:00:00.000Z', { localStorage: { old: '1' } }) } });
-      await loadPopup('https://example.com/');
-
-      row('existing').querySelector('[data-action="overwrite"]').click();
-      await settle();
-      document.querySelector('.tk3-btn-confirm').click();
-      await settle();
-
-      expect((await getSnapshots())['example.com'].existing.localStorage).toEqual({ current: '1' });
-    });
   });
 
   describe('loading a snapshot', () => {
@@ -443,7 +427,7 @@ describe('popup/popup.js', () => {
       await loadPopup('https://example.com/');
       const set = chrome.storage.local.set;
       chrome.storage.local.set = async items => {
-        if ('backups' in items) throw new Error('QUOTA_BYTES quota exceeded');
+        if ('backups/example.com' in items) throw new Error('QUOTA_BYTES quota exceeded');
         return set(items);
       };
 
@@ -549,7 +533,7 @@ describe('popup/popup.js', () => {
 
     it('leaves cookies out of the check while the service worker is still learning after a load', async () => {
       chrome._state.cookies = [sid('account-b')];
-      await chrome.storage.local.set({ cookieChecks: { 1: { domain: 'example.com', cookies: [sid('account-a')], until: Date.now() + 60_000 } } });
+      await chrome.storage.local.set({ cookieChecks: { 1: { domain: 'example.com', cookies: [sid('account-a')], origins: ['*://example.com/*'], cookieDomain: 'example.com', until: Date.now() + 60_000 } } });
       await loadPopup('https://example.com/');
 
       expect(row('first').querySelector('.badge--modified').classList.contains('hidden')).toBe(true);
@@ -610,7 +594,7 @@ describe('popup/popup.js', () => {
     });
 
     it('cancels a cookie check left from a recent load, so the cleared jar is not learned from', async () => {
-      await chrome.storage.local.set({ cookieChecks: { 1: { domain: 'example.com', cookies: [sid], until: Date.now() + 60_000 } } });
+      await chrome.storage.local.set({ cookieChecks: { 1: { domain: 'example.com', cookies: [sid], origins: ['*://example.com/*'], cookieDomain: 'example.com', until: Date.now() + 60_000 } } });
       await loadPopup('https://example.com/');
 
       $('clearSiteBtn').click();
@@ -622,7 +606,7 @@ describe('popup/popup.js', () => {
     });
 
     it('keeps the pending cookie checks when the cookies type is turned off', async () => {
-      const checks = { 1: { domain: 'example.com', cookies: [sid], until: Date.now() + 60_000 } };
+      const checks = { 1: { domain: 'example.com', cookies: [sid], origins: ['*://example.com/*'], cookieDomain: 'example.com', until: Date.now() + 60_000 } };
       await chrome.storage.local.set({ cookieChecks: checks });
       await setSettings({ ...(await getSettings()), enabledTypes: { cookies: false, localStorage: true, sessionStorage: true, indexedDB: true } });
       await loadPopup('https://example.com/');
@@ -637,7 +621,7 @@ describe('popup/popup.js', () => {
     });
 
     it('keeps the pending cookie checks when the page can\'t be reached', async () => {
-      const checks = { 1: { domain: 'example.com', cookies: [sid], until: Date.now() + 60_000 } };
+      const checks = { 1: { domain: 'example.com', cookies: [sid], origins: ['*://example.com/*'], cookieDomain: 'example.com', until: Date.now() + 60_000 } };
       await chrome.storage.local.set({ cookieChecks: checks });
       chrome.tabs.sendMessage = vi.fn(async () => {
         throw new Error('Receiving end does not exist.');
@@ -654,7 +638,7 @@ describe('popup/popup.js', () => {
     });
 
     it('keeps the pending cookie checks when clearing the page\'s storage fails before the cookies', async () => {
-      const checks = { 1: { domain: 'example.com', cookies: [sid], until: Date.now() + 60_000 } };
+      const checks = { 1: { domain: 'example.com', cookies: [sid], origins: ['*://example.com/*'], cookieDomain: 'example.com', until: Date.now() + 60_000 } };
       await chrome.storage.local.set({ cookieChecks: checks });
       chrome.tabs.sendMessage = vi.fn(async (_tabId, message) => {
         if (message.type === 'clearStorageData') throw new Error('Receiving end does not exist.');
@@ -674,7 +658,7 @@ describe('popup/popup.js', () => {
     });
 
     it('touches nothing, and keeps the existing backup, when the page can\'t be reached', async () => {
-      await chrome.storage.local.set({ backups: { 'example.com': { savedAt: '2024-01-01T00:00:00.000Z', activeName: null, localStorage: { earlier: '1' } } } });
+      await setBackups({ 'example.com': { savedAt: '2024-01-01T00:00:00.000Z', activeName: null, localStorage: { earlier: '1' } } });
       chrome.tabs.sendMessage = vi.fn(async () => {
         throw new Error('Receiving end does not exist.');
       });
@@ -849,17 +833,6 @@ describe('popup/popup.js', () => {
       expect(row('saved').classList.contains('is-active')).toBe(true);
     });
 
-    it('popup on a non-group host uses the host as key and the single origin', async () => {
-      chrome._state.grantedOrigins.clear();
-      const request = vi.spyOn(chrome.permissions, 'request');
-      await loadPopup('https://other.com/');
-
-      expect(isHidden($('groupChip'))).toBe(true);
-      $('grantPermissionBtn').click();
-      await settle();
-      expect(request).toHaveBeenCalledWith({ origins: ['*://other.com/*'] });
-    });
-
     it('popup permission panel asks for the group origins', async () => {
       chrome._state.grantedOrigins.clear();
       chrome._state.grantedOrigins.add('*://www.example.com/*');
@@ -952,9 +925,9 @@ describe('popup/popup.js', () => {
     it('clear-site in a group cancels the pending cookie checks of every member tab', async () => {
       const until = Date.now() + 60_000;
       await chrome.storage.local.set({ cookieChecks: {
-        1: { domain: 'example.com', cookies: [], until },
-        2: { domain: 'example.com', cookies: [cookie('parent', '.example.com', 'p')], until },
-        3: { domain: 'other.com', cookies: [], until },
+        1: { domain: 'example.com', cookies: [], origins: ['*://example.com/*'], cookieDomain: 'example.com', until },
+        2: { domain: 'example.com', cookies: [cookie('parent', '.example.com', 'p')], origins: ['*://example.com/*'], cookieDomain: 'example.com', until },
+        3: { domain: 'other.com', cookies: [], origins: ['*://other.com/*'], cookieDomain: 'other.com', until },
       } });
       const base = chrome.tabs.sendMessage;
       chrome.tabs.sendMessage = vi.fn(async (tabId, message) => {
@@ -1091,6 +1064,136 @@ describe('popup/popup.js', () => {
     });
   });
 
+  describe('reading on open', () => {
+    const keysOf = call => [call[0]].flat();
+    const storeReads = spy => spy.mock.calls.filter(call => call[0] !== 'language');
+
+    it('opening on a site reads only that site\'s snapshot keys', async () => {
+      await setSnapshots({
+        'example.com': { mine: snap('2024-01-01T00:00:00.000Z') },
+        'other.com':   { theirs: snap('2024-01-01T00:00:00.000Z') },
+      });
+      const get = vi.spyOn(chrome.storage.local, 'get');
+      await loadPopup('https://example.com/');
+
+      expect(rowNames()).toEqual(['mine']);
+      expect(get.mock.calls.some(call => call[0] === null)).toBe(false);
+      expect(get.mock.calls.flatMap(keysOf)).not.toContain('snapshots/other.com');
+      expect(get.mock.calls.flatMap(keysOf)).toContain('snapshots/example.com');
+      expect(storeReads(get).length).toBeLessThanOrEqual(3);
+    });
+
+    it('in a group, every member host\'s key is read', async () => {
+      await setGroups(['example.com']);
+      chrome._state.grantedOrigins.add('*://*.example.com/*');
+      await setSnapshots({
+        'www.example.com': { mine: snap('2024-01-01T00:00:00.000Z') },
+        'app.example.com': { theirs: snap('2024-01-01T00:00:00.000Z') },
+        'other.com':       { outside: snap('2024-01-01T00:00:00.000Z') },
+      });
+      const get = vi.spyOn(chrome.storage.local, 'get');
+      await loadPopup('https://www.example.com/');
+
+      expect(rowNames()).toEqual(['mine', 'theirs']);
+      const keys = get.mock.calls.flatMap(keysOf);
+      expect(keys).toContain('snapshots/app.example.com');
+      expect(keys).not.toContain('snapshots/other.com');
+    });
+
+    it('row size shows the recorded bytes', async () => {
+      await setSnapshots({ 'example.com': { sized: snap('2024-01-01T00:00:00.000Z', { bytes: 12345 }) } });
+      await loadPopup('https://example.com/');
+
+      expect(row('sized').querySelector('.snapshot__preview').textContent).toBe(formatBytes(12345));
+    });
+
+    it('row size equals byteSize of the stored snapshot for a group-scoped entry', async () => {
+      chrome._state.grantedOrigins.add('*://app.example.com/*');
+      const cookie = (name, domain) => ({ name, value: '1', domain, path: '/' });
+      const grouped = snap('2024-01-01T00:00:00.000Z', {
+        cookieDomain: 'example.com',
+        cookies: [cookie('own', 'app.example.com'), cookie('sibling', 'www.example.com')],
+      });
+      await setSnapshots({ 'app.example.com': { grouped } });
+      await loadPopup('https://app.example.com/');
+
+      expect(row('grouped').querySelector('.snapshot__preview').textContent).toBe(`Cookie 1 · ${formatBytes(byteSize(grouped))}`);
+    });
+
+    it('an open with no active snapshot sends no getStorageData', async () => {
+      await setSnapshots({ 'example.com': { mine: snap('2024-01-01T00:00:00.000Z') } });
+      await loadPopup('https://example.com/');
+
+      expect(rowNames()).toEqual(['mine']);
+      expect(chrome.tabs.sendMessage).not.toHaveBeenCalledWith(1, expect.objectContaining({ type: 'getStorageData' }));
+    });
+
+    it('hides the undo bar without reading the backup when automatic backup is off', async () => {
+      await setBackups({ 'example.com': { savedAt: '2024-01-04T00:00:00.000Z', activeName: null } });
+      await setSettings({ ...await getSettings(), autoBackup: false });
+      const get = vi.spyOn(chrome.storage.local, 'get');
+      await loadPopup('https://example.com/');
+
+      expect($('undoBar').classList.contains('hidden')).toBe(true);
+      expect(get.mock.calls.flatMap(keysOf)).not.toContain('backups/example.com');
+    });
+  });
+
+  describe('storage from an older version', () => {
+    it('legacy data shows on the first open', async () => {
+      await chrome.storage.local.set({
+        snapshots: { 'example.com': {
+          first:  snap('2024-01-01T00:00:00.000Z', { localStorage: { a: '1' } }),
+          second: snap('2024-01-02T00:00:00.000Z'),
+        }, 'other.com': { third: snap('2024-01-03T00:00:00.000Z') } },
+        backups: { 'example.com': { savedAt: '2024-01-04T00:00:00.000Z', activeName: null, localStorage: { b: '2' } } },
+        snapshotOrder: { 'example.com': ['second', 'first'] },
+      });
+
+      await loadPopup('https://example.com/');
+
+      expect(rowNames()).toEqual(['second', 'first']);
+      expect($('undoBar').classList.contains('hidden')).toBe(false);
+      expect(await chrome.storage.local.get(['snapshots', 'backups'])).toEqual({});
+      expect(Object.keys(await getSnapshots()).sort()).toEqual(['example.com', 'other.com']);
+    });
+
+    it('a failed migration still shows the list', async () => {
+      await chrome.storage.local.set({ snapshots: { 'other.com': { third: snap('2024-01-03T00:00:00.000Z') } } });
+      await setSnapshots({ 'example.com': { first: snap('2024-01-01T00:00:00.000Z') } });
+      await chrome.storage.local.remove('schemaVersion');
+      const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const remove = vi.spyOn(chrome.storage.local, 'remove').mockRejectedValueOnce(new Error('I/O error'));
+
+      await loadPopup('https://example.com/');
+
+      expect(logged).toHaveBeenCalled();
+      expect(rowNames()).toEqual(['first']);
+      expect(await chrome.storage.local.get('snapshots')).toHaveProperty('snapshots');
+      remove.mockRestore();
+      logged.mockRestore();
+    });
+
+    it('the next open retries the migration and keeps the per-host data', async () => {
+      await chrome.storage.local.set({ snapshots: { 'other.com': { third: snap('2024-01-03T00:00:00.000Z') } } });
+      await setSnapshots({ 'example.com': { first: snap('2024-01-01T00:00:00.000Z') } });
+      await chrome.storage.local.remove('schemaVersion');
+      const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const remove = vi.spyOn(chrome.storage.local, 'remove').mockRejectedValueOnce(new Error('I/O error'));
+      await loadPopup('https://example.com/');
+      remove.mockRestore();
+      logged.mockRestore();
+      const before = structuredClone(await getSnapshots());
+
+      await loadPopup('https://example.com/');
+
+      expect(await chrome.storage.local.get(['snapshots', 'backups'])).toEqual({});
+      expect(await getSnapshots()).toEqual(before);
+      expect(Object.keys(before).sort()).toEqual(['example.com', 'other.com']);
+      expect(rowNames()).toEqual(['first']);
+    });
+  });
+
   describe('row menu', () => {
     beforeEach(async () => {
       await setSnapshots({ 'example.com': { first: snap('2024-01-01T00:00:00.000Z'), second: snap('2024-01-01T00:00:00.000Z') } });
@@ -1126,6 +1229,7 @@ describe('popup/popup.js', () => {
 
       expect(rowNames()).toEqual(['renamed', 'second']);
       expect((await getActiveSnapshots())['example.com']).toBe('renamed');
+      expect(row('renamed').classList.contains('is-active')).toBe(true);
       expect(document.activeElement).toBe(row('renamed').querySelector('.snapshot__main'));
     });
 

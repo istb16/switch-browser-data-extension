@@ -66,6 +66,28 @@ export async function waitForReady(page) {
   await page.locator('body[data-ready="true"]').waitFor();
 }
 
+// Seeds in the extension's per-host key layout (a key per host plus the host
+// index), taking the key prefix from its storage module. `page` must be an
+// extension page.
+export async function seedSnapshots(page, data, orders = {}) {
+  await page.evaluate(async ([snapshots, snapshotOrders]) => {
+    const { SNAPSHOT_PREFIX } = await import('/lib/storage.js');
+    const old = Object.keys(await chrome.storage.local.get(null)).filter(key => key.startsWith(SNAPSHOT_PREFIX));
+    if (old.length) await chrome.storage.local.remove(old);
+    const hosts = Object.keys(snapshots).filter(host => Object.keys(snapshots[host]).length);
+    await chrome.storage.local.set({
+      ...Object.fromEntries(hosts.map(host => [SNAPSHOT_PREFIX + host, snapshots[host]])),
+      snapshotHosts: hosts,
+      snapshotOrder: snapshotOrders,
+    });
+  }, [data, orders]);
+}
+
+// Reads through the extension's storage module; `page` must be an extension page.
+export async function readStorage(page, fn, ...args) {
+  return page.evaluate(async ([name, rest]) => (await import('/lib/storage.js'))[name](...rest), [fn, args]);
+}
+
 export async function reloadAndWait(page) {
   await page.reload();
   await waitForReady(page);

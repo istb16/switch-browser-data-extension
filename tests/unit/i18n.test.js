@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import { initI18n, t, applyI18n, setLanguage, getSavedLangSetting, MESSAGES } from '../../lib/i18n.js';
 
 describe('lib/i18n', () => {
@@ -41,11 +44,6 @@ describe('lib/i18n', () => {
     expect(t('saved_at', { date: '2024-01-01' })).toBe('保存日時: 2024-01-01');
   });
 
-  it('substitutes the same placeholder repeated multiple times', async () => {
-    await setLanguage('ja');
-    expect(t('count_format', { n: 3 })).toBe('3 件');
-  });
-
   it('falls back to English text, then the raw key, for unknown-language / unknown-key lookups', async () => {
     await setLanguage('ja');
     expect(t('does_not_exist')).toBe('does_not_exist');
@@ -55,13 +53,12 @@ describe('lib/i18n', () => {
     expect(Object.keys(MESSAGES.ja).sort()).toEqual(Object.keys(MESSAGES.en).sort());
   });
 
-  it('applyI18n fills in data-i18n, data-i18n-placeholder, data-i18n-title and data-i18n-option', async () => {
+  it('applyI18n fills in data-i18n, data-i18n-placeholder and data-i18n-title', async () => {
     await setLanguage('ja');
     document.body.innerHTML = `
       <span data-i18n="btn_cancel"></span>
       <input data-i18n-placeholder="new_name_placeholder">
       <button data-i18n-title="btn_settings"></button>
-      <option data-i18n-option="lang_ja"></option>
     `;
 
     applyI18n();
@@ -69,6 +66,25 @@ describe('lib/i18n', () => {
     expect(document.querySelector('span').textContent).toBe('キャンセル');
     expect(document.querySelector('input').placeholder).toBe('スナップショット名');
     expect(document.querySelector('button').title).toBe('設定');
-    expect(document.querySelector('option').textContent).toBe('日本語');
+  });
+
+  it('select options are translated through data-i18n', async () => {
+    document.body.innerHTML = `
+      <select><option value="name" data-i18n="sort_name"></option><option value="size" data-i18n="sort_size"></option></select>
+    `;
+
+    await setLanguage('ja');
+    applyI18n();
+    const texts = () => [...document.querySelectorAll('option')].map(o => o.textContent);
+    expect(texts()).toEqual(['名前', '大きい順']);
+
+    await setLanguage('en');
+    applyI18n();
+    expect(texts()).toEqual(['Name', 'Largest first']);
+
+    const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../');
+    for (const file of ['options/options.html', 'popup/popup.html']) {
+      expect(readFileSync(path.join(repoRoot, file), 'utf-8')).not.toContain('data-i18n-option');
+    }
   });
 });

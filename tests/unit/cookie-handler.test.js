@@ -25,15 +25,24 @@ describe('lib/cookie-handler', () => {
     expect(cookies.map(c => c.name)).toEqual(['a']);
   });
 
-  it('setCookiesForDomain replaces all existing cookies for the domain', async () => {
-    chrome._state.cookies.push({ name: 'stale', value: 'x', domain: 'example.com', path: '/', secure: false, httpOnly: false });
+  it('setCookiesForDomain removes a host-only and a dot-domain cookie of the same name, even when remove() looks up before it deletes', async () => {
+    chrome._state.cookies.push(
+      { name: 'sid', value: 'host', domain: 'example.com', path: '/', secure: false, httpOnly: false },
+      { name: 'sid', value: 'dot', domain: '.example.com', path: '/', secure: false, httpOnly: false },
+    );
+    // Chrome finds the cookie and deletes it in separate steps; two calls in
+    // flight at once can both find the same one.
+    chrome.cookies.remove = vi.fn(async ({ url, name }) => {
+      const host = new URL(url).hostname;
+      const found = chrome._state.cookies.find(c => c.name === name && c.domain.replace(/^\./, '') === host);
+      await new Promise(resolve => setTimeout(resolve, 0));
+      chrome._state.cookies = chrome._state.cookies.filter(c => c !== found);
+      return found ? { url, name } : null;
+    });
 
-    await setCookiesForDomain('example.com', [
-      { name: 'fresh', value: 'y', domain: 'example.com', path: '/', secure: false, httpOnly: false, sameSite: 'lax' },
-    ]);
+    await setCookiesForDomain('example.com', []);
 
-    const names = chrome._state.cookies.filter(c => c.domain === 'example.com').map(c => c.name);
-    expect(names).toEqual(['fresh']);
+    expect(chrome._state.cookies.filter(c => c.name === 'sid')).toEqual([]);
   });
 
   it('setCookiesForDomain builds an https url for secure cookies and strips a leading dot from the domain', async () => {
@@ -222,5 +231,40 @@ describe('lib/cookie-handler', () => {
 
     expect(chrome._state.cookies.map(({ domain, value }) => ({ domain, value })).sort((a, b) => a.domain.localeCompare(b.domain)))
       .toEqual([{ domain: '.example.com', value: 'domain' }, { domain: 'example.com', value: 'host' }]);
+  });
+
+  it('setCookiesForDomain removes every existing cookie before setting any', async () => {
+    chrome._state.cookies = [cookie('a', 'example.com'), cookie('b', '.example.com'), cookie('c', 'app.example.com')];
+    const events = [];
+    const realRemove = chrome.cookies.remove;
+    vi.spyOn(chrome.cookies, 'remove').mockImplementation(async details => {
+      events.push(`remove-start:${details.name}`);
+      await new Promise(resolve => setTimeout(resolve, details.name === 'a' ? 10 : 0));
+      events.push(`remove-end:${details.name}`);
+      return realRemove(details);
+    });
+    const realSet = chrome.cookies.set;
+    vi.spyOn(chrome.cookies, 'set').mockImplementation(details => {
+      events.push(`set:${details.name}`);
+      return realSet(details);
+    });
+
+    await setCookiesForDomain('example.com', [cookie('new', 'example.com')]);
+
+    const lastRemoveEnd = events.findLastIndex(e => e.startsWith('remove-end:'));
+    const firstSet = events.findIndex(e => e.startsWith('set:'));
+    expect(events.filter(e => e.startsWith('remove-end:'))).toHaveLength(3);
+    expect(firstSet).toBeGreaterThan(lastRemoveEnd);
+    expect(events.slice(0, 3).every(e => e.startsWith('remove-start:'))).toBe(true);
+    expect(chrome._state.cookies.map(c => c.name)).toEqual(['new']);
+  });
+
+  it('setCookiesForDomain keeps the last value of a duplicate name/domain/path', async () => {
+    await setCookiesForDomain('example.com', [
+      cookie('sid', 'example.com', { value: 'first' }),
+      cookie('sid', 'example.com', { value: 'last' }),
+    ]);
+
+    expect(chrome._state.cookies.map(({ name, value }) => ({ name, value }))).toEqual([{ name: 'sid', value: 'last' }]);
   });
 });

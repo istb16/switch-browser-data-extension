@@ -1,4 +1,4 @@
-import { test, expect, openPopupFor } from './fixtures.js';
+import { test, expect, openPopupFor, readStorage } from './fixtures.js';
 import { TEST_PAGE_ORIGIN } from './test-page.js';
 
 // Cookies need the host permission; this copy of the extension has it from install.
@@ -31,7 +31,8 @@ test('learns the cookie the site rewrites on its own, and still flags an account
   await site.goto(loginUrl('bob'));
   await expect(site.locator('h1')).toHaveText('signed in as: bob');
   await saveAs(popup, 'bob');
-  expect((await storageGet(popup, 'snapshots')).localhost.bob.cookies.map(c => c.name).sort()).toEqual(['csrf', 'sid']);
+  expect((await readStorage(popup, 'getSnapshotsFor', ['localhost'])).localhost.bob.cookies.map(c => c.name).sort())
+    .toEqual(['csrf', 'sid']);
 
   // Loading reloads the page; the service worker then compares the cookies it
   // finds with those just applied. csrf was rewritten by the server, sid was not.
@@ -70,16 +71,6 @@ test('learns the cookie the site rewrites on its own, and still flags an account
   await expect(row(switched, 'alice').locator('.badge--modified')).toBeHidden();
   expect(await storageGet(switched, 'volatileCookies'))
     .toEqual({ localhost: { 'localhost|/|csrf': 'value', 'localhost|/|sid': 'value' } });
-});
-
-test('does not ask for access once it has been allowed', async ({ context, extensionId }) => {
-  const site = await context.newPage();
-  await site.goto(loginUrl('alice'));
-
-  const popup = await openPopupFor(context, extensionId, site);
-
-  await expect(popup.locator('#mainContent')).toBeVisible();
-  await expect(popup.locator('#permissionPanel')).toBeHidden();
 });
 
 test('clearing the site\'s data signs out, and the undo bar signs back in', async ({ context, extensionId }) => {

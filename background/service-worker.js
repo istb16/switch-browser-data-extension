@@ -1,4 +1,4 @@
-import { getActiveSnapshots, getSettings, getGroups } from '../lib/storage.js';
+import { readKeys } from '../lib/storage.js';
 import { badgeText } from '../lib/badge.js';
 import { resolveScope, activeRef } from '../lib/groups.js';
 import { getCookiesForDomain, cookiesWithin } from '../lib/cookie-handler.js';
@@ -21,8 +21,34 @@ function hostnameOf(url) {
   }
 }
 
+const BADGE_KEYS = ['settings', 'activeSnapshots', 'groups'];
+
+let badgeCache = null;
+let badgeGeneration = 0;
+
+function badgeState() {
+  if (!badgeCache) {
+    const read = readKeys(BADGE_KEYS);
+    badgeCache = read;
+    // A failed read would otherwise stay cached until a badge key changes.
+    read.catch(() => {
+      if (badgeCache === read) badgeCache = null;
+    });
+  }
+  return badgeCache;
+}
+
+function invalidateBadgeState() {
+  badgeGeneration++;
+  badgeCache = null;
+}
+
 async function updateTabs(tabs) {
-  const [settings, active, groups] = await Promise.all([getSettings(), getActiveSnapshots(), getGroups()]);
+  const generation = badgeGeneration;
+  const { settings, activeSnapshots: active, groups } = await badgeState();
+  // A badge key changed while this read was pending; the update started by that
+  // change draws every tab, and this older state must not overwrite it.
+  if (generation !== badgeGeneration) return;
   await Promise.all(tabs.map(tab => {
     const host = hostnameOf(tab.url);
     const key = host && resolveScope(host, groups).key;
@@ -35,20 +61,14 @@ async function updateAllTabs() {
   await updateTabs(await chrome.tabs.query({}));
 }
 
-async function setupBadgeColors() {
-  await chrome.action.setBadgeBackgroundColor({ color: BADGE_COLOR });
-  await chrome.action.setBadgeTextColor({ color: BADGE_TEXT_COLOR });
+function setupBadges() {
+  chrome.action.setBadgeBackgroundColor({ color: BADGE_COLOR });
+  chrome.action.setBadgeTextColor({ color: BADGE_TEXT_COLOR });
+  updateAllTabs().catch(console.error);
 }
 
-chrome.runtime.onInstalled.addListener(() => {
-  setupBadgeColors();
-  updateAllTabs();
-});
-
-chrome.runtime.onStartup.addListener(() => {
-  setupBadgeColors();
-  updateAllTabs();
-});
+chrome.runtime.onInstalled.addListener(setupBadges);
+chrome.runtime.onStartup.addListener(setupBadges);
 
 // The first page load after a snapshot is applied shows which cookies the site
 // rewrites by itself; those are then left out of the popup's change check.
@@ -56,9 +76,8 @@ async function checkCookiesAfterLoad(tabId) {
   const check = await takeCookieCheck(tabId);
   // Without the host permission getAll() returns nothing, which would look like
   // every cookie had disappeared.
-  // Checks stored before groups existed carry only the domain.
-  if (!check || !await hasHostPermission({ origins: check.origins ?? [`*://${check.domain}/*`] })) return;
-  const domain = check.cookieDomain ?? check.domain;
+  if (!check?.origins || !check.cookieDomain || !await hasHostPermission({ origins: check.origins })) return;
+  const domain = check.cookieDomain;
   const current = await getCookiesForDomain(domain);
   // A group's permission also reaches the sibling hosts an exact scope leaves out.
   const compared = check.cookieExact ? cookiesWithin(current, { domain, exact: true }) : current;
@@ -66,10 +85,12 @@ async function checkCookiesAfterLoad(tabId) {
 }
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.url || changeInfo.status === 'complete') updateTabs([tab]);
+  if (changeInfo.url || changeInfo.status === 'complete') updateTabs([tab]).catch(console.error);
   if (changeInfo.status === 'complete') setTimeout(() => checkCookiesAfterLoad(tabId), SETTLE_MS);
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && (changes.activeSnapshots || changes.settings || changes.groups)) updateAllTabs();
+  if (area !== 'local' || !BADGE_KEYS.some(key => changes[key])) return;
+  invalidateBadgeState();
+  updateAllTabs().catch(console.error);
 });

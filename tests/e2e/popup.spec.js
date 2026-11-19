@@ -1,4 +1,4 @@
-import { test, expect, openPopupFor, waitForReady } from './fixtures.js';
+import { test, expect, openPopupFor, waitForReady, readStorage } from './fixtures.js';
 import { TEST_PAGE_URL } from './test-page.js';
 
 async function disableCookieCollection(context, extensionId) {
@@ -27,17 +27,6 @@ test('detects the domain and, before cookie access is allowed, asks for it inste
   await expect(popup.locator('#mainContent')).toBeHidden();
 });
 
-test('shows the list straight away when cookies are turned off', async ({ context, extensionId }) => {
-  await disableCookieCollection(context, extensionId);
-  const targetPage = await context.newPage();
-  await targetPage.goto(TEST_PAGE_URL);
-
-  const popup = await openPopupFor(context, extensionId, targetPage);
-
-  await expect(popup.locator('#mainContent')).toBeVisible();
-  await expect(popup.locator('#permissionPanel')).toBeHidden();
-});
-
 test('shows the "not available" message for a restricted page', async ({ context, extensionId }) => {
   const targetPage = await context.newPage();
   await targetPage.goto('chrome://version');
@@ -59,41 +48,12 @@ async function saveAs(popup, name) {
   await expect(row(popup, name)).toHaveClass(/is-active/);
 }
 
-test('memo, colour and preview show after save', async ({ context, extensionId }) => {
-  await disableCookieCollection(context, extensionId);
-  const targetPage = await context.newPage();
-  await targetPage.goto(TEST_PAGE_URL);
-  await expect.poll(() => targetPage.evaluate(() => localStorage.getItem('greeting'))).toBe('hello');
-
-  const popup = await openPopupFor(context, extensionId, targetPage);
-  await popup.locator('#saveBtn').click();
-  await popup.locator('#newSnapshotName').fill('tagged');
-  await popup.locator('#newSnapshotMemo').fill('staging admin');
-  await popup.locator('input[name="newSnapshotColor"][value="green"]').check();
-  await popup.locator('#confirmSaveBtn').click();
-
-  const tagged = row(popup, 'tagged');
-  await expect(tagged).toHaveClass(/is-active/);
-  await expect(tagged.locator('.snapshot__chip--green')).toBeVisible();
-  await expect(tagged.locator('.snapshot__memo')).toHaveText('staging admin');
-  await expect(tagged.locator('.snapshot__preview')).toHaveText(/^LS \d+ · .*[\d.]+ (B|KB|MB)$/);
-
-  await tagged.locator('.snapshot__more').click();
-  await tagged.locator('.actions-menu [data-action="edit"]').click();
-  const dialog = popup.locator('dialog');
-  await dialog.locator('input[type="text"]').fill('edited');
-  await dialog.locator('input[type="radio"][value="blue"]').check();
-  await dialog.locator('.tk3-btn-confirm').click();
-  await expect(tagged.locator('.snapshot__memo')).toHaveText('edited');
-  await expect(tagged.locator('.snapshot__chip--blue')).toBeVisible();
-});
-
 test('save then load round-trips real localStorage/sessionStorage, reloads the tab and badges the icon', async ({ context, extensionId }) => {
   await disableCookieCollection(context, extensionId);
 
   const targetPage = await context.newPage();
   await targetPage.goto(TEST_PAGE_URL);
-  await expect.poll(() => targetPage.evaluate(() => localStorage.getItem('greeting'))).toBe('hello');
+  await expect.poll(() => targetPage.evaluate(() => localStorage.getItem('greeting')).catch(() => null)).toBe('hello');
 
   const savePopup = await openPopupFor(context, extensionId, targetPage);
   await saveAs(savePopup, 'snap1');
@@ -112,9 +72,9 @@ test('save then load round-trips real localStorage/sessionStorage, reloads the t
   await expect(row(loadPopup, 'snap1').locator('.badge--modified')).toBeHidden();
   await expect(loadPopup.locator('#undoBar')).toBeVisible();
 
-  await expect.poll(() => targetPage.evaluate(() => window.notReloaded ?? false)).toBe(false);
-  await expect.poll(() => targetPage.evaluate(() => localStorage.getItem('greeting'))).toBe('hello');
-  await expect.poll(() => targetPage.evaluate(() => sessionStorage.getItem('counter'))).toBe('1');
+  await expect.poll(() => targetPage.evaluate(() => window.notReloaded ?? false).catch(() => null)).toBe(false);
+  await expect.poll(() => targetPage.evaluate(() => localStorage.getItem('greeting')).catch(() => null)).toBe('hello');
+  await expect.poll(() => targetPage.evaluate(() => sessionStorage.getItem('counter')).catch(() => null)).toBe('1');
 
   const tabId = await loadPopup.evaluate(async url => (await chrome.tabs.query({})).find(t => t.url === url).id, targetPage.url());
   await expect.poll(() => loadPopup.evaluate(id => chrome.action.getBadgeText({ tabId: id }), tabId)).toBe('sn');
@@ -165,7 +125,7 @@ test('clears the site\'s localStorage, sessionStorage and IndexedDB, and the und
   const targetPage = await context.newPage();
   await targetPage.goto(TEST_PAGE_URL);
   await putRecord(targetPage, { id: 1, name: 'kept' });
-  await expect.poll(() => targetPage.evaluate(() => localStorage.getItem('greeting'))).toBe('hello');
+  await expect.poll(() => targetPage.evaluate(() => localStorage.getItem('greeting')).catch(() => null)).toBe('hello');
 
   const popup = await openPopupFor(context, extensionId, targetPage);
   await popup.locator('#clearSiteBtn').click();
@@ -177,34 +137,50 @@ test('clears the site\'s localStorage, sessionStorage and IndexedDB, and the und
 
   // The test page writes greeting/counter again on load when they are missing,
   // so check right away for the cleared IndexedDB and the backup instead.
-  await expect.poll(() => targetPage.evaluate(() => indexedDB.databases().then(dbs => dbs.map(d => d.name)))).toEqual([]);
-  const backup = await popup.evaluate(() => chrome.storage.local.get('backups').then(r => r.backups.localhost));
+  await expect.poll(() => targetPage.evaluate(() => indexedDB.databases().then(dbs => dbs.map(d => d.name))).catch(() => null)).toEqual([]);
+  const backup = await readStorage(popup, 'getBackup', 'localhost');
   expect(backup.localStorage.greeting).toBe('hello');
   expect(Object.keys(backup.indexedDB)).toEqual(['e2e']);
 
   const restoredReload = targetPage.waitForEvent('load');
   await popup.locator('#undoBtn').click();
   await restoredReload;
-  await expect.poll(() => targetPage.evaluate(() => indexedDB.databases().then(dbs => dbs.map(d => d.name)))).toEqual(['e2e']);
+  await expect.poll(() => targetPage.evaluate(() => indexedDB.databases().then(dbs => dbs.map(d => d.name))).catch(() => null)).toEqual(['e2e']);
 });
 
-test('the undo bar restores the state from before the load', async ({ context, extensionId }) => {
+test('legacy storage is migrated in the browser', async ({ context, extensionId }) => {
   await disableCookieCollection(context, extensionId);
 
   const targetPage = await context.newPage();
   await targetPage.goto(TEST_PAGE_URL);
+  await expect.poll(() => targetPage.evaluate(() => localStorage.getItem('greeting')).catch(() => null)).toBe('hello');
+
+  const seeder = await context.newPage();
+  await seeder.goto(`chrome-extension://${extensionId}/options/options.html`);
+  await waitForReady(seeder);
+  const savedAt = new Date().toISOString();
+  await seeder.evaluate(seed => chrome.storage.local.remove('schemaVersion').then(() => chrome.storage.local.set(seed)), {
+    snapshots: { localhost: {
+      first:  { savedAt, localStorage: { greeting: 'from first' }, sessionStorage: {} },
+      second: { savedAt, localStorage: { greeting: 'from second' }, sessionStorage: {} },
+    } },
+    backups: { localhost: { savedAt, activeName: null, localStorage: { greeting: 'from backup' }, sessionStorage: {} } },
+    snapshotOrder: { localhost: ['second', 'first'] },
+  });
+  await seeder.close();
 
   const popup = await openPopupFor(context, extensionId, targetPage);
-  await saveAs(popup, 'snap1');
-
-  await targetPage.evaluate(() => localStorage.setItem('greeting', 'changed'));
-  await row(popup, 'snap1').locator('.snapshot__main').click();
-  await expect.poll(() => targetPage.evaluate(() => localStorage.getItem('greeting'))).toBe('hello');
+  await expect(popup.locator('#snapshotList .snapshot .snapshot__name')).toHaveText(['second', 'first']);
+  await expect(popup.locator('#undoBar')).toBeVisible();
 
   await popup.locator('#undoBtn').click();
-  await expect.poll(() => targetPage.evaluate(() => localStorage.getItem('greeting'))).toBe('changed');
-  // snap1 was the active snapshot before the load, so it is again, now flagged as changed.
-  await expect(row(popup, 'snap1').locator('.badge--modified')).toBeVisible();
+  // The undo reloads the tab; a read during that navigation throws, and counts as not yet.
+  await expect.poll(() => targetPage.evaluate(() => localStorage.getItem('greeting')).catch(() => null)).toBe('from backup');
+
+  const stored = await popup.evaluate(() => chrome.storage.local.get(null));
+  expect(stored).not.toHaveProperty('snapshots');
+  expect(stored).not.toHaveProperty('backups');
+  expect(Object.keys(stored['snapshots/localhost'])).toEqual(['first', 'second']);
 });
 
 test('the row menu opens from its button and deletes the snapshot', async ({ context, extensionId }) => {

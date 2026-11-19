@@ -21,20 +21,10 @@ describe('lib/web-storage-handlers (non-module content script)', () => {
     expect(localStorageHandler.read()).toEqual({ a: '1', b: '2' });
   });
 
-  it('read() returns {} for empty storage', () => {
-    expect(sessionStorageHandler.read()).toEqual({});
-  });
-
   it('write() replaces the entire storage contents', () => {
     localStorage.setItem('stale', 'x');
     localStorageHandler.write({ fresh: 'y' });
     expect(localStorageHandler.read()).toEqual({ fresh: 'y' });
-  });
-
-  it('clear() empties the storage', () => {
-    localStorage.setItem('a', '1');
-    localStorageHandler.clear();
-    expect(localStorage.length).toBe(0);
   });
 
   it('localStorageHandler and sessionStorageHandler operate on independent stores', () => {

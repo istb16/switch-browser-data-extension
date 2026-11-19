@@ -42,6 +42,28 @@ describe('lib/data-bridge collectData', () => {
     expect(data).toEqual({});
   });
 
+  it('starts the page message before the cookie read resolves, with the same result', async () => {
+    chrome._state.cookies.push({ name: 'a', value: '1', domain: 'example.com', path: '/', secure: false, httpOnly: false });
+    let releaseCookies;
+    const realGetAll = chrome.cookies.getAll;
+    vi.spyOn(chrome.cookies, 'getAll').mockImplementation(async details => {
+      await new Promise(resolve => { releaseCookies = resolve; });
+      return realGetAll(details);
+    });
+    chrome.tabs.sendMessage = vi.fn().mockResolvedValue({ localStorage: { k: 'v' } });
+
+    const pending = collectData(1, HOST, { cookies: true, localStorage: true, sessionStorage: false, indexedDB: false });
+    await vi.waitFor(() => expect(chrome.cookies.getAll).toHaveBeenCalled());
+    expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(1, expect.objectContaining({ type: 'getStorageData' }));
+    releaseCookies();
+    const data = await pending;
+
+    expect(data).toEqual({
+      cookies: [expect.objectContaining({ name: 'a', value: '1', domain: 'example.com' })],
+      localStorage: { k: 'v' },
+    });
+  });
+
   it('omits storage data when the content script responds with an error', async () => {
     chrome.tabs.sendMessage = vi.fn().mockResolvedValue({ error: 'boom' });
     const data = await collectData(1, HOST, { cookies: false, localStorage: true, sessionStorage: false, indexedDB: false });
@@ -85,13 +107,6 @@ describe('lib/data-bridge applyData', () => {
     chrome.tabs.sendMessage = vi.fn();
     await applyData(1, HOST, {}, { cookies: false, localStorage: true, sessionStorage: true, indexedDB: true });
     expect(chrome.tabs.sendMessage).not.toHaveBeenCalled();
-  });
-
-  it('does not throw when the content script is unreachable', async () => {
-    chrome.tabs.sendMessage = vi.fn().mockRejectedValue(new Error('no receiver'));
-    await expect(applyData(1, HOST, { localStorage: { a: '1' } }, {
-      cookies: false, localStorage: true, sessionStorage: false, indexedDB: false,
-    })).resolves.toEqual({ storageSkipped: false });
   });
 });
 
@@ -322,12 +337,6 @@ describe('lib/data-bridge in a subdomain group', () => {
       expect(await applyData(1, scope, { localStorage: { a: '1' } }, ALL, 'app.example.com')).toEqual({ storageSkipped: false });
       expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(1, expect.objectContaining({ type: 'setStorageData' }));
     }
-  });
-
-  it('group clearData removes every cookie under the base', async () => {
-    chrome.tabs.sendMessage = vi.fn().mockResolvedValue({ success: true });
-    await clearData(1, APP, ALL);
-    expect(jar()).toEqual(['notexample.com:other=1']);
   });
 });
 

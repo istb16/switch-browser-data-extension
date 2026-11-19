@@ -28,6 +28,7 @@ function originCovers(granted, requested) {
 export function createChromeMock() {
   const state = {
     storage: {},
+    storageEvents: [],
     cookies: [],
     tabs: [],
     messageHandlers: [],
@@ -38,33 +39,71 @@ export function createChromeMock() {
     manifest: { version: '1.0.1' },
   };
 
+  const heldGets = [];
+
+  function read(keys) {
+    if (keys == null) return clone(state.storage);
+    if (typeof keys === 'string') {
+      return keys in state.storage ? { [keys]: clone(state.storage[keys]) } : {};
+    }
+    if (Array.isArray(keys)) {
+      const result = {};
+      for (const key of keys) if (key in state.storage) result[key] = clone(state.storage[key]);
+      return result;
+    }
+    const result = {};
+    for (const [key, defaultValue] of Object.entries(keys)) {
+      result[key] = key in state.storage ? clone(state.storage[key]) : defaultValue;
+    }
+    return result;
+  }
+
+  function keyNames(keys) {
+    if (keys == null) return Object.keys(state.storage);
+    if (typeof keys === 'string') return [keys];
+    return Array.isArray(keys) ? keys : Object.keys(keys);
+  }
+
+  // As in Chrome, each write that changes something queues one onChanged
+  // event; tests deliver them with chrome._deliverStorageEvents().
+  function write(apply) {
+    const before = { ...state.storage };
+    apply();
+    const changes = {};
+    for (const key of new Set([...Object.keys(before), ...Object.keys(state.storage)])) {
+      const oldJson = JSON.stringify(before[key]);
+      const newJson = JSON.stringify(state.storage[key]);
+      if (oldJson === newJson) continue;
+      changes[key] = {};
+      if (key in before) changes[key].oldValue = clone(before[key]);
+      if (key in state.storage) changes[key].newValue = clone(state.storage[key]);
+    }
+    if (Object.keys(changes).length) state.storageEvents.push(changes);
+  }
+
   const chrome = {
     storage: {
       local: {
         async get(keys) {
-          if (keys == null) return clone(state.storage);
-          if (typeof keys === 'string') {
-            return keys in state.storage ? { [keys]: clone(state.storage[keys]) } : {};
-          }
-          if (Array.isArray(keys)) {
-            const result = {};
-            for (const key of keys) if (key in state.storage) result[key] = clone(state.storage[key]);
-            return result;
-          }
-          const result = {};
-          for (const [key, defaultValue] of Object.entries(keys)) {
-            result[key] = key in state.storage ? clone(state.storage[key]) : defaultValue;
-          }
+          const result = read(keys);
+          const index = heldGets.findIndex(held => held.match(keyNames(keys)));
+          if (index === -1) return result;
+          const [held] = heldGets.splice(index, 1);
+          await held.released;
           return result;
         },
         async set(items) {
-          for (const [key, value] of Object.entries(items)) state.storage[key] = clone(value);
+          write(() => {
+            for (const [key, value] of Object.entries(items)) state.storage[key] = clone(value);
+          });
         },
         async remove(keys) {
-          for (const key of Array.isArray(keys) ? keys : [keys]) delete state.storage[key];
+          write(() => {
+            for (const key of Array.isArray(keys) ? keys : [keys]) delete state.storage[key];
+          });
         },
         async clear() {
-          state.storage = {};
+          write(() => { state.storage = {}; });
         },
       },
       onChanged: event(),
@@ -150,6 +189,20 @@ export function createChromeMock() {
     },
 
     _state: state,
+
+    _deliverStorageEvents() {
+      const events = state.storageEvents.splice(0);
+      for (const changes of events) chrome.storage.onChanged.dispatch(changes, 'local');
+    },
+
+    // `match` gets the key names a get asks for (every stored key for get(null)).
+    // The result is read at call time, so writes made while held are not in it.
+    _holdGet(match) {
+      let release;
+      const released = new Promise(resolve => { release = resolve; });
+      heldGets.push({ match, released });
+      return { release };
+    },
   };
 
   return chrome;
