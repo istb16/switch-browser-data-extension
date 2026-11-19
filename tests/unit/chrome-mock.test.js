@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
 const cookie = (name, domain, extra = {}) => ({ name, value: 'v', domain, path: '/', secure: false, ...extra });
 const names = () => chrome._state.cookies.map(c => `${c.name}@${c.domain}`).sort();
@@ -85,5 +85,47 @@ describe('chrome mock', () => {
     expect(await chrome.permissions.contains({ origins: ['*://example.com/*'] })).toBe(true);
     expect(await chrome.permissions.contains({ origins: ['*://app.example.com/*'] })).toBe(false);
     expect([...chrome._state.grantedOrigins]).toEqual(['*://example.com/*']);
+  });
+
+  it('storage events are queued and delivered on request', async () => {
+    const listener = vi.fn();
+    chrome.storage.onChanged.addListener(listener);
+    await chrome.storage.local.set({ a: { n: 1 }, b: 'same' });
+    await chrome.storage.local.set({ a: { n: 2 }, b: 'same' });
+    await chrome.storage.local.set({ b: 'same' });
+    await chrome.storage.local.remove(['b', 'missing']);
+    expect(listener).not.toHaveBeenCalled();
+
+    chrome._deliverStorageEvents();
+
+    expect(listener.mock.calls).toEqual([
+      [{ a: { newValue: { n: 1 } }, b: { newValue: 'same' } }, 'local'],
+      [{ a: { oldValue: { n: 1 }, newValue: { n: 2 } } }, 'local'],
+      [{ b: { oldValue: 'same' } }, 'local'],
+    ]);
+
+    listener.mockClear();
+    await chrome.storage.local.clear();
+    chrome._deliverStorageEvents();
+    chrome._deliverStorageEvents();
+    expect(listener.mock.calls).toEqual([[{ a: { oldValue: { n: 2 } } }, 'local']]);
+    chrome.storage.onChanged.removeListener(listener);
+  });
+
+  it('a held get resolves with the data from call time', async () => {
+    await chrome.storage.local.set({ a: 1, b: 1 });
+    const held = chrome._holdGet(keys => keys.includes('a'));
+
+    expect(await chrome.storage.local.get('b')).toEqual({ b: 1 });
+    let result;
+    const pending = chrome.storage.local.get(['a', 'b']).then(value => { result = value; });
+    await chrome.storage.local.set({ a: 2, b: 2 });
+    await Promise.resolve();
+    expect(result).toBeUndefined();
+
+    held.release();
+    await pending;
+    expect(result).toEqual({ a: 1, b: 1 });
+    expect(await chrome.storage.local.get('a')).toEqual({ a: 2 });
   });
 });
