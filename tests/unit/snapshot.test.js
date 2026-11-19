@@ -7,8 +7,11 @@ import {
   renameSnapshot,
   setSnapshotOrder,
   loadSnapshot,
+  updateSnapshotDetails,
 } from '../../lib/snapshot.js';
-import { getSnapshots, getSnapshotOrders, setSnapshots, setSnapshotOrders } from '../../lib/storage.js';
+import {
+  getSnapshots, getSnapshotOrders, setSnapshots, setSnapshotOrders, getSettings, setSettings, getGroups, setGroups,
+} from '../../lib/storage.js';
 
 describe('lib/snapshot', () => {
   it('getSnapshotsForDomain returns {} for an unknown domain', async () => {
@@ -100,6 +103,48 @@ describe('lib/snapshot', () => {
     await expect(renameSnapshot('example.com', 'missing', 'new')).resolves.toBeUndefined();
   });
 
+  it('saveSnapshot keeps memo and color on overwrite', async () => {
+    await saveSnapshot('example.com', 'a', { cookies: [] }, { memo: 'admin', color: 'red' });
+    await saveSnapshot('example.com', 'a', { cookies: [{ name: 'x' }] });
+    const { a } = await getSnapshotsForDomain('example.com');
+    expect(a).toMatchObject({ memo: 'admin', color: 'red', cookies: [{ name: 'x' }] });
+
+    await saveSnapshot('example.com', 'a', { cookies: [] }, { color: 'blue' });
+    expect((await loadSnapshot('example.com', 'a'))).toMatchObject({ memo: 'admin', color: 'blue' });
+  });
+
+  it('saveSnapshot and updateSnapshotDetails store cleaned details', async () => {
+    const long = 'x'.repeat(101);
+    await saveSnapshot('example.com', 'a', {}, { memo: long, color: 'pink' });
+    let a = await loadSnapshot('example.com', 'a');
+    expect(a.memo).toBe('x'.repeat(100));
+    expect(a).not.toHaveProperty('color');
+
+    await updateSnapshotDetails('example.com', 'a', { memo: 'line one\nline two', color: 'pink' });
+    a = await loadSnapshot('example.com', 'a');
+    expect(a.memo).toBe('line one line two');
+    expect(a).not.toHaveProperty('color');
+
+    await updateSnapshotDetails('example.com', 'a', { memo: long, color: 'green' });
+    a = await loadSnapshot('example.com', 'a');
+    expect(a.memo).toHaveLength(100);
+    expect(a.color).toBe('green');
+  });
+
+  it('updateSnapshotDetails clears memo/color', async () => {
+    await saveSnapshot('example.com', 'a', { value: 1 }, { memo: 'm', color: 'amber' });
+    await updateSnapshotDetails('example.com', 'a', { memo: '', color: '' });
+    const a = await loadSnapshot('example.com', 'a');
+    expect(a).not.toHaveProperty('memo');
+    expect(a).not.toHaveProperty('color');
+    expect(a.value).toBe(1);
+  });
+
+  it('updateSnapshotDetails on a missing snapshot is a no-op', async () => {
+    await updateSnapshotDetails('example.com', 'missing', { memo: 'm' });
+    expect(await getSnapshots()).toEqual({});
+  });
+
   it('loadSnapshot returns the stored snapshot or null', async () => {
     await saveSnapshot('example.com', 'a', { value: 42 });
     expect((await loadSnapshot('example.com', 'a')).value).toBe(42);
@@ -161,5 +206,18 @@ describe('lib/snapshot — clearAllData', () => {
 
     expect(await chrome.storage.local.get(['snapshots', 'snapshotOrder', 'activeSnapshots', 'backups']))
       .toEqual({ snapshots: {}, snapshotOrder: {}, activeSnapshots: {}, backups: {} });
+  });
+
+  it('clearAllData keeps groups and settings', async () => {
+    const { clearAllData } = await import('../../lib/snapshot.js');
+    const settings = { ...(await getSettings()), autoReload: false };
+    await setSettings(settings);
+    await setGroups(['example.com']);
+    await saveSnapshot('a.com', 'x', {});
+
+    await clearAllData();
+
+    expect(await getGroups()).toEqual(['example.com']);
+    expect(await getSettings()).toEqual(settings);
   });
 });

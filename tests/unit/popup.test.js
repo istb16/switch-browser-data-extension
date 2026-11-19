@@ -1,8 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { setSnapshots, getSnapshots, setSettings, getSettings, setActiveSnapshots, getActiveSnapshots, getBackups } from '../../lib/storage.js';
+import { byteSize, formatBytes } from '../../lib/snapshot-summary.js';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../');
 const popupHtml = readFileSync(path.join(repoRoot, 'popup/popup.html'), 'utf-8');
@@ -165,6 +166,138 @@ describe('popup/popup.js', () => {
     $('searchInput').dispatchEvent(new Event('input'));
     expect(rows()).toHaveLength(0);
     expect($('noMatch').classList.contains('hidden')).toBe(false);
+  });
+
+  describe('memo, colour and preview', () => {
+    const NOW = Date.UTC(2025, 0, 1);
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('popup row shows chip, memo and preview', async () => {
+      const tagged = snap('2024-01-01T00:00:00.000Z', {
+        cookies: [{ name: 'a', value: '1' }, { name: 'b', value: '2' }],
+        localStorage: { x: '1', y: '2', z: '3' },
+        indexedDB: { db: {} },
+        memo: 'admin account',
+        color: 'green',
+      });
+      await setSnapshots({ 'example.com': { tagged, odd: snap('2024-01-01T00:00:00.000Z', { color: 'pink' }) } });
+      await loadPopup('https://example.com/');
+
+      const r = row('tagged');
+      expect(r.querySelector('.snapshot__chip').classList.contains('snapshot__chip--green')).toBe(true);
+      expect(r.querySelector('.snapshot__chip').classList.contains('hidden')).toBe(false);
+      expect(r.querySelector('.snapshot__memo').textContent).toBe('admin account');
+      const preview = r.querySelector('.snapshot__preview');
+      expect(preview.textContent).toBe(`Cookie 2 · LS 3 · IDB 1 · ${formatBytes(byteSize(tagged))}`);
+      expect(preview.title).toContain('localStorage');
+      expect(preview.title).toContain('IndexedDB');
+
+      expect(row('odd').querySelector('.snapshot__chip')).toBeNull();
+      expect(row('odd').querySelector('.snapshot__memo')).toBeNull();
+    });
+
+    it('popup preview shows a zero count', async () => {
+      await setSnapshots({ 'example.com': { empty: snap('2024-01-01T00:00:00.000Z', { localStorage: {} }) } });
+      await loadPopup('https://example.com/');
+
+      expect(row('empty').querySelector('.snapshot__preview').textContent).toMatch(/^LS 0 · \d+ B$/);
+    });
+
+    it('popup preview of a snapshot with no types is the size alone', async () => {
+      const bare = snap('2024-01-01T00:00:00.000Z');
+      await setSnapshots({ 'example.com': { bare } });
+      await loadPopup('https://example.com/');
+
+      const text = row('bare').querySelector('.snapshot__preview').textContent;
+      expect(text).toBe(formatBytes(byteSize(bare)));
+      expect(text).not.toContain('·');
+    });
+
+    it('popup row warns only with an expired cookie', async () => {
+      vi.spyOn(Date, 'now').mockReturnValue(NOW);
+      await setSnapshots({ 'example.com': {
+        expired: snap('2024-01-01T00:00:00.000Z', { cookies: [{ name: 'a', value: '1', expirationDate: NOW / 1000 }] }),
+        fresh:   snap('2024-01-01T00:00:00.000Z', { cookies: [{ name: 'a', value: '1', expirationDate: NOW / 1000 + 1 }] }),
+      } });
+      await loadPopup('https://example.com/');
+
+      const warning = row('expired').querySelector('.snapshot__warning');
+      expect(warning.classList.contains('hidden')).toBe(false);
+      expect(warning.getAttribute('aria-label')).toBeTruthy();
+      expect(row('fresh').querySelector('.snapshot__warning')).toBeNull();
+    });
+
+    it('popup memo input has maxlength 100', async () => {
+      await loadPopup('https://example.com/');
+      expect($('newSnapshotMemo').maxLength).toBe(100);
+    });
+
+    it('popup search matches memo', async () => {
+      const many = Object.fromEntries(['alpha', 'beta', 'gamma', 'delta', 'epsilon'].map(n => [n, snap('2024-01-01T00:00:00.000Z')]));
+      many.gamma.memo = 'Staging Admin';
+      await setSnapshots({ 'example.com': many });
+      await loadPopup('https://example.com/');
+
+      $('searchInput').value = 'admin';
+      $('searchInput').dispatchEvent(new Event('input'));
+      expect(rowNames()).toEqual(['gamma']);
+    });
+
+    it('popup save form stores memo and colour; edit dialog updates them', async () => {
+      await loadPopup('https://example.com/');
+
+      $('saveBtn').click();
+      $('newSnapshotName').value = 'tagged';
+      $('newSnapshotMemo').value = 'first memo';
+      $('saveForm').querySelector('input[name="newSnapshotColor"][value="red"]').checked = true;
+      $('confirmSaveBtn').click();
+      await settle();
+
+      let stored = (await getSnapshots())['example.com'].tagged;
+      expect(stored).toMatchObject({ memo: 'first memo', color: 'red' });
+      expect(row('tagged').querySelector('.snapshot__memo').textContent).toBe('first memo');
+      // Closing the form resets it for the next save.
+      expect($('newSnapshotMemo').value).toBe('');
+      expect($('saveForm').querySelector('input[name="newSnapshotColor"]:checked').value).toBe('');
+
+      row('tagged').querySelector('[data-action="edit"]').click();
+      await settle();
+      const dialog = document.querySelector('dialog');
+      const memoInput = dialog.querySelector('input[type="text"]');
+      expect(memoInput.value).toBe('first memo');
+      expect(memoInput.maxLength).toBe(100);
+      expect(dialog.querySelector('input[type="radio"]:checked').value).toBe('red');
+      memoInput.value = 'second memo';
+      dialog.querySelector('input[type="radio"][value="blue"]').checked = true;
+      dialog.querySelector('.tk3-btn-confirm').click();
+      await settle();
+
+      stored = (await getSnapshots())['example.com'].tagged;
+      expect(stored).toMatchObject({ memo: 'second memo', color: 'blue' });
+      expect(row('tagged').querySelector('.snapshot__chip--blue')).not.toBeNull();
+      expect($('statusMsg').className).toContain('success');
+
+      row('tagged').querySelector('[data-action="edit"]').click();
+      await settle();
+      document.querySelector('dialog').querySelector('.tk3-btn-cancel').click();
+      await settle();
+      expect((await getSnapshots())['example.com'].tagged).toMatchObject({ memo: 'second memo', color: 'blue' });
+    });
+
+    it('keeps the memo and colour when overwriting from the row menu', async () => {
+      await setSnapshots({ 'example.com': { tagged: snap('2024-01-01T00:00:00.000Z', { memo: 'keep', color: 'amber' }) } });
+      await loadPopup('https://example.com/');
+
+      row('tagged').querySelector('.actions-menu [data-action="overwrite"]').click();
+      await settle();
+      document.querySelector('.tk3-btn-confirm').click();
+      await settle();
+
+      expect((await getSnapshots())['example.com'].tagged).toMatchObject({ memo: 'keep', color: 'amber', localStorage: { current: '1' } });
+    });
   });
 
   it('marks the active snapshot, and flags it when the page data has changed since', async () => {

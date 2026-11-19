@@ -71,6 +71,17 @@
           <label for="newSnapshotName" class="tk-visually-hidden" data-i18n="new_name_placeholder">スナップショット名</label>
           <input type="text" id="newSnapshotName" class="text-input" autocomplete="off"
             data-i18n-placeholder="new_name_placeholder" placeholder="スナップショット名">
+          <label for="newSnapshotMemo" class="tk-visually-hidden" data-i18n="memo_label">メモ（任意）</label>
+          <input type="text" id="newSnapshotMemo" class="text-input" autocomplete="off" maxlength="100"
+            data-i18n-placeholder="memo_label" placeholder="メモ（任意）">
+          <fieldset class="swatches">
+            <legend class="swatches__legend" data-i18n="color_label">色</legend>
+            <label class="swatch swatch--none" data-i18n-title="color_none" title="なし"><input type="radio" name="newSnapshotColor" value="" checked><span class="tk-visually-hidden" data-i18n="color_none">なし</span></label>
+            <label class="swatch swatch--red" data-i18n-title="color_red" title="赤"><input type="radio" name="newSnapshotColor" value="red"><span class="tk-visually-hidden" data-i18n="color_red">赤</span></label>
+            <label class="swatch swatch--amber" data-i18n-title="color_amber" title="橙"><input type="radio" name="newSnapshotColor" value="amber"><span class="tk-visually-hidden" data-i18n="color_amber">橙</span></label>
+            <label class="swatch swatch--green" data-i18n-title="color_green" title="緑"><input type="radio" name="newSnapshotColor" value="green"><span class="tk-visually-hidden" data-i18n="color_green">緑</span></label>
+            <label class="swatch swatch--blue" data-i18n-title="color_blue" title="青"><input type="radio" name="newSnapshotColor" value="blue"><span class="tk-visually-hidden" data-i18n="color_blue">青</span></label>
+          </fieldset>
           <div class="save-form__actions">
             <button id="cancelSaveBtn" class="tk-btn tk-btn--quiet" type="button" data-i18n="btn_cancel">キャンセル</button>
             <button id="confirmSaveBtn" class="tk-btn" type="submit" data-i18n="btn_save">保存</button>
@@ -92,8 +103,16 @@
       <button class="snapshot__main" type="button">
         <span class="snapshot__dot" aria-hidden="true"></span>
         <span class="snapshot__text">
-          <span class="snapshot__name"></span>
+          <span class="snapshot__head">
+            <span class="snapshot__chip hidden" role="img"></span>
+            <span class="snapshot__name"></span>
+            <span class="snapshot__warning hidden" role="img">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+            </span>
+          </span>
+          <span class="snapshot__memo hidden"></span>
           <span class="snapshot__meta"></span>
+          <span class="snapshot__preview"></span>
         </span>
         <span class="badge badge--active hidden"></span>
       </button>
@@ -111,6 +130,7 @@
         <div focusgroup="menu nomemory">
           <button type="button" data-action="overwrite"></button>
           <button type="button" data-action="rename"></button>
+          <button type="button" data-action="edit"></button>
           <hr>
           <button type="button" data-action="delete" class="row-menu__danger"></button>
         </div>

@@ -59,6 +59,35 @@ async function saveAs(popup, name) {
   await expect(row(popup, name)).toHaveClass(/is-active/);
 }
 
+test('memo, colour and preview show after save', async ({ context, extensionId }) => {
+  await disableCookieCollection(context, extensionId);
+  const targetPage = await context.newPage();
+  await targetPage.goto(TEST_PAGE_URL);
+  await expect.poll(() => targetPage.evaluate(() => localStorage.getItem('greeting'))).toBe('hello');
+
+  const popup = await openPopupFor(context, extensionId, targetPage);
+  await popup.locator('#saveBtn').click();
+  await popup.locator('#newSnapshotName').fill('tagged');
+  await popup.locator('#newSnapshotMemo').fill('staging admin');
+  await popup.locator('input[name="newSnapshotColor"][value="green"]').check();
+  await popup.locator('#confirmSaveBtn').click();
+
+  const tagged = row(popup, 'tagged');
+  await expect(tagged).toHaveClass(/is-active/);
+  await expect(tagged.locator('.snapshot__chip--green')).toBeVisible();
+  await expect(tagged.locator('.snapshot__memo')).toHaveText('staging admin');
+  await expect(tagged.locator('.snapshot__preview')).toHaveText(/^LS \d+ · .*[\d.]+ (B|KB|MB)$/);
+
+  await tagged.locator('.snapshot__more').click();
+  await tagged.locator('.actions-menu [data-action="edit"]').click();
+  const dialog = popup.locator('dialog');
+  await dialog.locator('input[type="text"]').fill('edited');
+  await dialog.locator('input[type="radio"][value="blue"]').check();
+  await dialog.locator('.tk3-btn-confirm').click();
+  await expect(tagged.locator('.snapshot__memo')).toHaveText('edited');
+  await expect(tagged.locator('.snapshot__chip--blue')).toBeVisible();
+});
+
 test('save then load round-trips real localStorage/sessionStorage, reloads the tab and badges the icon', async ({ context, extensionId }) => {
   await disableCookieCollection(context, extensionId);
 

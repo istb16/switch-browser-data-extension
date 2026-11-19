@@ -1,13 +1,14 @@
 import { initI18n, t, applyI18n, getLang } from '../lib/i18n.js';
 import {
   getSnapshotsForDomain, getOrderedSnapshotNames, saveSnapshot, deleteSnapshot, renameSnapshot,
-  loadSnapshot, getActiveSnapshot, setActiveSnapshot, saveBackup, getBackup,
+  loadSnapshot, getActiveSnapshot, setActiveSnapshot, saveBackup, getBackup, updateSnapshotDetails,
 } from '../lib/snapshot.js';
+import { summarize, formatBytes, SNAPSHOT_COLORS, MEMO_MAX } from '../lib/snapshot-summary.js';
 import { getSettings } from '../lib/storage.js';
 import { collectData, applyData, clearData, canReachPage, requestHostPermission, hasHostPermission } from '../lib/data-bridge.js';
 import { findChanges, describeChanges, withDigests, TYPE_LABELS } from '../lib/data-compare.js';
 import { getVolatileCookiesFor, startCookieCheck, ignoreCookieChange, hasPendingCookieCheck, cancelCookieCheck } from '../lib/volatile-cookies.js';
-import { showConfirm } from '../lib/dialog.js';
+import { showConfirm, showFormDialog } from '../lib/dialog.js';
 import { setupMenu } from '../lib/menu.js';
 import { bindInlineRename } from '../lib/inline-rename.js';
 import { formatRelative } from '../lib/time.js';
@@ -17,11 +18,17 @@ import { $, showStatus } from '../lib/ui.js';
 // would only add noise.
 const SEARCH_MIN = 5;
 
+// Short forms keep the preview on one line; the tooltip spells them out.
+const PREVIEW_LABELS = { cookies: 'Cookie', localStorage: 'LS', sessionStorage: 'SS', indexedDB: 'IDB' };
+
 let currentDomain = null;
 let activeTab = null;
 let settings = null;
 let snapshots = {};
 let names = [];
+// Per-name summarize() results, computed once per refresh rather than per render,
+// since search re-renders on every keystroke.
+let summaries = {};
 let activeName = null;
 // What differs from the active snapshot (see findChanges); empty when nothing does.
 let changes = [];
@@ -103,6 +110,8 @@ async function refresh() {
   ]);
   snapshots = domainSnapshots;
   names = orderedNames;
+  const now = Date.now();
+  summaries = Object.fromEntries(names.map(name => [name, summarize(snapshots[name], now)]));
   activeName = active && snapshots[active] ? active : null;
   if (!activeName) changes = [];
   renderList();
@@ -128,7 +137,9 @@ async function detectChanges() {
 
 function renderList() {
   const query = $('searchInput').value.trim().toLowerCase();
-  const visible = query ? names.filter(n => n.toLowerCase().includes(query)) : names;
+  const matches = name => name.toLowerCase().includes(query)
+    || Boolean(snapshots[name].memo?.toLowerCase().includes(query));
+  const visible = query ? names.filter(matches) : names;
 
   $('searchBox').classList.toggle('hidden', names.length < SEARCH_MIN && !query);
   $('emptyState').classList.toggle('hidden', names.length > 0);
@@ -151,6 +162,7 @@ function buildRow(name, index) {
   const meta = row.querySelector('.snapshot__meta');
   meta.textContent = formatRelative(snapshot.savedAt, getLang());
   meta.title = t('saved_at', { date: new Date(snapshot.savedAt).toLocaleString() });
+  renderDetails(row, snapshot, summaries[name]);
 
   const activeBadge = row.querySelector('.badge--active');
   activeBadge.textContent = t('badge_active');
@@ -174,16 +186,56 @@ function buildRow(name, index) {
   menu.querySelector('[focusgroup]').setAttribute('aria-labelledby', trigger.id);
   menu.querySelector('[data-action="overwrite"]').textContent = t('menu_overwrite');
   menu.querySelector('[data-action="rename"]').textContent = t('menu_rename');
+  menu.querySelector('[data-action="edit"]').textContent = t('menu_edit_details');
   menu.querySelector('[data-action="delete"]').textContent = t('menu_delete');
 
   row.querySelector('.snapshot__main').addEventListener('click', () => handleLoad(name));
   setupMenu(trigger, menu, action => {
     if (action === 'overwrite') handleOverwrite(name);
     else if (action === 'rename') startRename(row, name);
+    else if (action === 'edit') handleEditDetails(name);
     else if (action === 'delete') handleDelete(name);
   });
 
   return row;
+}
+
+function renderDetails(row, snapshot, summary) {
+  const chip = row.querySelector('.snapshot__chip');
+  if (SNAPSHOT_COLORS.includes(snapshot.color)) {
+    chip.classList.add(`snapshot__chip--${snapshot.color}`);
+    chip.setAttribute('aria-label', t('chip_label', { color: t(`color_${snapshot.color}`) }));
+    chip.classList.remove('hidden');
+  } else {
+    chip.remove();
+  }
+
+  const memo = row.querySelector('.snapshot__memo');
+  if (typeof snapshot.memo === 'string' && snapshot.memo) {
+    memo.textContent = snapshot.memo;
+    memo.title = snapshot.memo;
+    memo.classList.remove('hidden');
+  } else {
+    memo.remove();
+  }
+
+  const types = Object.keys(PREVIEW_LABELS).filter(type => summary[type] !== null);
+  const size = formatBytes(summary.bytes);
+  const preview = row.querySelector('.snapshot__preview');
+  preview.textContent = [...types.map(type => `${PREVIEW_LABELS[type]} ${summary[type]}`), size].join(' · ');
+  preview.title = types.length
+    ? t('preview_title', { items: types.map(type => `${TYPE_LABELS[type]} ${summary[type]}`).join(' · '), size })
+    : t('preview_size', { size });
+
+  const warning = row.querySelector('.snapshot__warning');
+  if (summary.expiredCookies > 0) {
+    const text = t('warning_expired_cookies', { n: summary.expiredCookies });
+    warning.title = text;
+    warning.setAttribute('aria-label', text);
+    warning.classList.remove('hidden');
+  } else {
+    warning.remove();
+  }
 }
 
 async function renderUndo() {
@@ -374,7 +426,20 @@ function closeSaveForm() {
   $('saveForm').classList.add('hidden');
   $('saveBtn').classList.remove('hidden');
   $('newSnapshotName').value = '';
+  $('newSnapshotMemo').value = '';
+  $('saveForm').querySelector('input[name="newSnapshotColor"][value=""]').checked = true;
   $('saveBtn').focus();
+}
+
+// Only what the user filled in, so saving over an existing name keeps the
+// memo and colour it already has.
+function saveFormDetails() {
+  const details = {};
+  const memo = $('newSnapshotMemo').value.trim();
+  const color = $('saveForm').querySelector('input[name="newSnapshotColor"]:checked')?.value;
+  if (memo) details.memo = memo;
+  if (color) details.color = color;
+  return details;
 }
 
 async function handleSaveNew() {
@@ -387,7 +452,7 @@ async function handleSaveNew() {
     }
     await ensureCookiePermission();
     if (snapshots[name] && !await showConfirm(t('confirm_overwrite', { name }))) return;
-    saved = await saveCurrentAs(name);
+    saved = await saveCurrentAs(name, saveFormDetails());
   });
   if (saved) closeSaveForm();
   else $('newSnapshotName').focus();
@@ -402,10 +467,10 @@ async function handleOverwrite(name) {
   focusRow(name);
 }
 
-async function saveCurrentAs(name) {
+async function saveCurrentAs(name, details) {
   try {
     const data = await collectData(activeTab.id, currentDomain, settings.enabledTypes);
-    await saveSnapshot(currentDomain, name, withDigests(data));
+    await saveSnapshot(currentDomain, name, withDigests(data), details);
     await setActiveSnapshot(currentDomain, name);
     changes = [];
     await refresh();
@@ -548,6 +613,75 @@ async function handleDelete(name) {
   });
   if (deleted) focusRowAt(index);
   else focusRow(name);
+}
+
+async function handleEditDetails(name) {
+  await exclusive(async () => {
+    const snapshot = snapshots[name];
+    if (!snapshot) return;
+    const fields = buildDetailFields(snapshot);
+    const confirmed = await showFormDialog({
+      title: t('edit_details_title', { name }),
+      content: fields.content,
+      confirmLabel: t('btn_save'),
+    });
+    if (!confirmed) return;
+    try {
+      await updateSnapshotDetails(currentDomain, name, fields.read());
+      await refresh();
+      showStatus($('statusMsg'), t('status_details_saved', { name }), 'success');
+    } catch (e) {
+      showStatus($('statusMsg'), t('error_details_failed'), 'error');
+      console.error(e);
+    }
+  });
+  focusRow(name);
+}
+
+function buildDetailFields({ memo, color }) {
+  const content = document.createDocumentFragment();
+
+  const memoLabel = document.createElement('label');
+  const memoInput = document.createElement('input');
+  memoInput.type = 'text';
+  memoInput.className = 'detail-memo';
+  memoInput.autocomplete = 'off';
+  memoInput.maxLength = MEMO_MAX;
+  memoInput.value = typeof memo === 'string' ? memo : '';
+  memoLabel.append(t('memo_label'), memoInput);
+
+  const swatches = document.createElement('fieldset');
+  swatches.className = 'swatches';
+  const legend = document.createElement('legend');
+  legend.className = 'swatches__legend';
+  legend.textContent = t('color_label');
+  swatches.append(legend);
+  const current = SNAPSHOT_COLORS.includes(color) ? color : '';
+  for (const value of ['', ...SNAPSHOT_COLORS]) {
+    const text = t(value ? `color_${value}` : 'color_none');
+    const label = document.createElement('label');
+    label.className = `swatch swatch--${value || 'none'}`;
+    label.title = text;
+    const radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.name = 'editSnapshotColor';
+    radio.value = value;
+    radio.checked = value === current;
+    const hidden = document.createElement('span');
+    hidden.className = 'tk-visually-hidden';
+    hidden.textContent = text;
+    label.append(radio, hidden);
+    swatches.append(label);
+  }
+
+  content.append(memoLabel, swatches);
+  return {
+    content,
+    read: () => ({
+      memo: memoInput.value,
+      color: swatches.querySelector('input:checked')?.value,
+    }),
+  };
 }
 
 function startRename(row, name) {
