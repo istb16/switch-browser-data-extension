@@ -1,7 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
-  getSnapshotsForDomain,
-  getOrderedSnapshotNames,
   orderedNames,
   withSnapshotLock,
   saveSnapshot,
@@ -15,11 +13,11 @@ import {
   getSnapshots, getSnapshotOrders, setSnapshots, setSnapshotOrders, getSettings, setSettings, getGroups, setGroups,
 } from '../../lib/storage.js';
 
-describe('lib/snapshot', () => {
-  it('getSnapshotsForDomain returns {} for an unknown domain', async () => {
-    expect(await getSnapshotsForDomain('example.com')).toEqual({});
-  });
+async function snapshotsOf(domain) {
+  return (await getSnapshots())[domain] ?? {};
+}
 
+describe('lib/snapshot', () => {
   it('saveSnapshot stores data with a savedAt timestamp and appends to the order', async () => {
     await saveSnapshot('example.com', 'first', { cookies: [] });
     const snapshots = await getSnapshots();
@@ -35,7 +33,7 @@ describe('lib/snapshot', () => {
     await saveSnapshot('example.com', 'first', { cookies: [{ name: 'a' }] });
     const orders = await getSnapshotOrders();
     expect(orders['example.com']).toEqual(['first']);
-    const snapshots = await getSnapshotsForDomain('example.com');
+    const snapshots = await snapshotsOf('example.com');
     expect(snapshots.first.cookies).toEqual([{ name: 'a' }]);
   });
 
@@ -113,7 +111,7 @@ describe('lib/snapshot', () => {
     });
   });
 
-  it('getOrderedSnapshotNames follows the stored order, then appends unordered names alphabetically', async () => {
+  it('orderedNames follows the stored order, then appends unordered names alphabetically', async () => {
     // saveSnapshot() always appends new names to the order array, so names
     // end up "unordered" only when storage and the order list diverge — as
     // happens with options.js's import flow, which merges snapshot data
@@ -121,13 +119,22 @@ describe('lib/snapshot', () => {
     await setSnapshots({ 'example.com': { b: {}, a: {}, z: {}, c: {} } });
     await setSnapshotOrders({ 'example.com': ['b', 'a'] });
 
-    expect(await getOrderedSnapshotNames('example.com')).toEqual(['b', 'a', 'c', 'z']);
+    const orders = await getSnapshotOrders();
+    expect(orderedNames(await snapshotsOf('example.com'), orders['example.com'])).toEqual(['b', 'a', 'c', 'z']);
   });
 
-  it('getOrderedSnapshotNames ignores stale order entries for deleted snapshots', async () => {
+  it('orderedNames ignores stale order entries for deleted snapshots', async () => {
     await saveSnapshot('example.com', 'a', {});
     await setSnapshotOrder('example.com', ['a', 'ghost']);
-    expect(await getOrderedSnapshotNames('example.com')).toEqual(['a']);
+    const orders = await getSnapshotOrders();
+    expect(orders['example.com']).toEqual(['a', 'ghost']);
+    expect(orderedNames(await snapshotsOf('example.com'), orders['example.com'])).toEqual(['a']);
+  });
+
+  it('setSnapshotOrder replaces one domain\'s order and keeps the others', async () => {
+    await setSnapshotOrders({ 'a.com': ['x'], 'b.com': ['y', 'z'] });
+    await setSnapshotOrder('b.com', ['z', 'y']);
+    expect(await getSnapshotOrders()).toEqual({ 'a.com': ['x'], 'b.com': ['z', 'y'] });
   });
 
   it('deleteSnapshot removes the snapshot and its order entry', async () => {
@@ -135,7 +142,7 @@ describe('lib/snapshot', () => {
     await saveSnapshot('example.com', 'b', {});
     await deleteSnapshot('example.com', 'a');
 
-    expect(await getSnapshotsForDomain('example.com')).toEqual(expect.not.objectContaining({ a: expect.anything() }));
+    expect(await snapshotsOf('example.com')).toEqual(expect.not.objectContaining({ a: expect.anything() }));
     const orders = await getSnapshotOrders();
     expect(orders['example.com']).toEqual(['b']);
   });
@@ -161,7 +168,7 @@ describe('lib/snapshot', () => {
 
     await renameSnapshot('example.com', 'a', 'renamed');
 
-    const snapshots = await getSnapshotsForDomain('example.com');
+    const snapshots = await snapshotsOf('example.com');
     expect(snapshots).not.toHaveProperty('a');
     expect(snapshots.renamed.value).toBe(1);
 
@@ -182,7 +189,7 @@ describe('lib/snapshot', () => {
   it('saveSnapshot keeps memo and color on overwrite', async () => {
     await saveSnapshot('example.com', 'a', { cookies: [] }, { memo: 'admin', color: 'red' });
     await saveSnapshot('example.com', 'a', { cookies: [{ name: 'x' }] });
-    const { a } = await getSnapshotsForDomain('example.com');
+    const { a } = await snapshotsOf('example.com');
     expect(a).toMatchObject({ memo: 'admin', color: 'red', cookies: [{ name: 'x' }] });
 
     await saveSnapshot('example.com', 'a', { cookies: [] }, { color: 'blue' });
@@ -297,6 +304,14 @@ describe('lib/snapshot — active snapshot and backup', () => {
     expect(backup.activeName).toBeNull();
     expect(typeof backup.savedAt).toBe('string');
     expect(await getSnapshots()).toEqual({});
+  });
+
+  it('saveBackup replaces one domain\'s backup and keeps the others', async () => {
+    const { saveBackup, getBackup } = await import('../../lib/snapshot.js');
+    await saveBackup('a.com', { localStorage: { a: '1' } }, null);
+    await saveBackup('b.com', { localStorage: { b: '1' } }, 'x');
+    expect((await getBackup('a.com')).localStorage).toEqual({ a: '1' });
+    expect(await getBackup('b.com')).toMatchObject({ localStorage: { b: '1' }, activeName: 'x' });
   });
 });
 

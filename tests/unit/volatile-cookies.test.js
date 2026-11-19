@@ -117,6 +117,23 @@ describe('lib/volatile-cookies', () => {
     expect(await takeCookieCheck(5)).toMatchObject({ cookieDomain: 'example.com', cookieExact: true });
   });
 
+  it('taking a check leaves the other tabs\' checks', async () => {
+    await startCookieCheck(5, 'a.com', []);
+    await startCookieCheck(6, 'b.com', []);
+    await takeCookieCheck(5);
+    expect(Object.keys((await chrome.storage.local.get('cookieChecks')).cookieChecks)).toEqual(['6']);
+  });
+
+  it('taking or cancelling with nothing to drop writes nothing', async () => {
+    await startCookieCheck(5, 'a.com', []);
+    const set = vi.spyOn(chrome.storage.local, 'set');
+    expect(await takeCookieCheck(6)).toBeNull();
+    await cancelCookieChecksFor('other.com');
+    await cancelCookieChecksFor({ domain: 'b.com', exact: true });
+    expect(set).not.toHaveBeenCalled();
+    expect(await hasPendingCookieCheck(5)).toBe(true);
+  });
+
   it('drops a check that is taken after its window', async () => {
     vi.useFakeTimers({ now: 0 });
     await startCookieCheck(5, 'a.com', []);

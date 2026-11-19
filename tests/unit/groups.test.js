@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   normalizeGroupDomain, validateNewGroup, groupOrigins, resolveScope, memberHosts, activeRef,
-  getScopeForHost, addGroup, removeGroup,
+  addGroup, removeGroup,
 } from '../../lib/groups.js';
 import { getGroups, setGroups, getActiveSnapshots, setActiveSnapshots } from '../../lib/storage.js';
 
@@ -76,10 +76,10 @@ describe('lib/groups', () => {
     expect(activeRef(undefined, 'example.com')).toBeNull();
   });
 
-  it('getScopeForHost resolves through the stored groups', async () => {
+  it('resolveScope resolves through the stored groups', async () => {
     await setGroups(['example.com']);
-    expect((await getScopeForHost('app.example.com')).key).toBe('example.com');
-    expect((await getScopeForHost('other.com')).key).toBe('other.com');
+    expect(resolveScope('app.example.com', await getGroups()).key).toBe('example.com');
+    expect(resolveScope('other.com', await getGroups()).key).toBe('other.com');
   });
 
   it('addGroup stores the normalized base and refuses an invalid one', async () => {
@@ -87,6 +87,19 @@ describe('lib/groups', () => {
     expect(await getGroups()).toEqual(['example.com']);
     await expect(addGroup('app.example.com')).rejects.toThrow('nested');
     expect(await getGroups()).toEqual(['example.com']);
+  });
+
+  it('addGroup appends to the stored groups', async () => {
+    await setGroups(['example.com']);
+    await addGroup('other.org');
+    expect(await getGroups()).toEqual(['example.com', 'other.org']);
+  });
+
+  it('removeGroup without an active snapshot writes no active snapshots', async () => {
+    await setGroups(['example.com']);
+    await removeGroup('example.com');
+    expect(await getGroups()).toEqual([]);
+    expect(await chrome.storage.local.get('activeSnapshots')).toEqual({});
   });
 
   it('removeGroup turns a base-host reference into a string and deletes any other', async () => {

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "__MSG_name__",
-  "version": "1.0.36",
+  "version": "1.0.37",
   "default_locale": "ja",
   "description": "__MSG_description__",
   "permissions": ["cookies", "storage", "unlimitedStorage", "tabs"],
