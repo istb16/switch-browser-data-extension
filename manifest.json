@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "__MSG_name__",
-  "version": "1.0.19",
+  "version": "1.0.20",
   "default_locale": "ja",
   "description": "__MSG_description__",
-  "permissions": ["cookies", "storage", "unlimitedStorage", "scripting", "activeTab", "tabs"],
+  "permissions": ["cookies", "storage", "unlimitedStorage", "tabs"],
   "optional_host_permissions": ["<all_urls>"],
   "action": {
     "default_popup": "popup/popup.html",
