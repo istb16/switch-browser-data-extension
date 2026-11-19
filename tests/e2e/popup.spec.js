@@ -15,14 +15,27 @@ async function disableCookieCollection(context, extensionId) {
   await options.close();
 }
 
-test('detects the domain from the real active tab', async ({ context, extensionId }) => {
+test('detects the domain and, before cookie access is allowed, asks for it instead of showing the list', async ({ context, extensionId }) => {
   const targetPage = await context.newPage();
   await targetPage.goto(TEST_PAGE_URL);
 
   const popup = await openPopupFor(context, extensionId, targetPage);
 
   await expect(popup.locator('#currentDomain')).toHaveText('localhost');
+  await expect(popup.locator('#permissionPanel')).toBeVisible();
+  await expect(popup.locator('#grantPermissionBtn')).toBeVisible();
+  await expect(popup.locator('#mainContent')).toBeHidden();
+});
+
+test('shows the list straight away when cookies are turned off', async ({ context, extensionId }) => {
+  await disableCookieCollection(context, extensionId);
+  const targetPage = await context.newPage();
+  await targetPage.goto(TEST_PAGE_URL);
+
+  const popup = await openPopupFor(context, extensionId, targetPage);
+
   await expect(popup.locator('#mainContent')).toBeVisible();
+  await expect(popup.locator('#permissionPanel')).toBeHidden();
 });
 
 test('shows the "not available" message for a restricted page', async ({ context, extensionId }) => {

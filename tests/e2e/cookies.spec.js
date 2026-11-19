@@ -72,6 +72,16 @@ test('learns the cookie the site rewrites on its own, and still flags an account
     .toEqual({ localhost: { 'localhost|/|csrf': 'value', 'localhost|/|sid': 'value' } });
 });
 
+test('does not ask for access once it has been allowed', async ({ context, extensionId }) => {
+  const site = await context.newPage();
+  await site.goto(loginUrl('alice'));
+
+  const popup = await openPopupFor(context, extensionId, site);
+
+  await expect(popup.locator('#mainContent')).toBeVisible();
+  await expect(popup.locator('#permissionPanel')).toBeHidden();
+});
+
 test('restores cookies with the undo bar', async ({ context, extensionId }) => {
   const site = await context.newPage();
   await site.goto(loginUrl('alice'));

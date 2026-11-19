@@ -28,6 +28,16 @@
       <span id="currentDomain" class="domain-value" data-i18n="loading">読み込み中...</span>
     </div>
 
+    <section id="permissionPanel" class="permission hidden" aria-labelledby="permissionTitle">
+      <svg class="permission__icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+      <h2 id="permissionTitle" class="permission__title" data-i18n="permission_title">このサイトへのアクセスを許可してください</h2>
+      <p class="permission__body" data-i18n="permission_body">Cookie を保存・切り替えるには、このサイトの Cookie を読み書きする許可が要ります。</p>
+      <p class="permission__note" data-i18n="permission_note">許可すると、この画面はいったん閉じます。許可したあとで、もう一度拡張機能のアイコンから開いてください。</p>
+      <button id="grantPermissionBtn" class="tk-btn" type="button" data-i18n="btn_grant_permission">アクセスを許可</button>
+      <p id="permissionDenied" class="permission__denied hidden" role="status" data-i18n="permission_denied">許可されませんでした。もう一度「アクセスを許可」を押すか、Cookie を使わない場合は設定でオフにしてください。</p>
+      <button id="skipCookiesBtn" class="text-btn" type="button" data-i18n="btn_skip_cookies">Cookie を使わない（設定を開く）</button>
+    </section>
+
     <main id="mainContent" class="hidden">
       <div id="searchBox" class="search hidden">
         <label for="searchInput" class="tk-visually-hidden" data-i18n="search_label">スナップショットを検索</label>

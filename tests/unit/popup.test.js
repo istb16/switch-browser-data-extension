@@ -46,6 +46,69 @@ describe('popup/popup.js', () => {
     document.body.innerHTML = '';
     pageData = { localStorage: { current: '1' } };
     mockContentScript();
+    // Most tests are about a site whose cookie access was already allowed.
+    chrome._state.grantedOrigins.add('*://example.com/*');
+  });
+
+  describe('when cookie access to the site has not been allowed yet', () => {
+    beforeEach(() => {
+      chrome._state.grantedOrigins.clear();
+    });
+
+    it('asks for it up front instead of showing the list', async () => {
+      await setSnapshots({ 'example.com': { first: snap('2024-01-01T00:00:00.000Z') } });
+      chrome.permissions.request = vi.fn();
+      await loadPopup('https://example.com/');
+
+      expect($('currentDomain').textContent).toBe('example.com');
+      expect($('permissionPanel').classList.contains('hidden')).toBe(false);
+      expect($('mainContent').classList.contains('hidden')).toBe(true);
+      expect(rows()).toHaveLength(0);
+      expect(chrome.permissions.request).not.toHaveBeenCalled();
+    });
+
+    it('requests access for this site only, and shows the list when the popup survives the prompt', async () => {
+      await setSnapshots({ 'example.com': { first: snap('2024-01-01T00:00:00.000Z') } });
+      const request = vi.spyOn(chrome.permissions, 'request');
+      await loadPopup('https://example.com/');
+
+      $('grantPermissionBtn').click();
+      await settle();
+
+      expect(request).toHaveBeenCalledWith({ origins: ['*://example.com/*'] });
+      expect($('permissionPanel').classList.contains('hidden')).toBe(true);
+      expect($('mainContent').classList.contains('hidden')).toBe(false);
+      expect(rowNames()).toEqual(['first']);
+    });
+
+    it('says so when access is not allowed, and keeps asking', async () => {
+      chrome.permissions.request = vi.fn().mockResolvedValue(false);
+      await loadPopup('https://example.com/');
+
+      $('grantPermissionBtn').click();
+      await settle();
+
+      expect($('permissionDenied').classList.contains('hidden')).toBe(false);
+      expect($('permissionPanel').classList.contains('hidden')).toBe(false);
+      expect($('mainContent').classList.contains('hidden')).toBe(true);
+    });
+
+    it('offers the settings page for not using cookies', async () => {
+      chrome.runtime.openOptionsPage = vi.fn();
+      await loadPopup('https://example.com/');
+
+      $('skipCookiesBtn').click();
+
+      expect(chrome.runtime.openOptionsPage).toHaveBeenCalled();
+    });
+
+    it('does not ask when cookies are turned off in settings', async () => {
+      await setSettings({ ...(await getSettings()), enabledTypes: { cookies: false, localStorage: true, sessionStorage: true, indexedDB: true } });
+      await loadPopup('https://example.com/');
+
+      expect($('permissionPanel').classList.contains('hidden')).toBe(true);
+      expect($('mainContent').classList.contains('hidden')).toBe(false);
+    });
   });
 
   it('shows the "unavailable" message for restricted URLs (chrome://, edge://, no tab)', async () => {
@@ -240,6 +303,24 @@ describe('popup/popup.js', () => {
       expect($('statusMsg').className).toContain('success');
     });
 
+    it('still loads, and says so, when there is no room left to keep the backup', async () => {
+      await loadPopup('https://example.com/');
+      const set = chrome.storage.local.set;
+      chrome.storage.local.set = async items => {
+        if ('backups' in items) throw new Error('QUOTA_BYTES quota exceeded');
+        return set(items);
+      };
+
+      row('first').querySelector('.snapshot__main').click();
+      await settle();
+
+      expect(pageData.localStorage).toEqual({ a: '1' });
+      expect((await getActiveSnapshots())['example.com']).toBe('first');
+      expect(await getBackups()).toEqual({});
+      expect($('statusMsg').className).toContain('success');
+      expect($('statusMsg').textContent).toContain('切り替え前の状態は残せませんでした');
+    });
+
     it('restores the backed-up state with the undo button, and can swap back', async () => {
       await loadPopup('https://example.com/');
       row('first').querySelector('.snapshot__main').click();
@@ -325,6 +406,14 @@ describe('popup/popup.js', () => {
     it('does not flag a cookie the site was seen rewriting by itself', async () => {
       chrome._state.cookies = [sid('account-b')];
       await chrome.storage.local.set({ volatileCookies: { 'example.com': { 'example.com|/|sid': 'value' } } });
+      await loadPopup('https://example.com/');
+
+      expect(row('first').querySelector('.badge--modified').classList.contains('hidden')).toBe(true);
+    });
+
+    it('leaves cookies out of the check while the service worker is still learning after a load', async () => {
+      chrome._state.cookies = [sid('account-b')];
+      await chrome.storage.local.set({ cookieChecks: { 1: { domain: 'example.com', cookies: [sid('account-a')], until: Date.now() + 60_000 } } });
       await loadPopup('https://example.com/');
 
       expect(row('first').querySelector('.badge--modified').classList.contains('hidden')).toBe(true);

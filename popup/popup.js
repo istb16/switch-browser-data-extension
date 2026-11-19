@@ -4,9 +4,9 @@ import {
   loadSnapshot, getActiveSnapshot, setActiveSnapshot, saveBackup, getBackup,
 } from '../lib/snapshot.js';
 import { getSettings } from '../lib/storage.js';
-import { collectData, applyData, requestHostPermission } from '../lib/data-bridge.js';
+import { collectData, applyData, requestHostPermission, hasHostPermission } from '../lib/data-bridge.js';
 import { findChanges, describeChanges, withDigests } from '../lib/data-compare.js';
-import { getVolatileCookiesFor, startCookieCheck, ignoreCookieChange } from '../lib/volatile-cookies.js';
+import { getVolatileCookiesFor, startCookieCheck, ignoreCookieChange, hasPendingCookieCheck } from '../lib/volatile-cookies.js';
 import { showConfirm } from '../lib/dialog.js';
 import { setupMenu } from '../lib/menu.js';
 import { bindInlineRename } from '../lib/inline-rename.js';
@@ -55,13 +55,37 @@ async function init() {
   }
 
   $('currentDomain').textContent = currentDomain;
-  $('mainContent').classList.remove('hidden');
-
   settings = await getSettings();
+
+  if (settings.enabledTypes.cookies && !await hasHostPermission(currentDomain)) {
+    showPermissionPanel();
+    return;
+  }
+  await showMain();
+}
+
+async function showMain() {
+  $('permissionPanel').classList.add('hidden');
+  $('mainContent').classList.remove('hidden');
   await refresh();
   setupListeners();
   // Not awaited: the check reads the page, and the list is usable without it.
   detectChanges().catch(e => console.error(e));
+}
+
+// Chrome closes the popup as soon as its permission prompt appears, so asking in
+// the middle of a save or load would drop that action without a word. Asking up
+// front, with nothing else to lose, and telling the user to reopen avoids that.
+function showPermissionPanel() {
+  $('permissionPanel').classList.remove('hidden');
+  $('grantPermissionBtn').addEventListener('click', async () => {
+    $('permissionDenied').classList.add('hidden');
+    // Where the popup survives the prompt (it is answered quickly, or the browser
+    // keeps the popup open), carry on without making the user reopen it.
+    if (await requestHostPermission(currentDomain)) await showMain();
+    else $('permissionDenied').classList.remove('hidden');
+  });
+  $('skipCookiesBtn').addEventListener('click', () => chrome.runtime.openOptionsPage());
 }
 
 function showUnavailable() {
@@ -87,12 +111,16 @@ async function detectChanges() {
   const name = activeName;
   if (!name) return;
   const version = dataVersion;
-  const [current, volatile] = await Promise.all([
+  const [current, volatile, learning] = await Promise.all([
     collectData(activeTab.id, currentDomain, settings.enabledTypes, { interactive: false, digest: true }),
     getVolatileCookiesFor(currentDomain),
+    hasPendingCookieCheck(activeTab.id),
   ]);
   if (version !== dataVersion || name !== activeName) return;
-  changes = findChanges(snapshots[name], current, settings.enabledTypes, volatile);
+  // Until the service worker has seen which cookies the site rewrites after the
+  // load, those rewrites would all look like changes.
+  const types = learning ? { ...settings.enabledTypes, cookies: false } : settings.enabledTypes;
+  changes = findChanges(snapshots[name], current, types, volatile);
   if (changes.length) renderList();
 }
 
@@ -392,6 +420,18 @@ async function watchCookiesAfterApply(data) {
   if (settings.enabledTypes.cookies && data.cookies) await startCookieCheck(activeTab.id, currentDomain, data.cookies);
 }
 
+// The backup is a convenience: a full chrome.storage.local must not cost the
+// user the load itself, which then just cannot be undone.
+async function tryBackup(data) {
+  try {
+    await saveBackup(currentDomain, data, activeName);
+    return true;
+  } catch (e) {
+    console.error(e);
+    return false;
+  }
+}
+
 function handleLoad(name) {
   return exclusive(async () => {
     await ensureCookiePermission();
@@ -403,16 +443,17 @@ function handleLoad(name) {
 
     const types = settings.enabledTypes;
     try {
+      let backedUp = true;
       if (settings.autoBackup) {
         const current = await collectData(activeTab.id, currentDomain, types, { interactive: false });
-        await saveBackup(currentDomain, current, activeName);
+        backedUp = await tryBackup(current);
       }
       await applyData(activeTab.id, currentDomain, snapshot, types);
       await setActiveSnapshot(currentDomain, name);
       changes = [];
       await watchCookiesAfterApply(snapshot);
       if (settings.autoReload) await chrome.tabs.reload(activeTab.id);
-      showStatus($('statusMsg'), t('status_loaded', { name }), 'success');
+      showStatus($('statusMsg'), t(backedUp ? 'status_loaded' : 'status_loaded_no_backup', { name }), 'success');
     } catch (e) {
       showStatus($('statusMsg'), t('error_load_failed'), 'error');
       console.error(e);
@@ -434,7 +475,7 @@ async function handleUndo() {
     try {
       const current = await collectData(activeTab.id, currentDomain, types, { interactive: false });
       await applyData(activeTab.id, currentDomain, backup, types);
-      await saveBackup(currentDomain, current, activeName);
+      await tryBackup(current);
       const restoredName = backup.activeName && snapshots[backup.activeName] ? backup.activeName : null;
       await setActiveSnapshot(currentDomain, restoredName);
       changes = restoredName
