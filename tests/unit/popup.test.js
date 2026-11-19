@@ -549,7 +549,7 @@ describe('popup/popup.js', () => {
 
     it('leaves cookies out of the check while the service worker is still learning after a load', async () => {
       chrome._state.cookies = [sid('account-b')];
-      await chrome.storage.local.set({ cookieChecks: { 1: { domain: 'example.com', cookies: [sid('account-a')], until: Date.now() + 60_000 } } });
+      await chrome.storage.local.set({ cookieChecks: { 1: { domain: 'example.com', cookies: [sid('account-a')], origins: ['*://example.com/*'], cookieDomain: 'example.com', until: Date.now() + 60_000 } } });
       await loadPopup('https://example.com/');
 
       expect(row('first').querySelector('.badge--modified').classList.contains('hidden')).toBe(true);
@@ -610,7 +610,7 @@ describe('popup/popup.js', () => {
     });
 
     it('cancels a cookie check left from a recent load, so the cleared jar is not learned from', async () => {
-      await chrome.storage.local.set({ cookieChecks: { 1: { domain: 'example.com', cookies: [sid], until: Date.now() + 60_000 } } });
+      await chrome.storage.local.set({ cookieChecks: { 1: { domain: 'example.com', cookies: [sid], origins: ['*://example.com/*'], cookieDomain: 'example.com', until: Date.now() + 60_000 } } });
       await loadPopup('https://example.com/');
 
       $('clearSiteBtn').click();
@@ -622,7 +622,7 @@ describe('popup/popup.js', () => {
     });
 
     it('keeps the pending cookie checks when the cookies type is turned off', async () => {
-      const checks = { 1: { domain: 'example.com', cookies: [sid], until: Date.now() + 60_000 } };
+      const checks = { 1: { domain: 'example.com', cookies: [sid], origins: ['*://example.com/*'], cookieDomain: 'example.com', until: Date.now() + 60_000 } };
       await chrome.storage.local.set({ cookieChecks: checks });
       await setSettings({ ...(await getSettings()), enabledTypes: { cookies: false, localStorage: true, sessionStorage: true, indexedDB: true } });
       await loadPopup('https://example.com/');
@@ -637,7 +637,7 @@ describe('popup/popup.js', () => {
     });
 
     it('keeps the pending cookie checks when the page can\'t be reached', async () => {
-      const checks = { 1: { domain: 'example.com', cookies: [sid], until: Date.now() + 60_000 } };
+      const checks = { 1: { domain: 'example.com', cookies: [sid], origins: ['*://example.com/*'], cookieDomain: 'example.com', until: Date.now() + 60_000 } };
       await chrome.storage.local.set({ cookieChecks: checks });
       chrome.tabs.sendMessage = vi.fn(async () => {
         throw new Error('Receiving end does not exist.');
@@ -654,7 +654,7 @@ describe('popup/popup.js', () => {
     });
 
     it('keeps the pending cookie checks when clearing the page\'s storage fails before the cookies', async () => {
-      const checks = { 1: { domain: 'example.com', cookies: [sid], until: Date.now() + 60_000 } };
+      const checks = { 1: { domain: 'example.com', cookies: [sid], origins: ['*://example.com/*'], cookieDomain: 'example.com', until: Date.now() + 60_000 } };
       await chrome.storage.local.set({ cookieChecks: checks });
       chrome.tabs.sendMessage = vi.fn(async (_tabId, message) => {
         if (message.type === 'clearStorageData') throw new Error('Receiving end does not exist.');
@@ -952,9 +952,9 @@ describe('popup/popup.js', () => {
     it('clear-site in a group cancels the pending cookie checks of every member tab', async () => {
       const until = Date.now() + 60_000;
       await chrome.storage.local.set({ cookieChecks: {
-        1: { domain: 'example.com', cookies: [], until },
-        2: { domain: 'example.com', cookies: [cookie('parent', '.example.com', 'p')], until },
-        3: { domain: 'other.com', cookies: [], until },
+        1: { domain: 'example.com', cookies: [], origins: ['*://example.com/*'], cookieDomain: 'example.com', until },
+        2: { domain: 'example.com', cookies: [cookie('parent', '.example.com', 'p')], origins: ['*://example.com/*'], cookieDomain: 'example.com', until },
+        3: { domain: 'other.com', cookies: [], origins: ['*://other.com/*'], cookieDomain: 'other.com', until },
       } });
       const base = chrome.tabs.sendMessage;
       chrome.tabs.sendMessage = vi.fn(async (tabId, message) => {

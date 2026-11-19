@@ -56,9 +56,8 @@ async function checkCookiesAfterLoad(tabId) {
   const check = await takeCookieCheck(tabId);
   // Without the host permission getAll() returns nothing, which would look like
   // every cookie had disappeared.
-  // Checks stored before groups existed carry only the domain.
-  if (!check || !await hasHostPermission({ origins: check.origins ?? [`*://${check.domain}/*`] })) return;
-  const domain = check.cookieDomain ?? check.domain;
+  if (!check?.origins || !check.cookieDomain || !await hasHostPermission({ origins: check.origins })) return;
+  const domain = check.cookieDomain;
   const current = await getCookiesForDomain(domain);
   // A group's permission also reaches the sibling hosts an exact scope leaves out.
   const compared = check.cookieExact ? cookiesWithin(current, { domain, exact: true }) : current;
