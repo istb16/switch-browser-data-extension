@@ -155,7 +155,7 @@ test('localStorage saved on app is not written to www', async ({ context, extens
   await expect(wwwPopup.locator('#statusMsg')).toHaveClass(/success/);
   await expect(row(wwwPopup, 'app-state')).toHaveClass(/is-active/);
 
-  await expect.poll(() => www.evaluate(() => window.notReloaded ?? false)).toBe(false);
+  await expect.poll(() => www.evaluate(() => window.notReloaded ?? false).catch(() => null)).toBe(false);
   expect(await www.evaluate(() => localStorage.getItem('greeting'))).toBe('www-own');
   expect(await app.evaluate(() => localStorage.getItem('greeting'))).toBe('from-app');
 });

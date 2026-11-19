@@ -53,7 +53,7 @@ test('save then load round-trips real localStorage/sessionStorage, reloads the t
 
   const targetPage = await context.newPage();
   await targetPage.goto(TEST_PAGE_URL);
-  await expect.poll(() => targetPage.evaluate(() => localStorage.getItem('greeting'))).toBe('hello');
+  await expect.poll(() => targetPage.evaluate(() => localStorage.getItem('greeting')).catch(() => null)).toBe('hello');
 
   const savePopup = await openPopupFor(context, extensionId, targetPage);
   await saveAs(savePopup, 'snap1');
@@ -72,9 +72,9 @@ test('save then load round-trips real localStorage/sessionStorage, reloads the t
   await expect(row(loadPopup, 'snap1').locator('.badge--modified')).toBeHidden();
   await expect(loadPopup.locator('#undoBar')).toBeVisible();
 
-  await expect.poll(() => targetPage.evaluate(() => window.notReloaded ?? false)).toBe(false);
-  await expect.poll(() => targetPage.evaluate(() => localStorage.getItem('greeting'))).toBe('hello');
-  await expect.poll(() => targetPage.evaluate(() => sessionStorage.getItem('counter'))).toBe('1');
+  await expect.poll(() => targetPage.evaluate(() => window.notReloaded ?? false).catch(() => null)).toBe(false);
+  await expect.poll(() => targetPage.evaluate(() => localStorage.getItem('greeting')).catch(() => null)).toBe('hello');
+  await expect.poll(() => targetPage.evaluate(() => sessionStorage.getItem('counter')).catch(() => null)).toBe('1');
 
   const tabId = await loadPopup.evaluate(async url => (await chrome.tabs.query({})).find(t => t.url === url).id, targetPage.url());
   await expect.poll(() => loadPopup.evaluate(id => chrome.action.getBadgeText({ tabId: id }), tabId)).toBe('sn');
@@ -125,7 +125,7 @@ test('clears the site\'s localStorage, sessionStorage and IndexedDB, and the und
   const targetPage = await context.newPage();
   await targetPage.goto(TEST_PAGE_URL);
   await putRecord(targetPage, { id: 1, name: 'kept' });
-  await expect.poll(() => targetPage.evaluate(() => localStorage.getItem('greeting'))).toBe('hello');
+  await expect.poll(() => targetPage.evaluate(() => localStorage.getItem('greeting')).catch(() => null)).toBe('hello');
 
   const popup = await openPopupFor(context, extensionId, targetPage);
   await popup.locator('#clearSiteBtn').click();
@@ -137,7 +137,7 @@ test('clears the site\'s localStorage, sessionStorage and IndexedDB, and the und
 
   // The test page writes greeting/counter again on load when they are missing,
   // so check right away for the cleared IndexedDB and the backup instead.
-  await expect.poll(() => targetPage.evaluate(() => indexedDB.databases().then(dbs => dbs.map(d => d.name)))).toEqual([]);
+  await expect.poll(() => targetPage.evaluate(() => indexedDB.databases().then(dbs => dbs.map(d => d.name))).catch(() => null)).toEqual([]);
   const backup = await readStorage(popup, 'getBackup', 'localhost');
   expect(backup.localStorage.greeting).toBe('hello');
   expect(Object.keys(backup.indexedDB)).toEqual(['e2e']);
@@ -145,7 +145,7 @@ test('clears the site\'s localStorage, sessionStorage and IndexedDB, and the und
   const restoredReload = targetPage.waitForEvent('load');
   await popup.locator('#undoBtn').click();
   await restoredReload;
-  await expect.poll(() => targetPage.evaluate(() => indexedDB.databases().then(dbs => dbs.map(d => d.name)))).toEqual(['e2e']);
+  await expect.poll(() => targetPage.evaluate(() => indexedDB.databases().then(dbs => dbs.map(d => d.name))).catch(() => null)).toEqual(['e2e']);
 });
 
 test('legacy storage is migrated in the browser', async ({ context, extensionId }) => {
@@ -153,7 +153,7 @@ test('legacy storage is migrated in the browser', async ({ context, extensionId 
 
   const targetPage = await context.newPage();
   await targetPage.goto(TEST_PAGE_URL);
-  await expect.poll(() => targetPage.evaluate(() => localStorage.getItem('greeting'))).toBe('hello');
+  await expect.poll(() => targetPage.evaluate(() => localStorage.getItem('greeting')).catch(() => null)).toBe('hello');
 
   const seeder = await context.newPage();
   await seeder.goto(`chrome-extension://${extensionId}/options/options.html`);
@@ -174,7 +174,8 @@ test('legacy storage is migrated in the browser', async ({ context, extensionId 
   await expect(popup.locator('#undoBar')).toBeVisible();
 
   await popup.locator('#undoBtn').click();
-  await expect.poll(() => targetPage.evaluate(() => localStorage.getItem('greeting'))).toBe('from backup');
+  // The undo reloads the tab; a read during that navigation throws, and counts as not yet.
+  await expect.poll(() => targetPage.evaluate(() => localStorage.getItem('greeting')).catch(() => null)).toBe('from backup');
 
   const stored = await popup.evaluate(() => chrome.storage.local.get(null));
   expect(stored).not.toHaveProperty('snapshots');
