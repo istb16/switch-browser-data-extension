@@ -96,7 +96,7 @@ describe('options/options.js', () => {
       ]);
       expect(segs.reduce((sum, s) => sum + Number(s.dataset.bytes), 0)).toBe(total);
       expect(segs[0].title).toContain('f.com');
-      expect(segs.slice(0, 5).some(s => s.title.includes('a.com'))).toBe(false);
+      expect(segs.slice(0, 5).map(s => s.title.split(': ')[0])).not.toContain('a.com');
       expect(Number(segs[5].dataset.bytes)).toBe(2_000);
       expect(document.getElementById('meterTotal').textContent).toBe(formatBytes(total));
       expect(document.querySelectorAll('#meterLegend li')).toHaveLength(7);
