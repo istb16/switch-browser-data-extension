@@ -130,6 +130,35 @@ test('an IndexedDB edit that keeps the record count still shows as a change', as
   await expect(badge).toHaveAttribute('title', /IndexedDB/);
 });
 
+test('clears the site\'s localStorage, sessionStorage and IndexedDB, and the undo bar brings them back', async ({ context, extensionId }) => {
+  await disableCookieCollection(context, extensionId);
+
+  const targetPage = await context.newPage();
+  await targetPage.goto(TEST_PAGE_URL);
+  await putRecord(targetPage, { id: 1, name: 'kept' });
+  await expect.poll(() => targetPage.evaluate(() => localStorage.getItem('greeting'))).toBe('hello');
+
+  const popup = await openPopupFor(context, extensionId, targetPage);
+  await popup.locator('#clearSiteBtn').click();
+  await expect(popup.locator('.tk3-dialog-msg')).toContainText('localhost');
+  const clearedReload = targetPage.waitForEvent('load');
+  await popup.locator('.tk3-btn-confirm').click();
+  await expect(popup.locator('#statusMsg')).toHaveClass(/success/);
+  await clearedReload;
+
+  // The test page writes greeting/counter again on load when they are missing,
+  // so check right away for the cleared IndexedDB and the backup instead.
+  await expect.poll(() => targetPage.evaluate(() => indexedDB.databases().then(dbs => dbs.map(d => d.name)))).toEqual([]);
+  const backup = await popup.evaluate(() => chrome.storage.local.get('backups').then(r => r.backups.localhost));
+  expect(backup.localStorage.greeting).toBe('hello');
+  expect(Object.keys(backup.indexedDB)).toEqual(['e2e']);
+
+  const restoredReload = targetPage.waitForEvent('load');
+  await popup.locator('#undoBtn').click();
+  await restoredReload;
+  await expect.poll(() => targetPage.evaluate(() => indexedDB.databases().then(dbs => dbs.map(d => d.name)))).toEqual(['e2e']);
+});
+
 test('the undo bar restores the state from before the load', async ({ context, extensionId }) => {
   await disableCookieCollection(context, extensionId);
 

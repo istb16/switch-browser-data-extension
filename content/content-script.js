@@ -9,6 +9,14 @@
       handleGet(message.types, message.digest).then(sendResponse).catch(e => sendResponse({ error: e.message }));
       return true;
     }
+    if (message.type === 'ping') {
+      sendResponse({ ok: true });
+      return false;
+    }
+    if (message.type === 'clearStorageData') {
+      handleClear(message.types).then(blocked => sendResponse({ success: true, blockedIndexedDB: blocked })).catch(e => sendResponse({ error: e.message }));
+      return true;
+    }
     if (message.type === 'setStorageData') {
       handleSet(message.data, message.types).then(() => sendResponse({ success: true })).catch(e => sendResponse({ error: e.message }));
       return true;
@@ -27,6 +35,12 @@
       else        data.indexedDB       = indexedDB;
     }
     return data;
+  }
+
+  async function handleClear(types) {
+    if (types.localStorage)   localStorageHandler.clear();
+    if (types.sessionStorage) sessionStorageHandler.clear();
+    return types.indexedDB ? indexedDBHandler.clearAll() : [];
   }
 
   async function handleSet(data, types) {

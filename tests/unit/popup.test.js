@@ -23,6 +23,7 @@ let pageData;
 
 function mockContentScript() {
   chrome.tabs.sendMessage = vi.fn(async (_tabId, message) => {
+    if (message.type === 'ping') return { ok: true };
     if (message.type === 'getStorageData') return structuredClone(pageData);
     if (message.type === 'setStorageData') {
       pageData = { ...pageData, ...structuredClone(message.data) };
@@ -446,6 +447,170 @@ describe('popup/popup.js', () => {
       const { cookieChecks } = await chrome.storage.local.get('cookieChecks');
       expect(cookieChecks[1]).toMatchObject({ domain: 'example.com', cookies: [sid('account-b')] });
       expect(chrome._state.reloadedTabs).toEqual([1]);
+    });
+  });
+
+  describe('clearing the site\'s data', () => {
+    const sid = { name: 'sid', value: 'a', domain: 'example.com', path: '/', secure: true, httpOnly: true, sameSite: 'lax' };
+
+    let blockedIndexedDB = [];
+
+    function mockContentScriptWithClear() {
+      const base = chrome.tabs.sendMessage;
+      chrome.tabs.sendMessage = vi.fn(async (tabId, message) => {
+        if (message.type === 'clearStorageData') {
+          pageData = {};
+          return { success: true, blockedIndexedDB: blockedIndexedDB };
+        }
+        return base(tabId, message);
+      });
+    }
+
+    beforeEach(async () => {
+      await setSnapshots({ 'example.com': { first: snap('2024-01-01T00:00:00.000Z', { localStorage: { current: '1' } }) } });
+      await setActiveSnapshots({ 'example.com': 'first' });
+      chrome._state.cookies = [sid];
+      blockedIndexedDB = [];
+      mockContentScriptWithClear();
+    });
+
+    it('cancels a cookie check left from a recent load, so the cleared jar is not learned from', async () => {
+      await chrome.storage.local.set({ cookieChecks: { 1: { domain: 'example.com', cookies: [sid], until: Date.now() + 60_000 } } });
+      await loadPopup('https://example.com/');
+
+      $('clearSiteBtn').click();
+      await settle();
+      document.querySelector('.tk3-btn-confirm').click();
+      await settle();
+
+      expect((await chrome.storage.local.get('cookieChecks')).cookieChecks).toEqual({});
+    });
+
+    it('touches nothing, and keeps the existing backup, when the page can\'t be reached', async () => {
+      await chrome.storage.local.set({ backups: { 'example.com': { savedAt: '2024-01-01T00:00:00.000Z', activeName: null, localStorage: { earlier: '1' } } } });
+      chrome.tabs.sendMessage = vi.fn(async () => {
+        throw new Error('Receiving end does not exist.');
+      });
+      await loadPopup('https://example.com/');
+
+      $('clearSiteBtn').click();
+      await settle();
+      document.querySelector('.tk3-btn-confirm').click();
+      await settle();
+
+      expect($('statusMsg').className).toContain('error');
+      expect(chrome._state.cookies).toEqual([sid]);
+      expect((await getBackups())['example.com'].localStorage).toEqual({ earlier: '1' });
+      expect((await getActiveSnapshots())['example.com']).toBe('first');
+    });
+
+    it('says a reload is needed when the page keeps an IndexedDB open and automatic reload is off', async () => {
+      blockedIndexedDB = ['app'];
+      await setSettings({ ...(await getSettings()), autoReload: false });
+      await loadPopup('https://example.com/');
+
+      $('clearSiteBtn').click();
+      await settle();
+      document.querySelector('.tk3-btn-confirm').click();
+      await settle();
+
+      expect($('statusMsg').textContent).toContain('再読み込み');
+      expect(chrome._state.reloadedTabs).toEqual([]);
+    });
+
+    it('hides the button when every data type is turned off', async () => {
+      await setSettings({ ...(await getSettings()), enabledTypes: { cookies: false, localStorage: false, sessionStorage: false, indexedDB: false } });
+      await loadPopup('https://example.com/');
+
+      expect($('clearSiteBtn').classList.contains('hidden')).toBe(true);
+    });
+
+    it('does nothing when the confirmation is cancelled', async () => {
+      await loadPopup('https://example.com/');
+
+      $('clearSiteBtn').click();
+      await settle();
+      expect(document.querySelector('.tk3-dialog-msg').textContent).toContain('example.com');
+      document.querySelector('.tk3-btn-cancel').click();
+      await settle();
+
+      expect(chrome._state.cookies).toEqual([sid]);
+      expect(pageData.localStorage).toEqual({ current: '1' });
+    });
+
+    it('clears cookies and storage, backs up first, drops the active snapshot and reloads', async () => {
+      await loadPopup('https://example.com/');
+
+      $('clearSiteBtn').click();
+      await settle();
+      document.querySelector('.tk3-btn-confirm').click();
+      await settle();
+
+      expect(chrome._state.cookies).toEqual([]);
+      expect(pageData).toEqual({});
+      const backup = (await getBackups())['example.com'];
+      expect(backup.localStorage).toEqual({ current: '1' });
+      expect(backup.cookies.map(c => c.value)).toEqual(['a']);
+      expect(backup.activeName).toBe('first');
+      expect((await getActiveSnapshots())['example.com']).toBeUndefined();
+      expect(chrome._state.reloadedTabs).toEqual([1]);
+      expect($('statusMsg').className).toContain('success');
+      expect($('undoBar').classList.contains('hidden')).toBe(false);
+    });
+
+    it('can be undone with the undo bar', async () => {
+      await loadPopup('https://example.com/');
+      $('clearSiteBtn').click();
+      await settle();
+      document.querySelector('.tk3-btn-confirm').click();
+      await settle();
+
+      $('undoBtn').click();
+      await settle();
+
+      expect($('statusMsg').textContent).toBe('直前の状態に戻しました');
+      expect(chrome._state.cookies.map(c => c.value)).toEqual(['a']);
+      expect(pageData.localStorage).toEqual({ current: '1' });
+      expect((await getActiveSnapshots())['example.com']).toBe('first');
+    });
+
+    it('only clears the data types turned on, and says it can\'t be undone without a backup', async () => {
+      await setSettings({ ...(await getSettings()), autoBackup: false, enabledTypes: { cookies: false, localStorage: true, sessionStorage: true, indexedDB: false } });
+      await loadPopup('https://example.com/');
+
+      $('clearSiteBtn').click();
+      await settle();
+      const message = document.querySelector('.tk3-dialog-msg').textContent;
+      expect(message).toContain('localStorage・sessionStorage');
+      expect(message).not.toContain('Cookie');
+      expect(message).toContain('元に戻せません');
+      document.querySelector('.tk3-btn-confirm').click();
+      await settle();
+
+      expect(chrome._state.cookies).toEqual([sid]);
+      expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(1, {
+        type: 'clearStorageData',
+        types: { localStorage: true, sessionStorage: true, indexedDB: false },
+      });
+      expect(await getBackups()).toEqual({});
+    });
+
+    it('reports a failure, and keeps the cookies, when clearing the page\'s storage fails', async () => {
+      chrome.tabs.sendMessage = vi.fn(async (_tabId, message) => {
+        if (message.type === 'clearStorageData') return { error: 'SecurityError' };
+        if (message.type === 'ping') return { ok: true };
+        return structuredClone(pageData);
+      });
+      await loadPopup('https://example.com/');
+
+      $('clearSiteBtn').click();
+      await settle();
+      document.querySelector('.tk3-btn-confirm').click();
+      await settle();
+
+      expect($('statusMsg').className).toContain('error');
+      expect(chrome._state.cookies).toEqual([sid]);
+      expect((await getActiveSnapshots())['example.com']).toBe('first');
     });
   });
 
