@@ -674,6 +674,158 @@ describe('options/options.js', () => {
     });
   });
 
+  describe('subdomain groups', () => {
+    const SAVED = '2024-01-01T00:00:00.000Z';
+    const status = () => document.getElementById('statusMsg');
+    const groupNames = () => [...document.querySelectorAll('#groupList .group-item')].map(li => li.dataset.group);
+
+    async function submitGroup(value) {
+      document.getElementById('groupInput').value = value;
+      document.getElementById('groupForm').requestSubmit();
+      await flush();
+    }
+
+    async function answer(confirm) {
+      document.querySelector(confirm ? '.tk3-btn-confirm' : '.tk3-btn-cancel').click();
+      await flush();
+      await flush();
+    }
+
+    it.each([
+      ['co.jp', 'error_group_registry'],
+      ['github.io', 'error_group_shared'],
+      ['localhost', 'error_group_single_label'],
+      ['192.168.0.1', 'error_group_ip'],
+    ])('refuses %s without a confirm or a permission request', async (input, key) => {
+      await loadOptions();
+      const request = vi.spyOn(chrome.permissions, 'request');
+
+      await submitGroup(input);
+
+      expect(document.querySelector('.tk3-dialog')).toBeNull();
+      expect(status().className).toContain('error');
+      expect(status().textContent).toBe(MESSAGES.ja[key].replace('{group}', input));
+      expect(request).not.toHaveBeenCalled();
+      expect((await chrome.storage.local.get('groups')).groups ?? []).toEqual([]);
+    });
+
+    it('refuses a duplicate and a nested group', async () => {
+      await chrome.storage.local.set({ groups: ['example.com'] });
+      await loadOptions();
+
+      await submitGroup('example.com');
+      expect(status().textContent).toBe(MESSAGES.ja.error_group_duplicate.replace('{group}', 'example.com'));
+      await submitGroup('app.example.com');
+      expect(status().textContent).toBe(MESSAGES.ja.error_group_nested.replace('{group}', 'app.example.com'));
+      expect((await chrome.storage.local.get('groups')).groups).toEqual(['example.com']);
+    });
+
+    it('confirms the exact scope with the shared-domain warning; cancel adds and requests nothing', async () => {
+      await loadOptions();
+      const request = vi.spyOn(chrome.permissions, 'request');
+
+      await submitGroup('https://Example.com/path');
+      const message = document.querySelector('.tk3-dialog-msg').textContent;
+      expect(message).toContain('example.com');
+      expect(message).toContain('*.example.com');
+      expect(message).toContain('無関係なサイトが共有するドメイン');
+
+      await answer(false);
+      expect(request).not.toHaveBeenCalled();
+      expect((await chrome.storage.local.get('groups')).groups ?? []).toEqual([]);
+      expect(groupNames()).toEqual([]);
+      expect(document.querySelector('#groupList .group-empty')).not.toBeNull();
+    });
+
+    it('adds the group on OK, requests both group origins and lists it', async () => {
+      await loadOptions();
+
+      await submitGroup('example.com');
+      await answer(true);
+
+      expect((await chrome.storage.local.get('groups')).groups).toEqual(['example.com']);
+      expect([...chrome._state.grantedOrigins].sort()).toEqual(['*://*.example.com/*', '*://example.com/*']);
+      expect(groupNames()).toEqual(['example.com']);
+      expect(document.getElementById('groupInput').value).toBe('');
+      expect(status().textContent).toBe(MESSAGES.ja.status_group_added.replace('{group}', 'example.com'));
+    });
+
+    it('does not request permission when cookies are turned off', async () => {
+      await setSettings({ ...(await getSettings()), enabledTypes: { cookies: false, localStorage: true, sessionStorage: true, indexedDB: true } });
+      await loadOptions();
+      const request = vi.spyOn(chrome.permissions, 'request');
+
+      await submitGroup('example.com');
+      await answer(true);
+
+      expect(request).not.toHaveBeenCalled();
+      expect((await chrome.storage.local.get('groups')).groups).toEqual(['example.com']);
+    });
+
+    it('changes no snapshot, order or backup when adding a group', async () => {
+      await setSnapshots({
+        'app.example.com': { a: { savedAt: SAVED, localStorage: { k: '1' } } },
+        'www.example.com': { w: { savedAt: SAVED } },
+      });
+      await setSnapshotOrders({ 'app.example.com': ['a'], 'www.example.com': ['w'] });
+      await chrome.storage.local.set({ backups: { 'app.example.com': { savedAt: SAVED, activeName: null } } });
+      const before = await chrome.storage.local.get(['snapshots', 'snapshotOrder', 'backups']);
+      await loadOptions();
+
+      await submitGroup('example.com');
+      await answer(true);
+
+      expect(await chrome.storage.local.get(['snapshots', 'snapshotOrder', 'backups'])).toEqual(before);
+    });
+
+    it('shows a group chip on member hosts only', async () => {
+      await chrome.storage.local.set({ groups: ['example.com'] });
+      await setSnapshots({
+        'app.example.com': { a: { savedAt: SAVED } },
+        'notexample.com':  { n: { savedAt: SAVED } },
+      });
+      await loadOptions();
+
+      const chips = Object.fromEntries(domainItems().map(item => [
+        item.querySelector('.domain-name').textContent,
+        item.querySelector('.group-chip')?.textContent ?? null,
+      ]));
+      expect(chips).toEqual({ 'app.example.com': 'グループ: example.com', 'notexample.com': null });
+    });
+
+    it('delete removes only the wildcard permission and changes no snapshot', async () => {
+      await chrome.storage.local.set({ groups: ['example.com'] });
+      await setSnapshots({ 'app.example.com': { a: { savedAt: SAVED } } });
+      chrome._state.grantedOrigins.add('*://example.com/*');
+      chrome._state.grantedOrigins.add('*://*.example.com/*');
+      const before = await getSnapshots();
+      await loadOptions();
+
+      document.querySelector('#groupList .group-item[data-group="example.com"] .btn-icon').click();
+      await flush();
+      await answer(true);
+
+      expect((await chrome.storage.local.get('groups')).groups).toEqual([]);
+      expect([...chrome._state.grantedOrigins]).toEqual(['*://example.com/*']);
+      expect(await getSnapshots()).toEqual(before);
+      expect(groupNames()).toEqual([]);
+      expect(document.querySelector('.group-chip')).toBeNull();
+    });
+
+    it('delete does nothing when cancelled', async () => {
+      await chrome.storage.local.set({ groups: ['example.com'] });
+      chrome._state.grantedOrigins.add('*://*.example.com/*');
+      await loadOptions();
+
+      document.querySelector('#groupList .group-item .btn-icon').click();
+      await flush();
+      await answer(false);
+
+      expect((await chrome.storage.local.get('groups')).groups).toEqual(['example.com']);
+      expect([...chrome._state.grantedOrigins]).toEqual(['*://*.example.com/*']);
+    });
+  });
+
   describe('clearing all data', () => {
     it('deletes everything after confirming', async () => {
       await setSnapshots({ 'a.com': { x: { savedAt: '2024-01-01T00:00:00.000Z' } } });

@@ -1,5 +1,5 @@
 import { initI18n, t, applyI18n, setLanguage, getSavedLangSetting } from '../lib/i18n.js';
-import { getSnapshots, setSnapshots, getSettings, setSettings, getSnapshotOrders, setSnapshotOrders } from '../lib/storage.js';
+import { getSnapshots, setSnapshots, getSettings, setSettings, getSnapshotOrders, setSnapshotOrders, getGroups } from '../lib/storage.js';
 import { deleteSnapshot, renameSnapshot, setSnapshotOrder, clearAllData } from '../lib/snapshot.js';
 import { bindInlineRename } from '../lib/inline-rename.js';
 import { showConfirm, showFormDialog, showChoice } from '../lib/dialog.js';
@@ -7,6 +7,7 @@ import { $, escHtml, showStatus } from '../lib/ui.js';
 import { SNAPSHOT_COLORS, measureDomains, formatBytes } from '../lib/snapshot-summary.js';
 import { encryptText, decryptEnvelope } from '../lib/crypto.js';
 import { IMPORT_MAX_BYTES, buildExport, exportFileName, parseImport, findConflicts, mergeImport } from '../lib/transfer.js';
+import { normalizeGroupDomain, validateNewGroup, groupOrigins, resolveScope, addGroup, removeGroup } from '../lib/groups.js';
 
 const PANES = ['general', 'data-types', 'snapshots', 'data'];
 const PASSPHRASE_MIN = 8;
@@ -43,7 +44,9 @@ async function init() {
   $('importFile').addEventListener('change', handleImport);
   $('clearAllBtn').addEventListener('click', handleClearAll);
   $('sortSelect').addEventListener('change', () => renderDomainList());
+  $('groupForm').addEventListener('submit', handleAddGroup);
 
+  await renderGroups();
   await renderDomainList();
 }
 
@@ -111,6 +114,7 @@ async function handleLanguageChange() {
   await setLanguage($('langSelect').value);
   applyI18n();
   renderVersionFooter();
+  await renderGroups();
   await renderDomainList();
 }
 
@@ -134,8 +138,79 @@ async function handleSaveSettings() {
   showStatus($('statusMsg'), t('status_settings_saved'), 'success');
 }
 
+async function renderGroups() {
+  const groups = await getGroups();
+  const list = $('groupList');
+  if (groups.length === 0) {
+    const empty = document.createElement('li');
+    empty.className = 'group-empty';
+    empty.textContent = t('empty_groups');
+    list.replaceChildren(empty);
+    return;
+  }
+  list.replaceChildren(...groups.map(group => {
+    const li = document.createElement('li');
+    li.className = 'group-item';
+    li.dataset.group = group;
+    const name = document.createElement('span');
+    name.className = 'group-name';
+    name.textContent = group;
+    const scope = document.createElement('span');
+    scope.className = 'group-scope';
+    scope.textContent = `*.${group}`;
+    const removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'btn-icon';
+    removeBtn.title = t('btn_remove_group_title', { group });
+    removeBtn.setAttribute('aria-label', removeBtn.title);
+    removeBtn.textContent = '✕';
+    removeBtn.addEventListener('click', () => handleRemoveGroup(group));
+    li.append(name, scope, removeBtn);
+    return li;
+  }));
+}
+
+async function handleAddGroup(e) {
+  e.preventDefault();
+  const input = $('groupInput');
+  try {
+    const base = normalizeGroupDomain(input.value);
+    const error = validateNewGroup(input.value, await getGroups());
+    if (error) {
+      showStatus($('statusMsg'), t(`error_group_${error.replace('-', '_')}`, { group: base }), 'error');
+      return;
+    }
+    if (!await showConfirm(t('confirm_add_group', { group: base }))) return;
+    const { enabledTypes } = await getSettings();
+    const granted = enabledTypes.cookies ? await chrome.permissions.request({ origins: groupOrigins(base) }) : true;
+    await addGroup(base);
+    input.value = '';
+    await renderGroups();
+    await renderDomainList();
+    showStatus($('statusMsg'), t(granted ? 'status_group_added' : 'status_group_added_no_permission', { group: base }), 'success');
+  } catch (err) {
+    showStatus($('statusMsg'), t('error_group_failed'), 'error');
+    console.error(err);
+  }
+}
+
+async function handleRemoveGroup(base) {
+  try {
+    if (!await showConfirm(t('confirm_remove_group', { group: base }))) return;
+    await removeGroup(base);
+    // *://base/* stays: the base host goes on using it as its own scope.
+    await chrome.permissions.remove({ origins: [`*://*.${base}/*`] });
+    await renderGroups();
+    await renderDomainList();
+    showStatus($('statusMsg'), t('status_group_removed', { group: base }), 'success');
+  } catch (err) {
+    showStatus($('statusMsg'), t('error_group_failed'), 'error');
+    console.error(err);
+  }
+}
+
 async function renderDomainList(sort = $('sortSelect').value) {
-  const [allSnapshots, allOrders] = await Promise.all([getSnapshots(), getSnapshotOrders()]);
+  const [allSnapshots, allOrders, groups] = await Promise.all([getSnapshots(), getSnapshotOrders(), getGroups()]);
   await renderMeter(allSnapshots);
   const container = $('domainList');
   container.replaceChildren();
@@ -177,6 +252,14 @@ async function renderDomainList(sort = $('sortSelect').value) {
         <span class="chevron">▾</span>
       </div>
     `;
+    const { group } = resolveScope(domain, groups);
+    if (group) {
+      const chip = document.createElement('span');
+      chip.className = 'group-chip';
+      chip.textContent = t('group_chip', { group });
+      chip.title = t('group_chip_title', { group });
+      header.querySelector('.domain-header-left').appendChild(chip);
+    }
     header.addEventListener('click', () => item.classList.toggle('open'));
     const domainExportBtn = buildExportButton(t('export_domain_title', { domain }), btn => handleExport({ domain }, btn));
     header.querySelector('.domain-header-right').prepend(domainExportBtn);
