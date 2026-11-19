@@ -223,4 +223,46 @@ describe('lib/cookie-handler', () => {
     expect(chrome._state.cookies.map(({ domain, value }) => ({ domain, value })).sort((a, b) => a.domain.localeCompare(b.domain)))
       .toEqual([{ domain: '.example.com', value: 'domain' }, { domain: 'example.com', value: 'host' }]);
   });
+
+  it('setCookiesForDomain removes every existing cookie before setting any', async () => {
+    chrome._state.cookies = [cookie('a', 'example.com'), cookie('b', '.example.com'), cookie('c', 'app.example.com')];
+    const events = [];
+    const realRemove = chrome.cookies.remove;
+    vi.spyOn(chrome.cookies, 'remove').mockImplementation(async details => {
+      events.push(`remove-start:${details.name}`);
+      await new Promise(resolve => setTimeout(resolve, details.name === 'a' ? 10 : 0));
+      events.push(`remove-end:${details.name}`);
+      return realRemove(details);
+    });
+    const realSet = chrome.cookies.set;
+    vi.spyOn(chrome.cookies, 'set').mockImplementation(details => {
+      events.push(`set:${details.name}`);
+      return realSet(details);
+    });
+
+    await setCookiesForDomain('example.com', [cookie('new', 'example.com')]);
+
+    const lastRemoveEnd = events.findLastIndex(e => e.startsWith('remove-end:'));
+    const firstSet = events.findIndex(e => e.startsWith('set:'));
+    expect(events.filter(e => e.startsWith('remove-end:'))).toHaveLength(3);
+    expect(firstSet).toBeGreaterThan(lastRemoveEnd);
+    expect(events.slice(0, 3).every(e => e.startsWith('remove-start:'))).toBe(true);
+    expect(chrome._state.cookies.map(c => c.name)).toEqual(['new']);
+  });
+
+  it('setCookiesForDomain keeps the last value of a duplicate name/domain/path', async () => {
+    await setCookiesForDomain('example.com', [
+      cookie('sid', 'example.com', { value: 'first' }),
+      cookie('sid', 'example.com', { value: 'last' }),
+    ]);
+
+    expect(chrome._state.cookies.map(({ name, value }) => ({ name, value }))).toEqual([{ name: 'sid', value: 'last' }]);
+  });
+
+  it('setCookiesForDomain sets both a host-only and a domain cookie of the same name into an empty jar', async () => {
+    await setCookiesForDomain('example.com', [cookie('sid', 'example.com', { value: 'host' }), cookie('sid', '.example.com', { value: 'domain' })]);
+
+    expect(chrome._state.cookies.map(({ domain, value }) => `${domain}:${value}`).sort())
+      .toEqual(['.example.com:domain', 'example.com:host']);
+  });
 });
