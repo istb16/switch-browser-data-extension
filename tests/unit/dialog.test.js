@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { showConfirm } from '../../lib/dialog.js';
+import { showConfirm, showFormDialog, showChoice } from '../../lib/dialog.js';
 
 const dialog = () => document.querySelector('dialog.tk3-dialog');
 
@@ -56,5 +56,73 @@ describe('lib/dialog showConfirm', () => {
     expect(document.querySelectorAll('#tk3-dialog-css')).toHaveLength(1);
     dialog().querySelector('.tk3-btn-cancel').click();
     await second;
+  });
+});
+
+describe('lib/dialog showFormDialog', () => {
+  const flush = () => new Promise(r => setTimeout(r, 0));
+
+  it('showFormDialog resolves true on confirm and false on Esc/cancel', async () => {
+    const input = document.createElement('input');
+    let error = 'too short';
+    const promise = showFormDialog({
+      title: 'Passphrase',
+      content: input,
+      confirmLabel: 'Export',
+      validate: () => error,
+    });
+
+    const d = dialog();
+    const title = d.querySelector('.tk3-dialog-title');
+    expect(title.textContent).toBe('Passphrase');
+    expect(d.getAttribute('aria-labelledby')).toBe(title.id);
+    expect(d.querySelector('.tk3-dialog-fields').contains(input)).toBe(true);
+    const confirm = d.querySelector('.tk3-btn-confirm');
+    expect(confirm.textContent).toBe('Export');
+
+    confirm.click();
+    await flush();
+    expect(d.open).toBe(true);
+    const errorEl = d.querySelector('.tk3-dialog-error');
+    expect(errorEl.hidden).toBe(false);
+    expect(errorEl.textContent).toBe('too short');
+
+    error = null;
+    confirm.click();
+    expect(await promise).toBe(true);
+    expect(dialog()).toBeNull();
+
+    const cancelled = showFormDialog({ title: 't', content: document.createElement('input') });
+    dialog().querySelector('.tk3-btn-cancel').click();
+    expect(await cancelled).toBe(false);
+
+    const escaped = showFormDialog({ title: 't', content: document.createElement('input') });
+    dialog().close();
+    expect(await escaped).toBe(false);
+  });
+});
+
+describe('lib/dialog showChoice', () => {
+  it('showChoice resolves the chosen value, null on Esc', async () => {
+    const choices = [
+      { value: 'overwrite', label: 'Overwrite' },
+      { value: 'skip', label: 'Skip' },
+      { value: 'keepBoth', label: '<b>Keep both</b>' },
+    ];
+    const promise = showChoice('2 conflicts', choices);
+    const d = dialog();
+    expect(d.querySelector('.tk3-dialog-msg').textContent).toBe('2 conflicts');
+    const buttons = [...d.querySelectorAll('.tk3-btn-confirm')];
+    expect(buttons.map(b => b.textContent)).toEqual(['Overwrite', 'Skip', '<b>Keep both</b>']);
+    buttons[1].click();
+    expect(await promise).toBe('skip');
+
+    const escaped = showChoice('again', choices);
+    dialog().close();
+    expect(await escaped).toBeNull();
+
+    const cancelled = showChoice('again', choices);
+    dialog().querySelector('.tk3-btn-cancel').click();
+    expect(await cancelled).toBeNull();
   });
 });
