@@ -1,0 +1,38 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # A tag that disagrees with manifest.json would attach a zip whose
+      # version the store rejects or misreports, so stop before building.
+      - name: Check manifest version
+        run: |
+          version=$(jq -r .version manifest.json)
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match manifest.json version $version"
+            exit 1
+          fi
+
+      - run: bash deploy/build.sh
+
+      # Created as a draft so the notes can be written by hand before publishing.
+      # Re-running on an existing release only replaces the zip.
+      - name: Attach zip to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" store/manifest.zip --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" store/manifest.zip --draft --title "$GITHUB_REF_NAME" --generate-notes
+          fi
