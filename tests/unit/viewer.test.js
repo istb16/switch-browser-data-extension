@@ -137,6 +137,16 @@ describe('viewer/viewer.js', () => {
       expect(bodyRows(typeSection('localStorage'))).toHaveLength(2);
     });
 
+    it('a failure while opening shows an error instead of a blank page', async () => {
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+      chrome.storage.local.get = vi.fn(async () => { throw new Error('storage broken'); });
+      await loadViewer({ host: HOST, name: 'main' });
+      expect($('notFound').classList.contains('hidden')).toBe(false);
+      expect($('notFound').textContent).toBe('スナップショットを開けませんでした。タブを再読み込みしてください');
+      expect(error).toHaveBeenCalled();
+      error.mockRestore();
+    });
+
     it('missing snapshot shows not-found', async () => {
       await setSnapshots({ [HOST]: { main: baseSnapshot() } });
       await loadViewer({ host: HOST, name: 'gone' });
@@ -854,6 +864,19 @@ describe('viewer/viewer.js', () => {
         expect(summaryText(typeSection(type))).toContain('比べられません');
       }
       expect(noteText()).toContain('読めなかったデータ');
+    });
+
+    it('a snapshot of a file: page says its page data cannot be compared', async () => {
+      await setSnapshots({ '': { local: baseSnapshot() } });
+      chrome._state.tabs = [{ id: 5, url: 'file:///C:/page.html' }];
+      await loadViewer({ host: '', name: 'local', tabId: 5 });
+      await selectCompare('current');
+
+      for (const type of ['localStorage', 'sessionStorage', 'indexedDB']) {
+        expect(summaryText(typeSection(type))).toContain('ファイルのページとは比べられません');
+      }
+      expect(noteText()).toContain('ファイル（file:）のページで保存したスナップショット');
+      expect(chrome.tabs.sendMessage).not.toHaveBeenCalled();
     });
 
     it('a failed read shows the error note and plain tables', async () => {

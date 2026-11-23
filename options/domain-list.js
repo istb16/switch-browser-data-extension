@@ -249,6 +249,8 @@ export function buildSnapshotRow(name, snapshot, bytes, domain, snapshotList, he
         if (index !== -1) orders[domain][index] = newName;
         row.dataset.name = newName;
         nameSpan.textContent = newName;
+        viewBtn.title = t('btn_view_title', { name: newName });
+        viewBtn.setAttribute('aria-label', viewBtn.title);
         restore();
         notify('status_snapshot_renamed', { old: oldName, new: newName });
       },

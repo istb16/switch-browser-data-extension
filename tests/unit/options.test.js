@@ -394,6 +394,8 @@ describe('options/options.js', () => {
       input.value = 'renamed';
       input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
       await flush();
+      expect(view.getAttribute('aria-label')).toBe('"renamed" の中身を見る');
+      expect(view.title).toBe('"renamed" の中身を見る');
       view.click();
       await flush();
 

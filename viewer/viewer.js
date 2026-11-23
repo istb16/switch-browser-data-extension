@@ -106,7 +106,8 @@ async function init() {
   renderTypes();
 }
 
-function showNotFound() {
+function showNotFound(textKey = 'viewer_not_found') {
+  $('notFound').textContent = t(textKey);
   $('notFound').classList.remove('hidden');
   $('viewer').classList.add('hidden');
 }
@@ -134,8 +135,6 @@ function renderCompareOptions(order) {
     select.appendChild(option);
   }
 }
-
-// ── Compare ────────────────────────────────────────────────
 
 function scopeText(scope) {
   return t(scope.exact ? 'viewer_scope_exact' : 'viewer_scope_wide', { domain: scope.domain });
@@ -212,16 +211,18 @@ async function readCurrent(snapshot) {
   const tab = found?.tab ?? null;
   const reasons = {};
   const notes = [];
+  const pageHeld = PAGE_TYPES.filter(held);
   if (held('cookies') && !await hasHostPermission(view.scope)) {
     reasons.cookies = t('viewer_reason_no_permission');
     notes.push(t('viewer_note_no_permission'));
   }
-  const pageHeld = PAGE_TYPES.filter(held);
   const origin = tab ? new URL(tab.url).origin : null;
   if (tab) notes.push(t('viewer_note_tab', { origin }));
   else if (pageHeld.length) {
-    for (const type of pageHeld) reasons[type] = t('viewer_reason_no_tab');
-    notes.push(t('viewer_note_no_tab', { host: view.host }));
+    // file: pages have no host, so no tab can be told apart as this snapshot's page.
+    const local = view.host === '';
+    for (const type of pageHeld) reasons[type] = t(local ? 'viewer_reason_file' : 'viewer_reason_no_tab');
+    notes.push(local ? t('viewer_note_file') : t('viewer_note_no_tab', { host: view.host }));
   }
 
   // IndexedDB goes in a call of its own: a reply too large to pass would
@@ -303,8 +304,6 @@ function handleDiffOnlyToggle() {
   view.diffOnly = $('diffOnlyToggle').checked;
   renderTypes();
 }
-
-// ── Rendering ──────────────────────────────────────────────
 
 function textElement(tag, className, text) {
   const el = document.createElement(tag);
@@ -610,4 +609,9 @@ function fillValue(cell, revealed) {
 }
 
 // init() attaches the listeners after several awaits; E2E tests wait on this flag.
-init().finally(() => document.body.setAttribute('data-ready', 'true'));
+init()
+  .catch(error => {
+    console.error(error);
+    showNotFound('viewer_error_open');
+  })
+  .finally(() => document.body.setAttribute('data-ready', 'true'));

@@ -194,6 +194,15 @@ describe('lib/snapshot-diff cookies', () => {
     });
   });
 
+  it('a cookie domain in another case is out of scope and not loaded alike', () => {
+    const upper = cookie('u', '1', { domain: 'Example.com' });
+    const result = diff({ cookies: [cookie('a', '1'), upper] }, { cookies: [cookie('a', '1')] });
+    const row = result.cookies.rows.find(r => r.base?.cookie === upper);
+    expect(row.status).toBe('notCompared');
+    expect(row.notLoaded).toBe(true);
+    expect(result.cookies.skipped).toEqual({ base: 1, other: 0 });
+  });
+
   it('a cookie outside its own load scope is notLoaded', () => {
     const snapshot = { cookies: [cookie('own', '1'), cookie('sub', '1', { domain: `sub.${HOST}` }), { name: 'bad', domain: HOST }] };
     const alone = diffSnapshots(snapshot, null, { loadScope: EXACT });
