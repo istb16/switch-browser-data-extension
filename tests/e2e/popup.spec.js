@@ -80,6 +80,45 @@ test('save then load round-trips real localStorage/sessionStorage, reloads the t
   await expect.poll(() => loadPopup.evaluate(id => chrome.action.getBadgeText({ tabId: id }), tabId)).toBe('sn');
 });
 
+test('the badge takes the label colour', async ({ context, extensionId }) => {
+  await disableCookieCollection(context, extensionId);
+  const targetPage = await context.newPage();
+  await targetPage.goto(TEST_PAGE_URL);
+
+  async function saveWithColor(name, color) {
+    const popup = await openPopupFor(context, extensionId, targetPage);
+    await popup.locator('#saveBtn').click();
+    await popup.locator('#newSnapshotName').fill(name);
+    await popup.locator(`.swatch--${color}`).click();
+    await popup.locator('#confirmSaveBtn').click();
+    await expect(row(popup, name)).toHaveClass(/is-active/);
+    return popup;
+  }
+
+  const redPopup = await saveWithColor('red', 'red');
+  const tabId = await redPopup.evaluate(async url => (await chrome.tabs.query({})).find(t => t.url === url).id, targetPage.url());
+  await expect.poll(() => redPopup.evaluate(id => chrome.action.getBadgeBackgroundColor({ tabId: id }), tabId)).toEqual([197, 34, 31, 255]);
+  await expect.poll(() => redPopup.evaluate(id => chrome.action.getBadgeTextColor({ tabId: id }), tabId)).toEqual([255, 255, 255, 255]);
+  await redPopup.close();
+
+  const amberPopup = await saveWithColor('amber', 'amber');
+  await expect.poll(() => amberPopup.evaluate(id => chrome.action.getBadgeBackgroundColor({ tabId: id }), tabId)).toEqual([246, 184, 32, 255]);
+  await expect.poll(() => amberPopup.evaluate(id => chrome.action.getBadgeTextColor({ tabId: id }), tabId)).toEqual([27, 28, 32, 255]);
+  await expect.poll(() => amberPopup.evaluate(id => chrome.action.getBadgeText({ tabId: id }), tabId)).toBe('am');
+
+  // Leaving for a site with no active snapshot must drop the colour along with the text,
+  // and coming back must draw it again.
+  await targetPage.goto(`http://127.0.0.1:${TEST_PAGE_PORT}/`);
+  await expect.poll(() => amberPopup.evaluate(id => chrome.action.getBadgeText({ tabId: id }), tabId)).toBe('');
+  await expect.poll(() => amberPopup.evaluate(id => chrome.action.getBadgeBackgroundColor({ tabId: id }), tabId)).toEqual([31, 99, 216, 255]);
+  await expect.poll(() => amberPopup.evaluate(id => chrome.action.getBadgeTextColor({ tabId: id }), tabId)).toEqual([255, 255, 255, 255]);
+
+  await targetPage.goto(TEST_PAGE_URL);
+  await expect.poll(() => amberPopup.evaluate(id => chrome.action.getBadgeText({ tabId: id }), tabId)).toBe('am');
+  await expect.poll(() => amberPopup.evaluate(id => chrome.action.getBadgeBackgroundColor({ tabId: id }), tabId)).toEqual([246, 184, 32, 255]);
+  await expect.poll(() => amberPopup.evaluate(id => chrome.action.getBadgeTextColor({ tabId: id }), tabId)).toEqual([27, 28, 32, 255]);
+});
+
 async function enableReloadOtherTabs(context, extensionId) {
   const options = await context.newPage();
   await options.goto(`chrome-extension://${extensionId}/options/options.html#general`);

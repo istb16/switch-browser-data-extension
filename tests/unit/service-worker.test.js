@@ -457,4 +457,447 @@ describe('background/service-worker', () => {
       expect(await getVolatileCookiesFor('a.com')).toEqual({ 'a.com|/|sid': 'value' });
     });
   });
+
+  describe('badge colour', () => {
+    const DEFAULT = ['#1F63D8', '#FFFFFF'];
+    const RED = ['#C5221F', '#FFFFFF'];
+    const GREEN = ['#1E7E45', '#FFFFFF'];
+    const AMBER = ['#F6B820', '#1B1C20'];
+    const bTab = { id: 2, url: 'https://b.com/' };
+    const pair = id => [chrome._state.badgeBackgrounds[id], chrome._state.badgeTextColors[id]];
+    const snapshotGets = (get, key) => get.mock.calls
+      .filter(([keys]) => [keys].flat().some(k => typeof k === 'string' && (key ? k === key : k.startsWith('snapshots/'))))
+      .length;
+    const draw = t => chrome.tabs.onUpdated.dispatch(t.id, { status: 'complete' }, t);
+
+    async function seed(items) {
+      await chrome.storage.local.set(items);
+      chrome._deliverStorageEvents();
+    }
+
+    // A change that must redraw every open tab. Its draw starts behind anything an earlier
+    // event started, so once it lands a redraw or read that event caused has been made too.
+    // A badge key change moves the generation, so a draw started before it sets no badge
+    // afterwards: every setBadgeText call made after the dispatch is this redraw's own.
+    async function redrawEveryTab() {
+      expect(chrome._state.tabs.length).toBeGreaterThan(0);
+      const setText = vi.spyOn(chrome.action, 'setBadgeText');
+      const before = setText.mock.calls.length;
+      chrome.storage.onChanged.dispatch({ groups: { newValue: [] } }, 'local');
+      await vi.waitFor(() => {
+        const drawn = new Set(setText.mock.calls.slice(before).map(([{ tabId }]) => tabId));
+        for (const t of chrome._state.tabs) expect(drawn.has(t.id)).toBe(true);
+      });
+    }
+
+    it('badges a tab in the active snapshot\'s label colour', async () => {
+      chrome._state.tabs = [tab, bTab];
+      await seed({
+        activeSnapshots: { 'a.com': 'Admin', 'b.com': 'Owner' },
+        'snapshots/a.com': { Admin: { color: 'red' } },
+        'snapshots/b.com': { Owner: { color: 'amber' } },
+      });
+      await loadServiceWorker();
+
+      draw(tab);
+      draw(bTab);
+      await vi.waitFor(() => {
+        expect(pair(1)).toEqual(RED);
+        expect(pair(2)).toEqual(AMBER);
+      });
+      expect(chrome._state.badges).toEqual({ 1: 'Ad', 2: 'Ow' });
+    });
+
+    it('a tab without a label, or with the badge off, gets the default colours', async () => {
+      chrome._state.tabs = [tab, bTab];
+      await seed({
+        activeSnapshots: { 'a.com': 'Admin', 'b.com': 'Owner' },
+        'snapshots/a.com': { Admin: {} },
+        'snapshots/b.com': { Owner: { color: 'red' } },
+      });
+      await loadServiceWorker();
+
+      chrome.runtime.onInstalled.dispatch({ reason: 'install' });
+      await vi.waitFor(() => {
+        expect(pair(1)).toEqual(DEFAULT);
+        expect(pair(2)).toEqual(RED);
+      });
+
+      await setSettings({ ...(await getSettings()), showBadge: false });
+      chrome._deliverStorageEvents();
+      await vi.waitFor(() => expect(pair(2)).toEqual(DEFAULT));
+      expect(chrome._state.badges).toEqual({ 1: '', 2: '' });
+    });
+
+    it('a tab drawn with the badge off, with no host or with no active snapshot reads no snapshot key', async () => {
+      chrome._state.tabs = [tab];
+      await seed({
+        activeSnapshots: { 'a.com': 'Admin' },
+        'snapshots/a.com': { Admin: { color: 'red' } },
+        'snapshots/b.com': { Owner: { color: 'red' } },
+      });
+      await loadServiceWorker();
+      const get = vi.spyOn(chrome.storage.local, 'get');
+
+      draw({ id: 3, url: 'about:blank' });
+      draw(bTab);
+      await vi.waitFor(() => {
+        expect(pair(3)).toEqual(DEFAULT);
+        expect(pair(2)).toEqual(DEFAULT);
+      });
+
+      await setSettings({ ...(await getSettings()), showBadge: false });
+      chrome._deliverStorageEvents();
+      draw(tab);
+      await vi.waitFor(() => expect(pair(1)).toEqual(DEFAULT));
+      await redrawEveryTab();
+      expect(snapshotGets(get)).toBe(0);
+    });
+
+    describe('a red tab returns to the default colours', () => {
+      const cases = {
+        'when its label is removed': () => seed({ 'snapshots/a.com': { Admin: {} } }),
+        'when its active snapshot is deleted': async () => {
+          await chrome.storage.local.remove('snapshots/a.com');
+          await seed({ activeSnapshots: {} });
+        },
+        'when all data is cleared': async () => {
+          await chrome.storage.local.clear();
+          chrome._deliverStorageEvents();
+        },
+        'when the badge is turned off': async () => {
+          await setSettings({ ...(await getSettings()), showBadge: false });
+          chrome._deliverStorageEvents();
+        },
+        'when it navigates to a site with no active snapshot': async () => {
+          const moved = { id: 1, url: 'https://c.com/' };
+          chrome._state.tabs = [moved];
+          chrome.tabs.onUpdated.dispatch(1, { url: moved.url }, moved);
+        },
+      };
+
+      for (const [name, change] of Object.entries(cases)) {
+        it(name, async () => {
+          chrome._state.tabs = [tab];
+          await seed({ activeSnapshots: { 'a.com': 'Admin' }, 'snapshots/a.com': { Admin: { color: 'red' } } });
+          await loadServiceWorker();
+          draw(tab);
+          await vi.waitFor(() => expect(pair(1)).toEqual(RED));
+
+          await change();
+          await vi.waitFor(() => expect(pair(1)).toEqual(DEFAULT));
+        });
+      }
+    });
+
+    it('in a group the colour comes from the referenced host\'s snapshot', async () => {
+      await setGroups(['example.com']);
+      await seed({
+        activeSnapshots: { 'example.com': { host: 'app.example.com', name: 'Admin' } },
+        'snapshots/app.example.com': { Admin: { color: 'green' } },
+        'snapshots/www.example.com': { Admin: { color: 'red' } },
+      });
+      await loadServiceWorker();
+      const get = vi.spyOn(chrome.storage.local, 'get');
+
+      draw({ id: 1, url: 'https://www.example.com/' });
+      await vi.waitFor(() => expect(pair(1)).toEqual(GREEN));
+      expect(chrome._state.badges[1]).toBe('Ad');
+      expect(snapshotGets(get)).toBe(1);
+      expect(snapshotGets(get, 'snapshots/app.example.com')).toBe(1);
+    });
+
+    it('a snapshot named __proto__ or constructor is badged by its own label', async () => {
+      const cTab = { id: 3, url: 'https://c.com/' };
+      await seed({
+        activeSnapshots: { 'a.com': '__proto__', 'b.com': 'constructor', 'c.com': 'constructor' },
+        'snapshots/a.com': JSON.parse('{"__proto__": {"color": "red"}, "constructor": {}}'),
+        'snapshots/b.com': JSON.parse('{"__proto__": {}, "constructor": {"color": "red"}}'),
+        'snapshots/c.com': { Other: { color: 'red' } },
+      });
+      await loadServiceWorker();
+
+      draw(tab);
+      draw(bTab);
+      draw(cTab);
+      await vi.waitFor(() => {
+        expect(pair(1)).toEqual(RED);
+        expect(pair(2)).toEqual(RED);
+        expect(pair(3)).toEqual(DEFAULT);
+      });
+
+      await seed({ 'snapshots/a.com': JSON.parse('{"__proto__": {}}') });
+      chrome._state.tabs = [tab, bTab, cTab];
+      chrome.runtime.onStartup.dispatch();
+      await vi.waitFor(() => expect(pair(1)).toEqual(DEFAULT));
+    });
+
+    it('editing the active snapshot\'s colour redraws without reading the snapshot key', async () => {
+      chrome._state.tabs = [tab];
+      await seed({ activeSnapshots: { 'a.com': 'Admin' }, 'snapshots/a.com': { Admin: { color: 'red' } } });
+      await loadServiceWorker();
+      draw(tab);
+      await vi.waitFor(() => expect(pair(1)).toEqual(RED));
+      const get = vi.spyOn(chrome.storage.local, 'get');
+
+      await seed({ 'snapshots/a.com': { Admin: { color: 'amber' } } });
+      await vi.waitFor(() => expect(pair(1)).toEqual(AMBER));
+      expect(snapshotGets(get)).toBe(0);
+    });
+
+    it('a coloured write to a host no tab has drawn redraws nothing and reads nothing', async () => {
+      chrome._state.tabs = [tab];
+      await seed({ activeSnapshots: { 'a.com': 'Admin', 'b.com': 'Owner' }, 'snapshots/a.com': { Admin: { color: 'red' } } });
+      await loadServiceWorker();
+      draw(tab);
+      await vi.waitFor(() => expect(pair(1)).toEqual(RED));
+      const get = vi.spyOn(chrome.storage.local, 'get');
+      const query = vi.spyOn(chrome.tabs, 'query');
+
+      await seed({ 'snapshots/b.com': { Owner: { color: 'red' } } });
+      await redrawEveryTab();
+      expect(query).toHaveBeenCalledTimes(1);
+      expect(snapshotGets(get)).toBe(0);
+
+      draw(bTab);
+      await vi.waitFor(() => expect(pair(2)).toEqual(RED));
+      expect(snapshotGets(get)).toBe(1);
+      expect(snapshotGets(get, 'snapshots/b.com')).toBe(1);
+    });
+
+    it('removing a cached host\'s key resets its tab and forgets the host', async () => {
+      chrome._state.tabs = [tab];
+      await seed({ activeSnapshots: { 'a.com': 'Admin' }, 'snapshots/a.com': { Admin: { color: 'red' } } });
+      await loadServiceWorker();
+      draw(tab);
+      await vi.waitFor(() => expect(pair(1)).toEqual(RED));
+      const get = vi.spyOn(chrome.storage.local, 'get');
+
+      await chrome.storage.local.remove('snapshots/a.com');
+      await seed({ activeSnapshots: {} });
+      await vi.waitFor(() => expect(pair(1)).toEqual(DEFAULT));
+      await redrawEveryTab();
+      expect(snapshotGets(get)).toBe(0);
+
+      await seed({ 'snapshots/a.com': { Admin: { color: 'red' } }, activeSnapshots: { 'a.com': 'Admin' } });
+      await vi.waitFor(() => expect(pair(1)).toEqual(RED));
+      expect(snapshotGets(get, 'snapshots/a.com')).toBe(1);
+    });
+
+    it('two tabs on one uncached host make one snapshot read', async () => {
+      chrome._state.tabs = [tab, { id: 2, url: 'https://a.com/other' }];
+      await seed({ activeSnapshots: { 'a.com': 'Admin' }, 'snapshots/a.com': { Admin: { color: 'red' } } });
+      await loadServiceWorker();
+      const get = vi.spyOn(chrome.storage.local, 'get');
+
+      chrome.runtime.onInstalled.dispatch({ reason: 'install' });
+      await vi.waitFor(() => {
+        expect(pair(1)).toEqual(RED);
+        expect(pair(2)).toEqual(RED);
+      });
+      expect(snapshotGets(get, 'snapshots/a.com')).toBe(1);
+    });
+
+    it('a colour change during the first snapshot read wins', async () => {
+      const zTab = { id: 3, url: 'https://z.com/' };
+      chrome._state.tabs = [tab];
+      await seed({
+        activeSnapshots: { 'a.com': 'Admin', 'z.com': 'Zed' },
+        'snapshots/a.com': { Admin: { color: 'red' } },
+        'snapshots/z.com': { Zed: { color: 'green' } },
+      });
+      await loadServiceWorker();
+      const get = vi.spyOn(chrome.storage.local, 'get');
+      const held = chrome._holdGet(keys => keys.includes('snapshots/a.com'));
+
+      draw(tab);
+      await vi.waitFor(() => expect(snapshotGets(get, 'snapshots/a.com')).toBe(1));
+      await seed({ 'snapshots/a.com': { Admin: { color: 'amber' } } });
+      await vi.waitFor(() => expect(pair(1)).toEqual(AMBER));
+
+      // A draw that waits on a read released right after the stale one takes the same
+      // steps behind it, so once it lands the stale draw has finished.
+      const heldZ = chrome._holdGet(keys => keys.includes('snapshots/z.com'));
+      draw(zTab);
+      await vi.waitFor(() => expect(snapshotGets(get, 'snapshots/z.com')).toBe(1));
+      held.release();
+      heldZ.release();
+      await vi.waitFor(() => expect(pair(3)).toEqual(GREEN));
+      expect(pair(1)).toEqual(AMBER);
+
+      chrome._state.badgeBackgrounds[1] = undefined;
+      draw(tab);
+      await vi.waitFor(() => expect(pair(1)).toEqual(AMBER));
+      expect(snapshotGets(get, 'snapshots/a.com')).toBe(2);
+    });
+
+    it('a tab that navigates away during its colour read keeps the new site\'s badge', async () => {
+      const otherA = { id: 3, url: 'https://a.com/other' };
+      chrome._state.tabs = [tab, otherA];
+      await seed({ activeSnapshots: { 'a.com': 'Admin' }, 'snapshots/a.com': { Admin: { color: 'red' } } });
+      await loadServiceWorker();
+      const get = vi.spyOn(chrome.storage.local, 'get');
+      const held = chrome._holdGet(keys => keys.includes('snapshots/a.com'));
+
+      draw(tab);
+      await vi.waitFor(() => expect(snapshotGets(get, 'snapshots/a.com')).toBe(1));
+      const moved = { id: 1, url: 'https://b.com/' };
+      chrome.tabs.onUpdated.dispatch(1, { url: moved.url }, moved);
+      await vi.waitFor(() => expect(chrome._state.badges[1]).toBe(''));
+      expect(pair(1)).toEqual(DEFAULT);
+
+      // Shares the held read, and is settled right after the draw it outdates.
+      draw(otherA);
+      held.release();
+      await vi.waitFor(() => expect(pair(3)).toEqual(RED));
+      expect(chrome._state.badges[1]).toBe('');
+      expect(pair(1)).toEqual(DEFAULT);
+      expect(snapshotGets(get, 'snapshots/a.com')).toBe(1);
+    });
+
+    it('a draw of every tab outdated for one tab still draws the others', async () => {
+      const otherA = { id: 3, url: 'https://a.com/other' };
+      chrome._state.tabs = [tab, otherA];
+      await seed({ activeSnapshots: { 'a.com': 'Admin' }, 'snapshots/a.com': { Admin: { color: 'red' } } });
+      await loadServiceWorker();
+      const get = vi.spyOn(chrome.storage.local, 'get');
+      const held = chrome._holdGet(keys => keys.includes('snapshots/a.com'));
+
+      chrome.runtime.onStartup.dispatch();
+      await vi.waitFor(() => expect(snapshotGets(get, 'snapshots/a.com')).toBe(1));
+      const moved = { id: 1, url: 'https://b.com/' };
+      chrome._state.tabs = [moved, otherA];
+      chrome.tabs.onUpdated.dispatch(1, { url: moved.url }, moved);
+      await vi.waitFor(() => expect(chrome._state.badges[1]).toBe(''));
+      expect(chrome._state.badges[3]).toBeUndefined();
+
+      held.release();
+      await vi.waitFor(() => expect(pair(3)).toEqual(RED));
+      expect(chrome._state.badges[3]).toBe('Ad');
+      expect(chrome._state.badges[1]).toBe('');
+      expect(pair(1)).toEqual(DEFAULT);
+    });
+
+    for (const event of ['onInstalled', 'onStartup']) {
+      it(`${event} sets the default colours for tabs not drawn yet`, async () => {
+        await loadServiceWorker();
+        chrome.runtime[event].dispatch({ reason: 'install' });
+        await vi.waitFor(() => {
+          expect(chrome._state.badgeDefaultBackground).toBe(DEFAULT[0]);
+          expect(chrome._state.badgeDefaultTextColor).toBe(DEFAULT[1]);
+        });
+      });
+    }
+
+    it('re-saving the active snapshot with the same labels redraws nothing', async () => {
+      chrome._state.tabs = [tab];
+      await seed({ activeSnapshots: { 'a.com': 'Admin' }, 'snapshots/a.com': { Admin: { color: 'red', cookies: [sid('one')] } } });
+      await loadServiceWorker();
+      draw(tab);
+      await vi.waitFor(() => expect(pair(1)).toEqual(RED));
+      const get = vi.spyOn(chrome.storage.local, 'get');
+      const query = vi.spyOn(chrome.tabs, 'query');
+      const background = vi.spyOn(chrome.action, 'setBadgeBackgroundColor');
+
+      await seed({ 'snapshots/a.com': { Admin: { color: 'red', cookies: [sid('two')] } } });
+      await redrawEveryTab();
+      expect(query).toHaveBeenCalledTimes(1);
+      expect(background).toHaveBeenCalledTimes(1);
+      expect(snapshotGets(get)).toBe(0);
+      expect(pair(1)).toEqual(RED);
+    });
+
+    it('a snapshot kept in the old single key badges in the default colours', async () => {
+      chrome._state.tabs = [tab];
+      await seed({ activeSnapshots: { 'a.com': 'Admin' }, snapshots: { 'a.com': { Admin: { color: 'red' } } } });
+      await loadServiceWorker();
+
+      draw(tab);
+      await vi.waitFor(() => expect(chrome._state.badges[1]).toBe('Ad'));
+      expect(pair(1)).toEqual(DEFAULT);
+    });
+
+    it('a snapshot key changed in another storage area is ignored', async () => {
+      chrome._state.tabs = [tab];
+      await seed({ activeSnapshots: { 'a.com': 'Admin' }, 'snapshots/a.com': { Admin: { color: 'red' } } });
+      await loadServiceWorker();
+      draw(tab);
+      await vi.waitFor(() => expect(pair(1)).toEqual(RED));
+      const query = vi.spyOn(chrome.tabs, 'query');
+
+      chrome.storage.onChanged.dispatch({ 'snapshots/a.com': { newValue: { Admin: { color: 'amber' } } } }, 'sync');
+      await redrawEveryTab();
+      expect(query).toHaveBeenCalledTimes(1);
+      expect(pair(1)).toEqual(RED);
+    });
+
+    it('a colour the browser refuses still leaves the text drawn', async () => {
+      chrome._state.tabs = [tab];
+      await seed({ activeSnapshots: { 'a.com': 'Admin' }, 'snapshots/a.com': { Admin: { color: 'red' } } });
+      await loadServiceWorker();
+      vi.spyOn(chrome.action, 'setBadgeBackgroundColor').mockRejectedValue(new Error('No tab with id: 1.'));
+      vi.spyOn(chrome.action, 'setBadgeTextColor').mockRejectedValue(new Error('No tab with id: 1.'));
+      const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      draw(tab);
+      await vi.waitFor(() => expect(chrome._state.badges[1]).toBe('Ad'));
+      await redrawEveryTab();
+      expect(chrome._state.badges[1]).toBe('Ad');
+      expect(logged).not.toHaveBeenCalled();
+    });
+
+    describe('a failed snapshot read', () => {
+      const SECRET = 'secret-cookie-value';
+
+      async function failFirstRead() {
+        chrome._state.tabs = [tab, bTab];
+        await seed({
+          activeSnapshots: { 'a.com': 'Admin', 'b.com': 'Owner' },
+          'snapshots/a.com': { Admin: { color: 'amber', cookies: [{ name: 'sid', value: SECRET, domain: 'a.com', path: '/' }] } },
+          'snapshots/b.com': { Owner: { color: 'red' } },
+        });
+        await loadServiceWorker();
+        const get = chrome.storage.local.get;
+        let failed = false;
+        const spy = vi.spyOn(chrome.storage.local, 'get').mockImplementation(async keys => {
+          if (!failed && [keys].flat().includes('snapshots/a.com')) {
+            failed = true;
+            throw new Error('read failed');
+          }
+          return get(keys);
+        });
+        const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+        chrome.runtime.onInstalled.dispatch({ reason: 'install' });
+        await vi.waitFor(() => {
+          expect(chrome._state.badges[1]).toBe('Ad');
+          expect(pair(2)).toEqual(RED);
+        });
+        return { get: spy, logged };
+      }
+
+      it('still badges the tab, in the default colours, and is retried', async () => {
+        const { get } = await failFirstRead();
+        expect(pair(1)).toEqual(DEFAULT);
+        expect(chrome._state.badges[2]).toBe('Ow');
+
+        draw(tab);
+        await vi.waitFor(() => expect(pair(1)).toEqual(AMBER));
+        expect(snapshotGets(get, 'snapshots/a.com')).toBe(2);
+      });
+
+      it('logs no snapshot data', async () => {
+        const { logged } = await failFirstRead();
+        draw(tab);
+        await vi.waitFor(() => expect(pair(1)).toEqual(AMBER));
+
+        expect(logged).toHaveBeenCalled();
+        for (const args of logged.mock.calls) {
+          for (const arg of args) {
+            const text = arg instanceof Error ? `${arg.message} ${arg.stack}` : JSON.stringify(arg);
+            expect(text).not.toContain(SECRET);
+          }
+        }
+      });
+    });
+  });
 });

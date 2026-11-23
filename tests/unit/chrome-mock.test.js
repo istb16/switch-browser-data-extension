@@ -112,6 +112,21 @@ describe('chrome mock', () => {
     chrome.storage.onChanged.removeListener(listener);
   });
 
+  it('per-tab and default badge colours are recorded apart', async () => {
+    await chrome.action.setBadgeBackgroundColor({ color: '#000000' });
+    await chrome.action.setBadgeTextColor({ color: '#111111' });
+    await chrome.action.setBadgeBackgroundColor({ tabId: 1, color: '#C5221F' });
+    await chrome.action.setBadgeBackgroundColor({ tabId: 1, color: '#1F63D8' });
+    await chrome.action.setBadgeTextColor({ tabId: 1, color: '#FFFFFF' });
+    await chrome.action.setBadgeBackgroundColor({ tabId: 2, color: '#F6B820' });
+    await chrome.action.setBadgeTextColor({ tabId: 2, color: '#1B1C20' });
+
+    expect(chrome._state.badgeBackgrounds).toEqual({ 1: '#1F63D8', 2: '#F6B820' });
+    expect(chrome._state.badgeTextColors).toEqual({ 1: '#FFFFFF', 2: '#1B1C20' });
+    expect(chrome._state.badgeDefaultBackground).toBe('#000000');
+    expect(chrome._state.badgeDefaultTextColor).toBe('#111111');
+  });
+
   it('a held get resolves with the data from call time', async () => {
     await chrome.storage.local.set({ a: 1, b: 1 });
     const held = chrome._holdGet(keys => keys.includes('a'));

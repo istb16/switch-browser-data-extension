@@ -58,6 +58,7 @@ async function init() {
   }));
   $('clearAllBtn').addEventListener('click', handleClearAll);
   $('sortSelect').addEventListener('change', renderList);
+  $('snapshotSearch').addEventListener('input', async () => renderDomainList(await getGroups(), { meter: false }));
   $('groupForm').addEventListener('submit', e => handleAddGroup(e, onGroupsChange));
 
   await renderAll();
