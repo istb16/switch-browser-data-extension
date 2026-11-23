@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   getSnapshots, getSettings, setSettings, getSnapshotOrders, getActiveSnapshots, setActiveSnapshots, getGroups, setGroups,
   readKeys, updateKey, withDefaultSettings, getSnapshotHosts, getSnapshotsFor, setSnapshotsFor, getBackupHosts, getBackup,
-  setBackup, setSnapshotsAndOrders,
+  setBackup, setSnapshotsAndOrders, getPreviousSnapshots, setPreviousSnapshots,
 } from '../../lib/storage.js';
 import { setSnapshots, getBackups, setBackups } from '../support/storage-seed.js';
 
@@ -73,6 +73,17 @@ describe('lib/storage', () => {
       activeSnapshots: {},
       snapshotOrder: {},
     });
+  });
+
+  it('readKeys defaults previousSnapshots to {} and commandNotice to null', async () => {
+    expect(await readKeys(['previousSnapshots', 'commandNotice']))
+      .toEqual({ previousSnapshots: {}, commandNotice: null });
+  });
+
+  it('round-trips the previous snapshots', async () => {
+    const previous = { 'a.com': { host: 'a.com', name: 'x' } };
+    await setPreviousSnapshots(previous);
+    expect(await getPreviousSnapshots()).toEqual(previous);
   });
 
   it('readKeys takes a single key too', async () => {

@@ -5,7 +5,7 @@ Chrome / Edge 向けブラウザ拡張機能。ドメインごとに Cookie・lo
 ## 概要
 
 - **対応ブラウザ**: Chrome, Edge (Chromium ベース・Manifest V3)
-- **UI 起点**: 拡張機能アイコンをクリックして開くポップアップのみ（右クリックメニューは使わない）
+- **UI 起点**: 拡張機能アイコンをクリックして開くポップアップと、前のスナップショットに切り替えるキーボードショートカット（右クリックメニューは使わない）
 - **設定画面**: ポップアップ内の設定ボタンまたは `options.html` で開く
 
 ## 機能要件
@@ -50,6 +50,7 @@ Chrome / Edge 向けブラウザ拡張機能。ドメインごとに Cookie・lo
     - 同じスナップショットが「一部適用中」のときにさらに一部を読み込むと、記録は前の種類と今回書いた種類を合わせたものになり、読み込める種類をすべて覆えば丸ごとの記録に戻る。丸ごと適用中のスナップショットやほかのスナップショットが適用中のときは、今回書いた種類だけに置き換える
     - 丸ごとの読み込み、ほかの名前の保存・上書きで記録は丸ごとになる。「一部適用中」のスナップショット自身の上書きでは一部のまま（「保存」を参照）
     - 拡張機能アイコンのバッジは一部の記録でも区別せず、名前の先頭2文字を出す
+  - 適用中の記録があるスナップショット X から別のスナップショット Y（ホストか名前が違う）に記録が変わったときだけ、X を「前のスナップショット」として `previousSnapshots` に `{ host, name }` で残す（`types` は残さないので、ショートカットではいつも丸ごと読み込む）。ほかの変わり方（記録を外す、記録のない状態から Y、`types` だけの変化、同じスナップショットの読み直し）では前の記録をそのままにする（消去してから「戻す」で、消したスナップショットを前の記録にしないため）。記録は `setActiveSnapshot`（`lib/snapshot.js`）が `withSnapshotLock` の中で適用中の記録と1回の `set` で書くので、読み込み・ほかの名前の保存・「戻す」・ショートカットのどれでも同じ決まりで残る。名前の変更・削除では適用中の記録と同じく書き換える・外す
   - Cookie は値まで比べる。ただしサイトが自分で書き換える Cookie は除く。読み込み後の最初のページ読み込み（60秒以内）で、Service Worker が適用した Cookie と比べて値が変わったものを「値は比べない」、増減したものを「比べない」としてドメインごとに覚える（`volatileCookies`）
   - スナップショットに保存した Cookie がすでに有効期限切れなら、その Cookie は比べない（発行し直されるか消えているのが当然のため）
   - 「変更あり」のバッジはメニューを開くボタンで、変わった Cookie ごとに「変化を無視」を選べる。値の変化なら「値は比べない」、増減なら「比べない」として `volatileCookies` に記録する。今のホストの行では、メニューの「現在の状態で上書き」でそのスナップショットを上書きすることもできる（上書きすると「変更あり」は消える）
@@ -69,6 +70,33 @@ Chrome / Edge 向けブラウザ拡張機能。ドメインごとに Cookie・lo
     - 色は取れたら付ける程度のもので、文字は色を待たない。色を読めなかったタブは既定の色で描き、次に描くときに読み直す
     - 色を読んでいる間にタブがほかのサイトに移ったら、古い描画は捨てる（タブごとに最後に始めた描画だけを反映する）
     - 色を読んでいる間にそのホストのスナップショットが書き換わったら、読んだ結果の代わりに変更の新しい値から色を取り、待っている描画はそれで描く（色ラベルが変わらない保存で全タブを描き直さないため）
+- **ショートカットで前のスナップショットに切り替え**: `commands` の `switch-previous` を押すと、ポップアップを開かずに Service Worker（`background/switch-command.js`）が、今のタブのサイトの「前のスナップショット」（`previousSnapshots`）を丸ごと読み込む。もう一度押すと元のスナップショットに戻るので、2つのアカウントを1つのキーで行き来できる
+  - キーは既定で割り当てない（`suggested_key` なし。確認なしでサイトのデータを書き換えるので使う人が選ぶ。ぶつかる提案のキーは Chrome が黙って捨て、どのキーも Chrome・Edge・ほかの拡張機能のどこかと重なるため）。設定画面の「全般」に今の割り当て（`chrome.commands.getAll()`、なければ「未設定」）と、`chrome://extensions/shortcuts` を開くボタンを出し、ウィンドウの `focus` で読み直す（`options/shortcut-hint.js`）
+  - 対象のタブは `onCommand` が渡すタブで、渡されないときだけ `chrome.tabs.query({ active: true, lastFocusedWindow: true })` の最初のもの。リスナーは Service Worker の読み込みで待たずに登録する（コマンドで起きた Worker が取りこぼさないため）
+  - 読み込みは `loadWholeSnapshot`（`lib/load-snapshot.js`）で、ポップアップの `state` を使わず、権限のダイアログも出さない（`collectData` `applyData` に `interactive: false`）。バックアップを残し、適用し、適用中に記録し（グループなら `{ host, name }`）、Cookie の確認待ち・今のタブとほかのタブの再読み込みはポップアップの丸ごとの読み込みと同じ。ポップアップの読み込み（`popup/actions.js`）はこれを使わない（一部だけ読み込む処理と `state` に結びついているため）
+  - 失敗はタブのバッジの `!`（ふだんのバッジの色で、4秒後にタブを `chrome.tabs.get` で読み直して、今のサイトのバッジ（文字と色）を描き直す。閉じたタブは描かない）、`commandNotice` に残す知らせ、`chrome.action.openPopup()` で伝える。`openPopup` がない（Chrome 127 より前）・断られる（ウィンドウにフォーカスがない）ときは `!` と知らせだけで、知らせは60秒の間そのタブで同じホストのままポップアップを開いたときに出る。上から順に確かめる
+
+    | 場合 | 動き |
+    | --- | --- |
+    | ポップアップが開いている（`chrome.runtime.getContexts({ contextTypes: ['POPUP'] })` が1つ以上）、または `getContexts` がない（Chrome 116 より前） | 切り替えない。`!` だけで、知らせも `openPopup` もない（開いたポップアップの表示が古くなるため。数えるのはポップアップだけで、設定画面のタブや Worker は数えない） |
+    | `http(s)` でないページ | 何も書かない。知らせ `unavailable` |
+    | Cookie が有効でホスト権限がない | 何も書かない。知らせはなく、ポップアップが権限の案内を出す（Service Worker は権限を求めない） |
+    | 自動バックアップが無効 | 切り替えない。知らせ `shortcut_needs_backup`（ポップアップはこのとき確認を出すので、1回のキーで確認なしに戻せない上書きをしない） |
+    | 前の記録がない、適用中と同じ、そのスナップショットがもうない、グループを外したなどで今の範囲の外のホストを指す | 何も書かない。知らせ `shortcut_no_previous` |
+    | 前のスナップショットが今のホストのもので、書き込むページの保存領域（設定で有効で、スナップショットにある種類）があるのにコンテンツスクリプトに届かない（`canReachPage`） | バックアップも残さず何も書かない。知らせ `shortcut_page_unreachable`（Cookie だけのときは確かめない） |
+    | バックアップのために今のデータを読めなかった（書き込むページの保存領域があるのにコンテンツスクリプトがエラーを返す・答えない・その種類を返さない、または書き込む Cookie があるのに Cookie を読めない） | バックアップも残さず何も書かない。知らせ `error_load_failed`（`collectData` の `strict: true`。1回のキーで戻せない上書きをしないため。Cookie だけを書くときはページを読めなくても止めない） |
+    | 書き込むページの保存領域があるのに、ページへの書き込みが届かない・成功を返さない（`applyData` の `storageApplied` が偽） | 適用中の記録も前の記録も変えずに止める。知らせ `error_load_failed`（Cookie は書き換わっていることがあるが、バックアップは残しているので「戻す」で戻せる） |
+    | 切り替えの途中でタブがほかのオリジンに移った | 次のオリジンの確認か、コンテンツスクリプトが断ったところで止める。知らせ `error_load_failed` |
+    | バックアップを書けなかった | 何も適用せずに止める。知らせ `shortcut_backup_failed`（ポップアップと違い、戻せない状態では切り替えない） |
+    | 前のスナップショットがグループのほかのホストのもの | 行のクリックと同じく Cookie だけを適用し、ページへの書き込みは送らない |
+    | 「一部適用中」から押した | 前のスナップショットを丸ごと読み込む。一部だったものは `types` のない前の記録になり、もう一度押すと丸ごと読み込む |
+    | 適用中の記録がない（消去のあと、名前のない状態に「戻す」したあと） | 前のスナップショットを読み込む。適用中と前の記録が同じになるので、次に押すと `shortcut_no_previous` |
+    | キーの長押し（切り替えの途中にもう一度届いた） | 無視する（フラグは `finally` で外す） |
+
+  - オリジンは2か所で確かめる。Service Worker は今のデータを読む前・バックアップを書く前・適用する前に `chrome.tabs.get` でタブを読み直し、オリジン（パスは問わない）が変わっていれば止める（`stillOnOrigin`）。コンテンツスクリプトは `getStorageData` `setStorageData` のメッセージに `origin` があり `location.origin` と違えば `{ error }` を返して読み書きしない（Cookie を書いてからページに書くまでの間に移ったときも、ほかのサイトにデータを書かないため）。`origin` を送るのはショートカットだけで、ポップアップのメッセージにはない（ないときはこれまでどおり）。Cookie を書いたあとでページが断ったときは Cookie だけ切り替わり適用中の記録は変わらないが、バックアップは先に残しているので「戻す」で戻せる
+  - 成功はふだんのバッジの描き直しと再読み込みでわかる。バッジも自動リロードもオフなら何も出ない（受け入れている）
+  - ポップアップは開くとき（`init` で今のタブがわかった直後、使えないページ・権限の案内より前）に `commandNotice` を読み（`popup/command-notice.js`）、期限切れかこのタブの知らせなら消し、このタブで期限内で、キーが決めた一覧（`shortcut_*` の4つ・`unavailable`・`error_load_failed`）にあり、知らせの `host`（押したときのタブの `http(s)` のホスト名。`http(s)` でなければ `null`）が今のタブのものと同じときだけ `#statusMsg` にエラーとして出す（同じタブがほかのサイトに移ったあとで、前のサイトのエラーを今のサイトのものに見せないため。ホストが違う知らせは出さずに消す）。ほかのタブの期限内の知らせは残す。知らせにはメッセージのキーとホストだけを残し、スナップショットの名前は入れない
+  - `migrateStorage()` は呼ばない（前の記録はこの版のポップアップが動いたあとにしかできず、古い形にしかないスナップショットは「前のスナップショットがない」になる）
 - **名前の変更・削除**: 各行のメニューから行う（削除は確認あり）
 - **中身の表示と比較**: ポップアップの行メニューの「中身を見る」（グループのほかのホストの行にも出す）か、設定画面のスナップショットの行のボタンで、`viewer/viewer.html?host=<ホスト>&name=<名前>[&tab=<タブ ID>]` を新しいタブで開く（`openViewer`、`lib/viewer-link.js`。`tab` はポップアップから開いたときの今のタブ）。保存したものを種類ごとの表（Cookie / localStorage / sessionStorage / IndexedDB はデータベースとストアごとに `version` `keyPath` `autoIncrement` を添える）で見せる。スナップショットにない種類は出さない。ホストか名前がない、または読んだデータに自分のプロパティとしてない（`__proto__` など）ときは「見つかりません」を出す
   - 値はすべての種類で既定で隠し、`••••••` と文字数だけを出す（隠している間は値を DOM のテキストにも属性にも置かない）。セルをクリックするとそのセルだけ、「値を表示」のトグルですべてを出す。覚えておくのはトグルだけで、表を描き直すとクリックで出した値は隠れ、トグルをオフにするとすべて隠す。トグルも保存せず、開くたびにオフ（保存すると書き込みになるため）。Cookie の名前・ドメイン・パス、ストレージのキー、比べた結果の印は隠さない（ただし IndexedDB の `keyPath` に `''` を含むストアはキーがレコードそのものなので、キーも値と同じように隠す）。長い値は 200 文字までを出し、「全体を表示」でも 100,000 文字まで
@@ -120,7 +148,7 @@ Chrome / Edge 向けブラウザ拡張機能。ドメインごとに Cookie・lo
 - **インポート**: 256 MB（`IMPORT_MAX_BYTES`）を超えるファイルは読む前に断る。`parseImport`（`lib/transfer.js`）は形が `{ ドメイン: { 名前: オブジェクト } }` でない、`__proto__` `constructor` `prototype` のキーがある、`savedAt` が日時として読めない、`cookies` がオブジェクトの配列でない、ストレージの種類がオブジェクトでない、ドメインのキーが 253 文字を超えるか `a-z 0-9 . _ - [ ] :` 以外の文字を含む、ドメインが 5,000 個（`IMPORT_MAX_HOSTS`）を超える、のどれかでファイルごと断る（ドメインはそのまま保存のキーになり、本物のエクスポートには `URL.hostname` しか入らないため。`file:` のページから来る空のドメインは通す）。メモと色は `cleanDetails` で整え、文字列でない `cookieDomain` は捨てる。ファイルの `bytes` は使わず、いつも計算し直す（エクスポートでは `buildExport` が `bytes` を外すので、ファイルの形は変わらない）
   - 同じドメイン・同じ名前があれば、ファイル全体で1回だけ「上書き / スキップ / 両方残す（`名前 (2)` …）/ キャンセル」を選ぶ。上書きは並び順の位置を保ち、新しい名前は一覧に見えている順（並び順にない既存の名前も含む）の末尾に足す。ドメインのキーはファイルのまま書く
   - 同じ名前があるかの確認も混ぜる処理も、ファイルに出てくるホストのキーだけを読み書きする。書くのは中身が変わったホスト（`mergeImport` の `changedHosts`）だけで、そのキー・`snapshotHosts`・並び順を1回の `set`（`setSnapshotsAndOrders`）で書く（途中で失敗して一部のホストだけ取り込まれた状態にしないため）。選んだあとに保存データを読み直してから混ぜる（ダイアログを開いている間にポップアップで保存・変更したものを消さないため）。スナップショットを読んで書き戻す処理は、ポップアップ・設定画面のどちらからでも `withSnapshotLock`（`lib/snapshot.js`。Web Locks の `snapshots`。入れ子にはできない）で1つずつ行う
-- 全データ削除は、すべてのキーを読んで `snapshots/` `backups/` で始まるキー・`snapshotHosts` `backupHosts`・古い形の `snapshots` `backups` を消し、並び順・適用中・`volatileCookies`・`cookieChecks` を空にする。`settings` `groups` `language` は残す（どれも設定のため）。`schemaVersion` も残す（形は変わらないため）。索引を当てにせず全部のキーを見るので、索引から漏れたキーも消える
+- 全データ削除は、すべてのキーを読んで `snapshots/` `backups/` で始まるキー・`snapshotHosts` `backupHosts`・古い形の `snapshots` `backups` と `commandNotice` を消し、並び順・適用中・前の記録（`previousSnapshots`）・`volatileCookies`・`cookieChecks` を空にする。`settings` `groups` `language` は残す（どれも設定のため）。`schemaVersion` も残す（形は変わらないため）。索引を当てにせず全部のキーを見るので、索引から漏れたキーも消える
 
 ### UI 構成
 
@@ -138,7 +166,7 @@ graph TD
   popup --> settings_btn["設定ボタン"]
   settings_btn --> options["設定画面 options.html｜左に項目、右にその内容"]
 
-  options --> general["全般｜言語 / 動作トグル（自動バックアップ / 自動リロード / ほかのタブも再読み込み / アイコンのバッジ）"]
+  options --> general["全般｜言語 / 動作トグル（自動バックアップ / 自動リロード / ほかのタブも再読み込み / アイコンのバッジ） / 前のスナップショットに切り替えるショートカットの割り当てと設定ページを開くボタン"]
   options --> toggles["データ種別｜Cookie / localStorage / sessionStorage / IndexedDB"]
   options --> snapshots_pane["スナップショット"]
   snapshots_pane --> meter["使用量のメーター"]
@@ -169,6 +197,7 @@ graph TD
   popup --> popup_actions["actions.js｜再読み込み・変更の確認・各操作"]
   popup --> popup_save["save-form.js｜保存フォーム（名前・メモ・色）"]
   popup --> popup_picker["type-picker.js｜一部だけ読み込むときの種類の選択"]
+  popup --> popup_notice["command-notice.js｜ショートカットの失敗の知らせの表示"]
   popup --> popup_keys["shortcuts.js｜キーボード操作"]
 
   root --> options["options/"]
@@ -177,6 +206,7 @@ graph TD
   options --> options_js["options.js｜開くときの処理・項目の切り替え・トグル・言語・全データ削除"]
   options --> options_list["domain-list.js｜ドメイン一覧と行・並べ替え（読んだ内容を覚えておき、変更があったときだけ読み直す）"]
   options --> options_meter["meter.js｜使用量のメーター"]
+  options --> options_shortcut["shortcut-hint.js｜ショートカットの割り当ての表示と設定ページへのボタン"]
   options --> options_groups["groups-pane.js｜グループの一覧・追加・削除"]
   options --> options_transfer["transfer-ui.js｜エクスポート・パスフレーズ・インポート"]
 
@@ -187,6 +217,7 @@ graph TD
 
   root --> background["background/"]
   background --> sw["service-worker.js｜アイコンのバッジ更新・読み込み後の Cookie の学習とほかのタブの再読み込み"]
+  background --> switch_cmd["switch-command.js｜前のスナップショットに切り替えるショートカット"]
 
   root --> content["content/"]
   content --> cs["content-script.js｜localStorage / sessionStorage / IndexedDB 操作"]
@@ -194,11 +225,12 @@ graph TD
   root --> lib["lib/"]
   lib --> storage_js["storage.js｜chrome.storage.local ラッパー（キーと既定値の表、ホストごとのキーと索引）"]
   lib --> snapshot_js["snapshot.js｜スナップショット CRUD・保存データの形の変換（migrateStorage・SCHEMA_VERSION）"]
-  lib --> domain_js["domain.js｜ホストが範囲に入るか（isWithin）・Cookie の範囲の正規化"]
+  lib --> domain_js["domain.js｜ホストが範囲に入るか（isWithin）・http(s) のホスト名（httpHostOf）・Cookie の範囲の正規化"]
   lib --> view_js["snapshot-view.js｜色ラベル・メモ・グループのチップの表示（ポップアップ・設定画面で共通）"]
   lib --> handlers_js["web-storage-handlers.js / indexeddb-handler.js｜ページの保存領域の読み書き（コンテンツスクリプトの非モジュール）"]
   lib --> cookie_js["cookie-handler.js｜Cookie 保存・復元"]
   lib --> bridge_js["data-bridge.js｜データの収集・適用"]
+  lib --> load_js["load-snapshot.js｜ポップアップの状態を使わない丸ごとの読み込み（ショートカット用）"]
   lib --> compare_js["data-compare.js｜スナップショットと現在のデータの比較"]
   lib --> diff_js["snapshot-diff.js｜中身の表示の行と項目ごとの突き合わせ（読み込む範囲・比べる範囲）"]
   lib --> viewer_link_js["viewer-link.js｜中身の表示を開く URL の組み立てと新しいタブ"]
@@ -237,7 +269,10 @@ graph TD
   "permissions": ["cookies", "storage", "unlimitedStorage", "tabs"],
   "optional_host_permissions": ["<all_urls>"],
   "background": { "service_worker": "background/service-worker.js", "type": "module" },
-  "commands": { "_execute_action": { "suggested_key": { "default": "Alt+Shift+S" } } },
+  "commands": {
+    "_execute_action": { "suggested_key": { "default": "Alt+Shift+S" } },
+    "switch-previous": { "description": "__MSG_command_switch_previous__" }
+  },
   "action": { "default_popup": "popup/popup.html" },
   "options_page": "options/options.html",
   "content_scripts": [
@@ -290,6 +325,13 @@ graph TD
   // "cookies" "localStorage" "sessionStorage" "indexedDB" の配列）。読むときは知らない名前を捨て、配列でない・空になった
   // ものは types がないのと同じ（丸ごとの記録）とみなす。groups の削除でも types のある記録はそのまま残す
   "activeSnapshots": { "example.org": "スナップショット名", "example.com": { "host": "app.example.com", "name": "スナップショット名" }, "example.net": { "host": "example.net", "name": "スナップショット名", "types": ["cookies"] } },
+  // 前のスナップショット（キーは activeSnapshots と同じ）。適用中の記録があるスナップショットから別のスナップショットに
+  // 変わったときだけ、前の方を { host, name } で残す（types は残さない）。ショートカットの切り替え先
+  "previousSnapshots": { "example.com": { "host": "example.com", "name": "スナップショット名" } },
+  // ショートカットが切り替えなかった理由（1件だけ）。key は lib/i18n.js のメッセージのキー、until は60秒後の期限。
+  // host は押したときのタブの http(s) のホスト名（ほかのページでは null）で、今のタブのホストと違えば出さない。
+  // ポップアップが期限切れか tabId のタブで開いたときに消す
+  "commandNotice": { "tabId": 123, "host": "example.com", "key": "shortcut_no_previous", "until": 0 },
   // サブドメインのグループ（ベースのドメイン）。全データ削除でも消さない
   "groups": ["example.com"],
   // サイトが自分で書き換える Cookie（グループならベースがキー）。"value": 有無だけ比べる / "any": 比べない
@@ -320,7 +362,7 @@ graph TD
 ```
 
 - **保存データの形の変換**: 保存データの形は `schemaVersion` で表す。ポップアップと設定画面は `init` でスナップショットを読む前に `migrateStorage()`（`lib/snapshot.js`）を待つ（ポップアップは言語の読み込み・タブの取得と並べて走らせる）。ほかのライブラリ関数からは呼ばない（`withSnapshotLock` は入れ子にできないので、ロックの中から待たせない）。Service Worker は変換しない
-  - Service Worker がスナップショットのキーを読むのは、バッジの色のための例外だけ。バッジを出すタブ（バッジがオン・ホストがある・適用中の記録がある）の適用中のホストの `snapshots/<ホスト>` を、その Worker の間に一度だけ読む（同時に描くタブは1回の読み込みを分け合い、失敗したら覚えずに次に描くときに読み直す）。メモリに残すのは名前 → 色ラベルの対応だけで、スナップショットそのものは残さず、書かず、ログにも出さない。`storage.onChanged` では、すでに読んだホストの対応だけを `newValue` から作り直し（キーが消えたら忘れる）、まだ読んでいないホストは読まない。古い形（バージョン1）の保存データでは色が見つからず既定の色で描く
+  - Service Worker がスナップショットのキーを読むのは、ショートカットで切り替えるとき（前のスナップショットのホストの `snapshots/<ホスト>` を押すたびに読み、残さない）と、バッジの色のための例外だけ。バッジを出すタブ（バッジがオン・ホストがある・適用中の記録がある）の適用中のホストの `snapshots/<ホスト>` を、その Worker の間に一度だけ読む（同時に描くタブは1回の読み込みを分け合い、失敗したら覚えずに次に描くときに読み直す）。メモリに残すのは名前 → 色ラベルの対応だけで、スナップショットそのものは残さず、書かず、ログにも出さない。`storage.onChanged` では、すでに読んだホストの対応だけを `newValue` から作り直し（キーが消えたら忘れる）、まだ読んでいないホストは読まない。古い形（バージョン1）の保存データでは色が見つからず既定の色で描く
   - `schemaVersion` が `SCHEMA_VERSION` 以上なら何もしない（開くたびの負担は `get` 1回）。古ければ `withSnapshotLock` の中で読み直し、`MIGRATIONS[n]`（バージョン n を n + 1 にする）を順に流し、全部終わってから `schemaVersion` を書く
   - 形を変えるときは `SCHEMA_VERSION` を1つ上げ、`MIGRATIONS` に変換を足す。変換は何度流しても同じ結果になるように書く（途中で失敗すると、次に開いたときに最初から流し直すため）
   - 失敗したらバージョンは書かず、何も表示せず（ポップアップ・設定画面は `console.error` に出して開く処理を続ける）、次に開いたときにもう一度試す

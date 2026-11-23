@@ -63,6 +63,24 @@ async function setSort(value) {
 }
 
 describe('options/options.js', () => {
+  // Each load adds its window listeners (such as `focus`) again; the earlier
+  // tests' listeners would otherwise fire on a later test's DOM.
+  let windowListeners;
+  const addWindowListener = window.addEventListener;
+
+  beforeEach(() => {
+    windowListeners = [];
+    window.addEventListener = function (...args) {
+      windowListeners.push(args);
+      return addWindowListener.apply(this, args);
+    };
+  });
+
+  afterEach(() => {
+    window.addEventListener = addWindowListener;
+    for (const args of windowListeners) window.removeEventListener(...args);
+  });
+
   beforeEach(() => {
     document.body.innerHTML = '';
     history.replaceState(null, '', location.pathname);
@@ -331,6 +349,78 @@ describe('options/options.js', () => {
       await loadOptions();
       expect(document.getElementById('reloadOtherTabsHint').textContent).toBe(MESSAGES.ja.hint_reload_other_tabs);
       expect(toggle().getAttribute('aria-describedby')).toBe('reloadOtherTabsHint');
+    });
+  });
+
+  describe('shortcut hint', () => {
+    const shortcutKey = () => document.getElementById('shortcutKey').textContent;
+
+    it('shows the assigned shortcut or "unset"', async () => {
+      chrome._state.commands = [
+        { name: '_execute_action', shortcut: 'Alt+Shift+S' },
+        { name: 'switch-previous', shortcut: '' },
+      ];
+      await loadOptions();
+      expect(shortcutKey()).toBe(MESSAGES.ja.shortcut_unset);
+
+      chrome._state.commands[1].shortcut = 'Alt+Shift+P';
+      window.dispatchEvent(new Event('focus'));
+      await flush();
+      expect(shortcutKey()).toBe('Alt+Shift+P');
+    });
+
+    it('shows "unset" when the command is missing and follows a language change', async () => {
+      chrome._state.commands = [];
+      await loadOptions();
+      expect(shortcutKey()).toBe(MESSAGES.ja.shortcut_unset);
+
+      document.getElementById('langSelect').value = 'en';
+      document.getElementById('langSelect').dispatchEvent(new Event('change'));
+      await flush();
+      expect(shortcutKey()).toBe(MESSAGES.en.shortcut_unset);
+    });
+
+    it('the button opens the shortcuts page', async () => {
+      await loadOptions();
+      document.getElementById('openShortcutsBtn').click();
+      await flush();
+      expect(chrome._state.createdTabs).toEqual([{ url: 'chrome://extensions/shortcuts' }]);
+    });
+
+    it('still loads the page when the shortcuts cannot be read', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      chrome.commands.getAll = vi.fn().mockRejectedValue(new Error('commands unavailable'));
+      await setSnapshots({ 'a.com': { x: { savedAt: '2024-01-01T00:00:00.000Z' } } });
+      await loadOptions();
+      await flush();
+
+      expect(console.error).toHaveBeenCalled();
+      expect(domainNames()).toEqual(['a.com']);
+
+      window.dispatchEvent(new Event('focus'));
+      await flush();
+      expect(chrome.commands.getAll).toHaveBeenCalledTimes(2);
+    });
+
+    it('logs a shortcuts page that cannot be opened', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      await loadOptions();
+      chrome.tabs.create = vi.fn().mockRejectedValue(new Error('cannot open'));
+      document.getElementById('openShortcutsBtn').click();
+      await flush();
+      expect(console.error).toHaveBeenCalledWith(expect.objectContaining({ message: 'cannot open' }));
+    });
+
+    // A real options page loads once per window; this checks that a load adds
+    // only one `focus` listener, so one focus reads the shortcuts once.
+    it('a load adds one focus listener, so a focus reads the shortcuts once', async () => {
+      chrome._state.commands = [{ name: 'switch-previous', shortcut: '' }];
+      await loadOptions();
+      expect(windowListeners.filter(([type]) => type === 'focus')).toHaveLength(1);
+      const getAll = vi.spyOn(chrome.commands, 'getAll');
+      window.dispatchEvent(new Event('focus'));
+      await flush();
+      expect(getAll).toHaveBeenCalledTimes(1);
     });
   });
 

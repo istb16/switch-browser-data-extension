@@ -4,7 +4,15 @@
 (function () {
   'use strict';
 
+  // The sender checks the tab's origin before it sends, but the tab can navigate
+  // in between; an `origin` in the message pins the read or write to that origin.
+  const otherOrigin = message => message.origin != null && message.origin !== location.origin;
+
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if ((message.type === 'getStorageData' || message.type === 'setStorageData') && otherOrigin(message)) {
+      sendResponse({ error: 'origin mismatch' });
+      return false;
+    }
     if (message.type === 'getStorageData') {
       handleGet(message.types, message.digest).then(sendResponse).catch(e => sendResponse({ error: e.message }));
       return true;

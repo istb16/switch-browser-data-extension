@@ -14,6 +14,7 @@ import {
 } from './actions.js';
 import { openSaveForm, closeSaveForm } from './save-form.js';
 import { handleShortcut, handleSearchKey } from './shortcuts.js';
+import { showCommandNotice } from './command-notice.js';
 
 setRowActions({
   load: handleLoad,
@@ -39,21 +40,21 @@ async function init() {
     || tab.url.startsWith('edge://')
     || tab.url.startsWith('about:');
 
-  if (isRestrictedUrl) {
-    showUnavailable();
-    return;
-  }
-
-  let host;
+  let host = null;
   try {
-    host = new URL(tab.url).hostname;
+    if (!isRestrictedUrl) host = new URL(tab.url).hostname;
   } catch {
+    // Shown as unavailable below.
+  }
+  if (host === null) {
+    await showNotice(tab);
     showUnavailable();
     return;
   }
 
   $('currentDomain').textContent = host;
-  const { settings, groups, ...lists } = await readKeys(['settings', 'groups', 'snapshotHosts', 'snapshotOrder', 'activeSnapshots']);
+  const { settings, groups, commandNotice, ...lists } = await readKeys(['settings', 'groups', 'commandNotice', 'snapshotHosts', 'snapshotOrder', 'activeSnapshots']);
+  await showNotice(tab, commandNotice);
   state.settings = settings;
   state.groups = groups;
   state.scope = resolveScope(host, state.groups);
@@ -68,6 +69,16 @@ async function init() {
     return;
   }
   await showMain(lists);
+}
+
+// Before the permission panel, which a notice about a refused switch may explain.
+async function showNotice(tab, notice) {
+  if (tab?.id == null) return;
+  try {
+    await showCommandNotice(tab, notice);
+  } catch (e) {
+    console.error(e);
+  }
 }
 
 async function showMain(lists) {

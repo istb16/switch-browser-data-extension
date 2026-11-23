@@ -4,5 +4,8 @@
   },
   "description": {
     "message": "Named snapshots of Cookie, localStorage, sessionStorage & IndexedDB per domain."
+  },
+  "command_switch_previous": {
+    "message": "Switch to the previous snapshot"
   }
 }

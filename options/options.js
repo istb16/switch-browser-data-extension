@@ -6,6 +6,7 @@ import { $, notify, reportError } from '../lib/ui.js';
 import { renderDomainList, markStale } from './domain-list.js';
 import { renderGroups, handleAddGroup } from './groups-pane.js';
 import { handleExport, handleImport } from './transfer-ui.js';
+import { initShortcutHint, renderShortcutHint } from './shortcut-hint.js';
 
 const PANES = ['general', 'data-types', 'snapshots', 'data'];
 
@@ -68,6 +69,7 @@ async function init() {
   $('sortSelect').addEventListener('change', renderList);
   $('snapshotSearch').addEventListener('input', handleSearch);
   $('groupForm').addEventListener('submit', e => handleAddGroup(e, onGroupsChange));
+  await initShortcutHint();
 
   await renderAll();
 }
@@ -93,6 +95,7 @@ async function handleLanguageChange() {
   await setLanguage($('langSelect').value);
   applyI18n();
   renderVersionFooter();
+  await renderShortcutHint().catch(console.error);
   await renderAll();
 }
 
