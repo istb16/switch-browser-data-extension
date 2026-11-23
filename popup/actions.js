@@ -216,8 +216,15 @@ async function backupCurrent() {
   return tryBackup(current);
 }
 
+// The data is already switched by then, so a tab closed meanwhile must not turn
+// the change into an error or keep the site's other tabs from reloading.
 async function reloadIfEnabled() {
-  if (state.settings.autoReload) await reloadTab(state.activeTab.id);
+  if (!state.settings.autoReload) return;
+  try {
+    await reloadTab(state.activeTab.id);
+  } catch (e) {
+    console.error(e);
+  }
 }
 
 function loadedStatusKey(backedUp, storageSkipped) {

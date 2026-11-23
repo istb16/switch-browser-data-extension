@@ -982,6 +982,23 @@ describe('popup/popup.js', () => {
         expect($('statusMsg').textContent).toBe(LOADED + suffix(1));
       });
 
+      it('still reloads the other tabs and reports the load done when the active tab was closed meanwhile', async () => {
+        await setReloadOtherTabs({ enabledTypes: { cookies: false, localStorage: true, sessionStorage: true, indexedDB: true } });
+        await loadPopupWithTabs(ACTIVE, OTHERS);
+        const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const get = chrome.tabs.get;
+        vi.spyOn(chrome.tabs, 'get').mockImplementation(async id => {
+          if (id === 1) throw new Error('No tab with id: 1.');
+          return get(id);
+        });
+        await clickLoad('first');
+
+        expect(chrome._state.reloadedTabs).toEqual([2, 6]);
+        expect(error).toHaveBeenCalled();
+        expect($('statusMsg').className).toContain('success');
+        expect($('statusMsg').textContent).toBe(LOADED + suffix(2));
+      });
+
       it('says "1 other tab" in English when one other tab reloaded', async () => {
         chrome._state.uiLanguage = 'en-US';
         await setReloadOtherTabs({ enabledTypes: { cookies: false, localStorage: true, sessionStorage: true, indexedDB: true } });
