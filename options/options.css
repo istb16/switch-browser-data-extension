@@ -155,6 +155,29 @@ body {
   color: var(--tk-body);
 }
 
+.snapshot-search {
+  display: block;
+  width: 100%;
+  max-width: 320px;
+  margin-bottom: 10px;
+  background: var(--tk-surface);
+  border: 1px solid var(--tk-line-strong);
+  color: var(--tk-ink);
+  padding: 7px 10px;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+  transition: border-color 0.15s;
+}
+
+.snapshot-search::placeholder {
+  color: var(--tk-muted);
+}
+
+.snapshot-search:focus {
+  border-color: var(--tk-accent);
+}
+
 .group-form {
   display: flex;
   gap: 8px;

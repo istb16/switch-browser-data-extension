@@ -146,6 +146,23 @@ describe('popup/popup.js', () => {
     expect($('searchBox').classList.contains('hidden')).toBe(true);
   });
 
+  it.each(['ja', 'en-US'])('the empty state names the save button that follows it (%s)', async language => {
+    chrome._state.uiLanguage = language;
+    await loadPopup('https://example.com/');
+
+    const body = document.querySelector('#emptyState .empty-state__body').textContent;
+    const label = $('saveBtn').querySelector('[data-i18n="btn_save_current"]').textContent;
+    expect(label).not.toBe('');
+    expect(body).toContain(label);
+    expect($('emptyState').compareDocumentPosition($('saveBtn')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('the popup.html fallback equals the ja empty_body', async () => {
+    const { MESSAGES } = await import('../../lib/i18n.js');
+    const fallback = popupHtml.match(/class="empty-state__body"[^>]*>([^<]*)</)[1];
+    expect(fallback).toBe(MESSAGES.ja.empty_body);
+  });
+
   it('lists the snapshots in order with a relative saved time and a number key', async () => {
     await setSnapshots({ 'example.com': { first: snap('2024-01-01T00:00:00.000Z'), second: snap('2024-02-02T00:00:00.000Z') } });
     await loadPopup('https://example.com/');

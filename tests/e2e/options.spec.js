@@ -142,6 +142,58 @@ test.describe('options page', () => {
     expect(Object.keys((await readStorage(page, 'getSnapshots'))['a.example.com'])).toEqual(['first']);
   });
 
+  test('search filters across domains in light and dark', async ({ context, extensionId }) => {
+    const page = await openOptions(context, extensionId, '#snapshots');
+    const savedAt = new Date().toISOString();
+    await seedSnapshots(page, {
+      'a.example.com': { admin: { savedAt }, guest: { savedAt } },
+      'b.example.com': { other: { savedAt, memo: 'unrelated' } },
+    });
+
+    // Text colour on the nearest opaque background, as a WCAG contrast ratio.
+    const contrastOf = locator => locator.evaluate(el => {
+      const rgb = value => value.match(/[\d.]+/g).slice(0, 4).map(Number);
+      const luminance = ([r, g, b]) => [r, g, b]
+        .map(c => c / 255)
+        .map(c => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4))
+        .reduce((sum, c, i) => sum + c * [0.2126, 0.7152, 0.0722][i], 0);
+      let node = el;
+      let background = rgb(getComputedStyle(node).backgroundColor);
+      while (background[3] === 0 && node.parentElement) {
+        node = node.parentElement;
+        background = rgb(getComputedStyle(node).backgroundColor);
+      }
+      const text = getComputedStyle(el).color;
+      const [l1, l2] = [luminance(rgb(text)), luminance(background)].sort((a, b) => b - a);
+      return { ratio: (l1 + 0.05) / (l2 + 0.05), text, background: getComputedStyle(node).backgroundColor };
+    });
+
+    const runs = {};
+    for (const colorScheme of ['light', 'dark']) {
+      await page.emulateMedia({ colorScheme });
+      await reloadAndWait(page);
+
+      const search = page.locator('#snapshotSearch');
+      await search.fill('ADMIN');
+      const items = page.locator('.domain-item');
+      await expect(items.locator('.domain-name')).toHaveText(['a.example.com']);
+      await expect(items.first()).toHaveClass(/open/);
+      await expect(items.first().locator('.snapshot-row')).toHaveCount(1);
+      await expect(items.first().locator('.snapshot-row .snapshot-name')).toBeVisible();
+
+      const input = await contrastOf(search);
+      const row = await contrastOf(items.first().locator('.snapshot-row .snapshot-name'));
+      expect(input.ratio).toBeGreaterThanOrEqual(4.5);
+      expect(row.ratio).toBeGreaterThanOrEqual(4.5);
+      runs[colorScheme] = input;
+
+      await search.fill('');
+      await expect(items.locator('.domain-name')).toHaveText(['a.example.com', 'b.example.com']);
+    }
+    expect(runs.dark.text).not.toBe(runs.light.text);
+    expect(runs.dark.background).not.toBe(runs.light.background);
+  });
+
   test('legacy storage is migrated in the browser', async ({ context, extensionId }) => {
     const page = await openOptions(context, extensionId, '#snapshots');
     const savedAt = new Date().toISOString();
