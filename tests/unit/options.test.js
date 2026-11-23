@@ -526,6 +526,21 @@ describe('options/options.js', () => {
       await flush();
     }
 
+    it('a failed read while searching shows an error and keeps the list', async () => {
+      await setSnapshots({ 'a.com': { Admin: { savedAt: SAVED } }, 'b.com': { user: { savedAt: SAVED } } });
+      await loadOptions();
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const get = chrome.storage.local.get.bind(chrome.storage.local);
+      vi.spyOn(chrome.storage.local, 'get').mockImplementation(keys =>
+        ([keys].flat().includes('groups') ? Promise.reject(new Error('I/O error')) : get(keys)));
+
+      await search('admin');
+
+      expect(document.getElementById('statusMsg').textContent).toBe('スナップショットを検索できませんでした');
+      expect(error).toHaveBeenCalled();
+      expect(domainNames()).toEqual(['a.com', 'b.com']);
+    });
+
     it('search by snapshot name shows only matching rows, opened', async () => {
       await setSnapshots({
         'a.com': { Admin: { savedAt: SAVED }, guest: { savedAt: SAVED }, 'admin 2': { savedAt: SAVED } },

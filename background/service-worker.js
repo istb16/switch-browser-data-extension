@@ -62,7 +62,9 @@ function readLabelColors(host) {
 // The colour is best-effort: a failed read must not keep the badge text from being drawn.
 async function colorFor(ref) {
   try {
-    const colors = labelColors.get(ref.host) ?? await readLabelColors(ref.host);
+    const read = labelColors.get(ref.host) ?? await readLabelColors(ref.host);
+    // A change event during the read stores the newer labels, which win over the read's.
+    const colors = labelColors.get(ref.host) ?? read;
     return badgeColors(colors.get(ref.name));
   } catch (error) {
     console.error(error);
@@ -75,17 +77,18 @@ function sameColors(a, b) {
 }
 
 // Returns whether a drawn colour may be out of date. Hosts not read yet are left
-// for their next draw to read.
+// for their next draw to read. A host being read takes the event's labels: the draws
+// waiting on that read use them, so nothing drawn is out of date.
 function applyColorChanges(changes) {
   let changed = false;
   for (const [key, change] of Object.entries(changes)) {
     if (!key.startsWith(SNAPSHOT_PREFIX)) continue;
     const host = key.slice(SNAPSHOT_PREFIX.length);
-    if (colorReads.delete(host)) changed = true;
-    if (!labelColors.has(host)) continue;
+    const reading = colorReads.delete(host);
+    if (!reading && !labelColors.has(host)) continue;
     const colors = change.newValue === undefined ? new Map() : labelColorsOf(change.newValue);
-    if (!sameColors(labelColors.get(host), colors)) changed = true;
-    if (change.newValue === undefined) labelColors.delete(host);
+    if (!reading && !sameColors(labelColors.get(host), colors)) changed = true;
+    if (change.newValue === undefined && !reading) labelColors.delete(host);
     else labelColors.set(host, colors);
   }
   return changed;

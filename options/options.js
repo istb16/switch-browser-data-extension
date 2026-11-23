@@ -2,7 +2,7 @@ import { initI18n, t, applyI18n, setLanguage, getSavedLangSetting } from '../lib
 import { getSettings, setSettings, getGroups } from '../lib/storage.js';
 import { clearAllData, migrateStorage } from '../lib/snapshot.js';
 import { showConfirm } from '../lib/dialog.js';
-import { $, notify } from '../lib/ui.js';
+import { $, notify, reportError } from '../lib/ui.js';
 import { renderDomainList, markStale } from './domain-list.js';
 import { renderGroups, handleAddGroup } from './groups-pane.js';
 import { handleExport, handleImport } from './transfer-ui.js';
@@ -25,6 +25,14 @@ const onGroupsChange = groups => renderDomainList(groups);
 
 async function renderList() {
   await renderDomainList(await getGroups());
+}
+
+async function handleSearch() {
+  try {
+    await renderDomainList(await getGroups(), { meter: false });
+  } catch (err) {
+    reportError('error_search_failed', err);
+  }
 }
 
 async function renderAll() {
@@ -58,7 +66,7 @@ async function init() {
   }));
   $('clearAllBtn').addEventListener('click', handleClearAll);
   $('sortSelect').addEventListener('change', renderList);
-  $('snapshotSearch').addEventListener('input', async () => renderDomainList(await getGroups(), { meter: false }));
+  $('snapshotSearch').addEventListener('input', handleSearch);
   $('groupForm').addEventListener('submit', e => handleAddGroup(e, onGroupsChange));
 
   await renderAll();

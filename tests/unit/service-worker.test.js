@@ -698,37 +698,42 @@ describe('background/service-worker', () => {
       expect(snapshotGets(get, 'snapshots/a.com')).toBe(1);
     });
 
-    it('a colour change during the first snapshot read wins', async () => {
-      const zTab = { id: 3, url: 'https://z.com/' };
+    it('a colour change during the first snapshot read wins without redrawing every tab', async () => {
       chrome._state.tabs = [tab];
-      await seed({
-        activeSnapshots: { 'a.com': 'Admin', 'z.com': 'Zed' },
-        'snapshots/a.com': { Admin: { color: 'red' } },
-        'snapshots/z.com': { Zed: { color: 'green' } },
-      });
+      await seed({ activeSnapshots: { 'a.com': 'Admin' }, 'snapshots/a.com': { Admin: { color: 'red' } } });
       await loadServiceWorker();
       const get = vi.spyOn(chrome.storage.local, 'get');
+      const query = vi.spyOn(chrome.tabs, 'query');
       const held = chrome._holdGet(keys => keys.includes('snapshots/a.com'));
 
       draw(tab);
       await vi.waitFor(() => expect(snapshotGets(get, 'snapshots/a.com')).toBe(1));
       await seed({ 'snapshots/a.com': { Admin: { color: 'amber' } } });
-      await vi.waitFor(() => expect(pair(1)).toEqual(AMBER));
-
-      // A draw that waits on a read released right after the stale one takes the same
-      // steps behind it, so once it lands the stale draw has finished.
-      const heldZ = chrome._holdGet(keys => keys.includes('snapshots/z.com'));
-      draw(zTab);
-      await vi.waitFor(() => expect(snapshotGets(get, 'snapshots/z.com')).toBe(1));
       held.release();
-      heldZ.release();
-      await vi.waitFor(() => expect(pair(3)).toEqual(GREEN));
-      expect(pair(1)).toEqual(AMBER);
+      await vi.waitFor(() => expect(pair(1)).toEqual(AMBER));
+      expect(query).not.toHaveBeenCalled();
 
       chrome._state.badgeBackgrounds[1] = undefined;
       draw(tab);
       await vi.waitFor(() => expect(pair(1)).toEqual(AMBER));
-      expect(snapshotGets(get, 'snapshots/a.com')).toBe(2);
+      expect(snapshotGets(get, 'snapshots/a.com')).toBe(1);
+    });
+
+    it('a save during the read that keeps the labels redraws no tab', async () => {
+      chrome._state.tabs = [tab];
+      await seed({ activeSnapshots: { 'a.com': 'Admin' }, 'snapshots/a.com': { Admin: { color: 'red' } } });
+      await loadServiceWorker();
+      const get = vi.spyOn(chrome.storage.local, 'get');
+      const query = vi.spyOn(chrome.tabs, 'query');
+      const held = chrome._holdGet(keys => keys.includes('snapshots/a.com'));
+
+      draw(tab);
+      await vi.waitFor(() => expect(snapshotGets(get, 'snapshots/a.com')).toBe(1));
+      await seed({ 'snapshots/a.com': { Admin: { color: 'red', cookies: [{ name: 'sid' }] } } });
+      held.release();
+      await vi.waitFor(() => expect(pair(1)).toEqual(RED));
+      expect(query).not.toHaveBeenCalled();
+      expect(snapshotGets(get, 'snapshots/a.com')).toBe(1);
     });
 
     it('a tab that navigates away during its colour read keeps the new site\'s badge', async () => {
