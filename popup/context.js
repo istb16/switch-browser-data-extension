@@ -50,7 +50,6 @@ export function recordedTypes(value) {
   return types.length ? types : undefined;
 }
 
-// A type left out of a partial load is not compared, even when it is enabled.
 export function comparedTypes(types) {
   const { enabledTypes } = state.settings;
   if (!types) return enabledTypes;

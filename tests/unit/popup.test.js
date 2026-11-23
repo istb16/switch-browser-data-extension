@@ -2005,20 +2005,36 @@ describe('popup/popup.js', () => {
         expect(stored.cookies.map(c => c.value)).toEqual(['a']);
       });
 
-      it('saves every type when the snapshot was deleted after the confirmation', async () => {
+      it('saves nothing when the snapshot was deleted after the confirmation', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {});
         await loadPopup('https://example.com/');
         row('first').querySelector('.actions-menu [data-action="overwrite"]').click();
         await settle();
         await setSnapshots({ 'example.com': { second: full('b') } });
         await confirmDialog();
 
+        expect($('statusMsg').className).toContain('error');
+        expect('first' in (await getSnapshots())['example.com']).toBe(false);
+      });
+
+      it('keeps the change of a recorded type the page could not give, and says what was saved', async () => {
+        await setActiveSnapshots({ 'example.com': partial('first', ['cookies', 'sessionStorage']) });
+        await loadPopup('https://example.com/');
+        expect(modifiedBadge('first').title).toContain('sessionStorage');
+        pageData = { localStorage: { ls: 'page' } };
+
+        row('first').querySelector('.changes-menu [data-action="overwrite"]').click();
+        await settle();
+        await confirmDialog();
+
         const stored = (await getSnapshots())['example.com'].first;
         expect(stored.cookies.map(c => c.value)).toEqual(['page']);
-        expect(stored.localStorage).toEqual({ ls: 'page' });
-        expect(stored.sessionStorage).toEqual({ ss: 'page' });
-        expect(stored.indexedDB).toEqual({ app: { page: true } });
-        expect(await active()).toBe('first');
-        expect($('statusMsg').textContent).toBe('"first" を保存しました');
+        expect(stored.sessionStorage).toEqual({ ss: 'a' });
+        expect($('statusMsg').textContent).toBe('"first" の Cookie を保存しました（読み込んだほかの種類はページから読み取れなかったので、保存したままです）');
+        expect(isHidden(modifiedBadge('first'))).toBe(false);
+        expect(modifiedBadge('first').title).toContain('sessionStorage');
+        expect(modifiedBadge('first').title).not.toContain('Cookie');
+        expect(await active()).toEqual(partial('first', ['cookies', 'sessionStorage']));
       });
 
       it('overwriting another row while a partial record is active saves every type', async () => {

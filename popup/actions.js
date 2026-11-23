@@ -1,7 +1,7 @@
 import { t, getLang } from '../lib/i18n.js';
 import {
   orderedNames, saveSnapshot, deleteSnapshot, renameSnapshot,
-  loadSnapshot, setActiveSnapshot, saveBackup, getBackup, updateSnapshotDetails,
+  loadSnapshot, setActiveSnapshot, saveBackup, getBackup, updateSnapshotDetails, replaceSnapshotFields,
 } from '../lib/snapshot.js';
 import { summarize, sizeOf } from '../lib/snapshot-summary.js';
 import { readKeys, SNAPSHOT_PREFIX, BACKUP_PREFIX } from '../lib/storage.js';
@@ -24,7 +24,6 @@ import { renderList, renderUndo, visibleMains, rowOf, focusRow, focusRowAt } fro
 import { closeSaveForm, saveFormDetails, buildDetailFields } from './save-form.js';
 import { buildTypePicker } from './type-picker.js';
 
-// The snapshot fields each type owns; a partial overwrite replaces them together.
 const TYPE_FIELDS = {
   cookies: ['cookies', 'cookieDomain'],
   localStorage: ['localStorage'],
@@ -164,39 +163,47 @@ async function confirmOverwrite(name) {
 
 // Only the types loaded from the snapshot are taken from the page: the rest of
 // the page may belong to another account and never came from this snapshot.
-// Resolves false when the snapshot is gone, so the caller saves it whole.
+// Resolves with the types it replaced.
 async function overwritePartly(name, details) {
   const { scope } = state;
   const { types } = state.activeEntry;
   const collected = withDigests(await collectData(state.activeTab.id, scope, comparedTypes(types)));
+  const replaced = types.filter(type => type in collected);
   // Saving the snapshot unchanged would report a save that captured nothing.
-  if (!types.some(type => type in collected)) throw new Error('no recorded type could be read');
-  const stored = await loadSnapshot(scope.host, name);
-  if (!stored) return false;
-  const merged = { ...stored };
-  for (const type of types) {
-    if (!(type in collected)) continue;
-    for (const field of TYPE_FIELDS[type]) {
-      if (field in collected) merged[field] = collected[field];
-      else delete merged[field];
-    }
+  if (!replaced.length) throw new Error('no recorded type could be read');
+  const fields = {};
+  const removed = [];
+  for (const field of replaced.flatMap(type => TYPE_FIELDS[type])) {
+    if (field in collected) fields[field] = collected[field];
+    else removed.push(field);
   }
-  await saveSnapshot(scope.host, name, merged, details);
+  // A full save here would store the types never loaded from it after all.
+  if (!await replaceSnapshotFields(scope.host, name, fields, removed, details)) throw new Error('snapshot is gone');
   await setActiveSnapshot(scope.key, activeValue({ host: scope.host, name, types }));
-  return true;
+  return replaced;
 }
 
 async function saveCurrentAs(name, details) {
   const { scope } = state;
   try {
-    if (!(isPartlyActive(name) && await overwritePartly(name, details))) {
+    let replaced = null;
+    let wanted = 0;
+    if (isPartlyActive(name)) {
+      wanted = state.activeEntry.types.filter(type => state.settings.enabledTypes[type]).length;
+      replaced = await overwritePartly(name, details);
+    } else {
       const data = await collectData(state.activeTab.id, scope, state.settings.enabledTypes);
       await saveSnapshot(scope.host, name, withDigests(data), details);
       await setActiveSnapshot(scope.key, activeValue({ host: scope.host, name }));
     }
-    state.changes = [];
+    // A recorded type the page could not give still differs from what is stored.
+    state.changes = replaced ? state.changes.filter(change => !replaced.includes(change.type)) : [];
     await refresh();
-    notify('status_saved', { name });
+    if (replaced && replaced.length < wanted) {
+      notify('status_saved_partial', { name, types: typeNamesOf(replaced) });
+    } else {
+      notify('status_saved', { name });
+    }
     return true;
   } catch (e) {
     reportError('error_save_failed', e);
@@ -303,7 +310,6 @@ function recordAfterPartialLoad(entry, applied) {
   return full ? { host: entry.host, name: entry.name } : { host: entry.host, name: entry.name, types };
 }
 
-// `chosen` limits the load to those types; without it every enabled type is loaded.
 export async function loadEntry(entry, chosen) {
   const { scope, settings } = state;
   const { name } = entry;

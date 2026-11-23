@@ -8,6 +8,7 @@ import {
   setSnapshotOrder,
   loadSnapshot,
   updateSnapshotDetails,
+  replaceSnapshotFields,
   migrateStorage, SCHEMA_VERSION,
   saveBackup,
   clearAllData,
@@ -44,6 +45,23 @@ describe('lib/snapshot', () => {
     expect(orders['example.com']).toEqual(['first']);
     const snapshots = await snapshotsOf('example.com');
     expect(snapshots.first.cookies).toEqual([{ name: 'a' }]);
+  });
+
+  it('replaceSnapshotFields replaces and removes only the given fields, keeping the memo', async () => {
+    await saveSnapshot('example.com', 'first', { cookies: [{ name: 'old' }], cookieDomain: 'example.com', localStorage: { a: '1' } }, { memo: 'note' });
+    expect(await replaceSnapshotFields('example.com', 'first', { cookies: [{ name: 'new' }] }, ['cookieDomain'])).toBe(true);
+
+    const { first } = await snapshotsOf('example.com');
+    expect(first.cookies).toEqual([{ name: 'new' }]);
+    expect('cookieDomain' in first).toBe(false);
+    expect(first.localStorage).toEqual({ a: '1' });
+    expect(first.memo).toBe('note');
+  });
+
+  it('replaceSnapshotFields writes nothing when the snapshot is gone', async () => {
+    await saveSnapshot('example.com', 'other', { cookies: [] });
+    expect(await replaceSnapshotFields('example.com', 'first', { cookies: [] }, [])).toBe(false);
+    expect(Object.keys(await snapshotsOf('example.com'))).toEqual(['other']);
   });
 
   it('orderedNames drops stale names and appends the unordered ones sorted', () => {
