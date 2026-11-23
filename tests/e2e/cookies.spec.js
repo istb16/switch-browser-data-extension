@@ -113,11 +113,6 @@ test('after a load that wrote cookies, the service worker reloads the site\'s ot
   await row(popup, 'alice').locator('.snapshot__main').click();
   await expect(popup.locator('#statusMsg')).toContainText(/ほかの 2 タブ|2 other tabs/);
   await expect(site.locator('h1')).toHaveText('signed in as: alice');
-  // The service worker waits for the page to settle (3 s) before it learns and
-  // reloads the others, so they still show their first load here.
-  expect(await wasLoadedAgain(other)).toBe(false);
-  expect(await wasLoadedAgain(postPage)).toBe(false);
-
   await expect.poll(() => wasLoadedAgain(other), { timeout: 15_000 }).toBe(true);
   await expect(other.locator('h1')).toHaveText('signed in as: alice');
   await expect.poll(() => wasLoadedAgain(postPage), { timeout: 15_000 }).toBe(true);

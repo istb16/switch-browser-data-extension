@@ -30,7 +30,7 @@ Chrome / Edge 向けブラウザ拡張機能。ドメインごとに Cookie・lo
   - 自動リロードが有効なら、読み込み後にタブを再読み込みする
   - **ほかのタブの再読み込み**（`settings.reloadOtherTabs`、既定はオフ。自動リロードがオンのときだけ効く）: 読み込み・「戻す」・サイトのデータの消去のあと、書き換えたデータを見ているほかのタブも再読み込みする（`otherSiteTabs`、`lib/site-tabs.js`）。対象は同じプロファイル・同じシークレットモードの `http(s)` のタブで、次のどちらかに当たるもの
     - Cookie を実際に書いたとき、そのタブのホストが書いた範囲に入る（`isWithin(ホスト, 範囲の domain)`。`exact` の範囲でも `.host` の Cookie はサブドメインに届くのでサブドメインを含む。スキームとポートは問わない）。書いたかは `applyData` の `cookiesApplied`、消去では `clearData` の `beforeCookies` に渡る範囲で決める
-    - ページの保存領域を実際に書いたとき、今のタブと同じオリジン（`applyData` の `storageApplied`。消去ではページの保存領域の種類が1つでも有効なとき）
+    - localStorage か IndexedDB を実際に書いたとき、今のタブと同じオリジン（`applyData` の `sharedStorageApplied`。消去では localStorage か IndexedDB が有効なとき）。sessionStorage はタブごとでほかのタブに届かないので、sessionStorage だけを書いた・消したときは同じオリジンのタブを再読み込みしない
     - 破棄されたタブ（`discarded`・`status: 'unloaded'`）は選ばない（開いたときに新しいデータで読み込むため）
   - 読み込み・「戻す」で Cookie の確認待ちを始めたときは、ほかのタブの ID を確認待ちに `reloadTabs` として残し、ポップアップは今のタブだけを再読み込みする。Service Worker が今のタブの確認待ちを受け取って学習してから `reloadTabs` を再読み込みする（同時に読み込むと、ほかのタブが sessionStorage に残る前のアカウントの Cookie を書き戻し、それを「サイトが自分で書き換えた」と覚えてしまうため）。確認待ちが期限切れ・権限なしで学習できなくても `reloadTabs` は再読み込みする。確認待ちのない場合（消去、Cookie を書かなかった読み込み・「戻す」）はポップアップが今のタブ、ほかのタブの順に再読み込みする
   - ステータスには、再読み込みしたほかのタブの数を「（ほかの 2 タブも再読み込み）」と添える（Service Worker に任せたときは任せた数）。0 なら何も添えない

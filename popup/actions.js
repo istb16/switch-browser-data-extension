@@ -164,7 +164,6 @@ async function watchCookiesAfterApply(storeKey, data, cookiesApplied, others) {
   return true;
 }
 
-// The other tabs that see what was just written; `target` is as for otherSiteTabs.
 async function selectOtherTabs(target) {
   const { settings, activeTab } = state;
   if (!settings.autoReload || !settings.reloadOtherTabs) return [];
@@ -176,8 +175,6 @@ async function selectOtherTabs(target) {
   }
 }
 
-// Resolves with how many other tabs were reloaded, or handed to the service
-// worker when `deferred`.
 async function reloadAfterChange(others, deferred) {
   await reloadIfEnabled();
   if (deferred) return others.length;
@@ -185,14 +182,15 @@ async function reloadAfterChange(others, deferred) {
 }
 
 function notifyDone(key, vars, count) {
-  const suffix = count > 0 ? t('status_other_tabs_reloaded', { count }) : '';
+  const suffixKey = count === 1 ? 'status_other_tab_reloaded' : 'status_other_tabs_reloaded';
+  const suffix = count > 0 ? t(suffixKey, { count }) : '';
   showStatus($('statusMsg'), t(key, vars) + suffix, 'success');
 }
 
 async function reloadAfterApply(storeKey, data, applied) {
   const within = cookieDomainFor(data, storeKey, state.scope);
   const others = await selectOtherTabs({
-    sameOrigin: applied.storageApplied,
+    sameOrigin: applied.sharedStorageApplied,
     cookieDomain: applied.cookiesApplied ? within.domain : null,
   });
   const deferred = await watchCookiesAfterApply(storeKey, data, applied.cookiesApplied, others);
@@ -284,7 +282,7 @@ export function handleClearSite() {
       await setActiveSnapshot(scope.key, null);
       state.changes = [];
       const others = await selectOtherTabs({
-        sameOrigin: types.localStorage || types.sessionStorage || types.indexedDB,
+        sameOrigin: types.localStorage || types.indexedDB,
         cookieDomain: clearedCookies?.domain ?? null,
       });
       const reloaded = await reloadAfterChange(others, false);

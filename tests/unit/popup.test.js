@@ -925,6 +925,19 @@ describe('popup/popup.js', () => {
         expect($('statusMsg').textContent).toBe(LOADED + suffix(2));
       });
 
+      it('with only sessionStorage written, reloads no other tab, since it belongs to the tab alone', async () => {
+        await setSnapshots({ 'example.com': {
+          first: snap('2024-01-01T00:00:00.000Z', { sessionStorage: { s: '1' } }),
+        } });
+        await setReloadOtherTabs({ enabledTypes: { cookies: false, localStorage: true, sessionStorage: true, indexedDB: true } });
+        await loadPopupWithTabs(ACTIVE, OTHERS);
+        await clickLoad('first');
+
+        expect(pageData.sessionStorage).toEqual({ s: '1' });
+        expect(chrome._state.reloadedTabs).toEqual([1]);
+        expect($('statusMsg').textContent).toBe(LOADED);
+      });
+
       it('counts only the tabs that did reload', async () => {
         await setReloadOtherTabs({ enabledTypes: { cookies: false, localStorage: true, sessionStorage: true, indexedDB: true } });
         await loadPopupWithTabs(ACTIVE, OTHERS);
@@ -937,6 +950,15 @@ describe('popup/popup.js', () => {
 
         expect(chrome._state.reloadedTabs).toEqual([1, 2]);
         expect($('statusMsg').textContent).toBe(LOADED + suffix(1));
+      });
+
+      it('says "1 other tab" in English when one other tab reloaded', async () => {
+        chrome._state.uiLanguage = 'en-US';
+        await setReloadOtherTabs({ enabledTypes: { cookies: false, localStorage: true, sessionStorage: true, indexedDB: true } });
+        await loadPopupWithTabs(ACTIVE, [OTHERS[0]]);
+        await clickLoad('first');
+
+        expect($('statusMsg').textContent).toMatch(/ \(also reloading 1 other tab\)$/);
       });
 
       it('adds nothing when every other tab fails to reload', async () => {
@@ -1022,6 +1044,15 @@ describe('popup/popup.js', () => {
         expect(chrome._state.cookies).toHaveLength(1);
         expect(chrome._state.reloadedTabs).toEqual([1, 2]);
         expect($('statusMsg').textContent).toBe(CLEARED + suffix(1));
+      });
+
+      it('with only sessionStorage on, reloads no other tab', async () => {
+        await setReloadOtherTabs({ enabledTypes: { cookies: false, localStorage: false, sessionStorage: true, indexedDB: false } });
+        await loadPopupWithTabs(APP, APP_OTHERS);
+        await clearSite();
+
+        expect(chrome._state.reloadedTabs).toEqual([1]);
+        expect($('statusMsg').textContent).toBe(CLEARED);
       });
 
       function blockIndexedDB() {

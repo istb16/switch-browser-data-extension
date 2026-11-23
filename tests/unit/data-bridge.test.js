@@ -97,10 +97,10 @@ describe('lib/data-bridge applyData', () => {
     const payload = { localStorage: { a: '1' } };
     const types = { cookies: false, localStorage: true, sessionStorage: false, indexedDB: false };
     chrome.tabs.sendMessage = vi.fn().mockRejectedValue(new Error('Receiving end does not exist.'));
-    await expect(applyData(1, HOST, payload, types)).resolves.toEqual({ storageSkipped: false, cookiesApplied: false, storageApplied: false });
+    await expect(applyData(1, HOST, payload, types)).resolves.toEqual({ storageSkipped: false, cookiesApplied: false, sharedStorageApplied: false });
 
     chrome.tabs.sendMessage = vi.fn().mockResolvedValue({ success: true });
-    await expect(applyData(1, HOST, payload, types)).resolves.toEqual({ storageSkipped: false, cookiesApplied: false, storageApplied: true });
+    await expect(applyData(1, HOST, payload, types)).resolves.toEqual({ storageSkipped: false, cookiesApplied: false, sharedStorageApplied: true });
 
     chrome.tabs.sendMessage = vi.fn().mockResolvedValue({ error: 'IndexedDB "app" is in use by the page' });
     await expect(applyData(1, HOST, payload, types)).rejects.toThrow('in use');
@@ -110,7 +110,16 @@ describe('lib/data-bridge applyData', () => {
     chrome.tabs.sendMessage = vi.fn();
     const result = await applyData(1, HOST, {}, { cookies: false, localStorage: true, sessionStorage: true, indexedDB: true });
     expect(chrome.tabs.sendMessage).not.toHaveBeenCalled();
-    expect(result).toEqual({ storageSkipped: false, cookiesApplied: false, storageApplied: false });
+    expect(result).toEqual({ storageSkipped: false, cookiesApplied: false, sharedStorageApplied: false });
+  });
+
+  it('does not report sessionStorage alone as shared storage, since other tabs never see it', async () => {
+    const types = { cookies: false, localStorage: true, sessionStorage: true, indexedDB: true };
+    chrome.tabs.sendMessage = vi.fn().mockResolvedValue({ success: true });
+    expect(await applyData(1, HOST, { sessionStorage: { s: '1' } }, types))
+      .toEqual({ storageSkipped: false, cookiesApplied: false, sharedStorageApplied: false });
+    expect(await applyData(1, HOST, { sessionStorage: { s: '1' }, indexedDB: {} }, types))
+      .toEqual({ storageSkipped: false, cookiesApplied: false, sharedStorageApplied: true });
   });
 
   it('reports the cookies as applied only when the permission is granted', async () => {
@@ -120,7 +129,7 @@ describe('lib/data-bridge applyData', () => {
 
     chrome.permissions.request = vi.fn().mockResolvedValue(false);
     expect(await applyData(1, A_COM, { cookies: [{ name: 'a', value: '1', domain: 'a.com', path: '/' }] }, types))
-      .toEqual({ storageSkipped: false, cookiesApplied: false, storageApplied: false });
+      .toEqual({ storageSkipped: false, cookiesApplied: false, sharedStorageApplied: false });
     expect(chrome._state.cookies.some(c => c.domain === 'a.com')).toBe(false);
   });
 });
@@ -336,20 +345,20 @@ describe('lib/data-bridge in a subdomain group', () => {
     chrome.tabs.sendMessage = vi.fn().mockResolvedValue({ success: true });
     const result = await applyData(1, APP, { localStorage: { a: '1' } }, ALL, 'example.com');
     expect(chrome.tabs.sendMessage).not.toHaveBeenCalled();
-    expect(result).toEqual({ storageSkipped: true, cookiesApplied: false, storageApplied: false });
+    expect(result).toEqual({ storageSkipped: true, cookiesApplied: false, sharedStorageApplied: false });
   });
 
   it('applyData on the base host applies page data of a snapshot stored under the base key', async () => {
     chrome.tabs.sendMessage = vi.fn().mockResolvedValue({ success: true });
     const result = await applyData(1, BASE, { localStorage: { a: '1' } }, ALL, 'example.com');
     expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(1, expect.objectContaining({ type: 'setStorageData', data: { localStorage: { a: '1' } } }));
-    expect(result).toEqual({ storageSkipped: false, cookiesApplied: false, storageApplied: true });
+    expect(result).toEqual({ storageSkipped: false, cookiesApplied: false, sharedStorageApplied: true });
   });
 
   it('applyData on app applies page data of a snapshot stored under app, in a group and outside one', async () => {
     for (const scope of [APP, APP_ALONE]) {
       chrome.tabs.sendMessage = vi.fn().mockResolvedValue({ success: true });
-      expect(await applyData(1, scope, { localStorage: { a: '1' } }, ALL, 'app.example.com')).toEqual({ storageSkipped: false, cookiesApplied: false, storageApplied: true });
+      expect(await applyData(1, scope, { localStorage: { a: '1' } }, ALL, 'app.example.com')).toEqual({ storageSkipped: false, cookiesApplied: false, sharedStorageApplied: true });
       expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(1, expect.objectContaining({ type: 'setStorageData' }));
     }
   });
