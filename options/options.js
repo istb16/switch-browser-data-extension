@@ -16,6 +16,7 @@ const TOGGLES = [
   { id: 'toggleIndexedDB',      type: 'indexedDB' },
   { id: 'toggleAutoBackup',     key: 'autoBackup' },
   { id: 'toggleAutoReload',     key: 'autoReload' },
+  { id: 'toggleReloadOtherTabs', key: 'reloadOtherTabs' },
   { id: 'toggleShowBadge',      key: 'showBadge' },
   { id: 'toggleEncryptExports', key: 'encryptExports' },
 ];
@@ -48,6 +49,7 @@ async function init() {
     $(id).checked = type ? settings.enabledTypes[type] : settings[key];
     $(id).addEventListener('change', handleSaveSettings);
   }
+  syncDependentToggles();
   $('exportBtn').addEventListener('click', () => handleExport({}, $('exportBtn')));
   $('importBtn').addEventListener('click', () => $('importFile').click());
   $('importFile').addEventListener('change', e => handleImport(e, () => {
@@ -89,7 +91,14 @@ function renderVersionFooter() {
   $('versionFooter').textContent = t('footer_version', { version: chrome.runtime.getManifest().version });
 }
 
+// Other tabs are only reloaded along with the current one. A disabled box keeps
+// its checked state, so the stored choice survives turning auto reload off.
+function syncDependentToggles() {
+  $('toggleReloadOtherTabs').disabled = !$('toggleAutoReload').checked;
+}
+
 async function handleSaveSettings() {
+  syncDependentToggles();
   const settings = await getSettings();
   settings.enabledTypes = {};
   for (const { id, type, key } of TOGGLES) {

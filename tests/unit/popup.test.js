@@ -785,6 +785,467 @@ describe('popup/popup.js', () => {
     });
   });
 
+  describe('reloading the other tabs of the site', () => {
+    const sid = (value, domain = 'example.com') => ({ name: 'sid', value, domain, path: '/', secure: true, httpOnly: true, sameSite: 'lax' });
+    const tab = (id, url) => ({ id, url, status: 'complete' });
+    const ACTIVE = tab(1, 'https://example.com/');
+    const OTHERS = [
+      tab(2, 'https://example.com/other'),
+      tab(3, 'https://sub.example.com/'),
+      tab(4, 'https://other.com/'),
+      tab(5, 'http://example.com:8080/'),
+      tab(6, 'https://example.com/third'),
+    ];
+    const LOADED = '"first" を適用しました';
+    const suffix = count => `（ほかの ${count} タブも再読み込み）`;
+
+    // The popup asks for its own tab with { active, currentWindow } and for
+    // every tab with {}; `all` answers the latter.
+    async function loadPopupWithTabs(active, others, all = async () => [active, ...others]) {
+      document.body.innerHTML = bodyHtml;
+      chrome._state.tabs = [active, ...others];
+      chrome.tabs.query = vi.fn(async (info = {}) => (info.active ? [active] : all()));
+      vi.resetModules();
+      await import('../../popup/popup.js');
+      await settle();
+    }
+
+    async function setReloadOtherTabs(more = {}) {
+      await setSettings({ ...(await getSettings()), reloadOtherTabs: true, ...more });
+    }
+
+    function recordOrder() {
+      const events = [];
+      const set = chrome.storage.local.set;
+      vi.spyOn(chrome.storage.local, 'set').mockImplementation(async items => {
+        if ('cookieChecks' in items) events.push('cookieChecks');
+        return set(items);
+      });
+      const reload = chrome.tabs.reload;
+      vi.spyOn(chrome.tabs, 'reload').mockImplementation(async id => {
+        events.push(`reload ${id}`);
+        return reload(id);
+      });
+      const update = chrome.tabs.update;
+      vi.spyOn(chrome.tabs, 'update').mockImplementation(async (id, details) => {
+        events.push(`reload ${id}`);
+        return update(id, details);
+      });
+      return events;
+    }
+
+    const storedCheck = async (tabId = 1) => (await chrome.storage.local.get('cookieChecks')).cookieChecks?.[tabId];
+    const storedReloadIds = async () => (await storedCheck()).reloadTabs.map(entry => entry.id);
+
+    async function clickLoad(name) {
+      row(name).querySelector('.snapshot__main').click();
+      await settle();
+    }
+
+    async function clearSite() {
+      $('clearSiteBtn').click();
+      await settle();
+      document.querySelector('.tk3-btn-confirm').click();
+      await settle();
+    }
+
+    beforeEach(async () => {
+      await setSnapshots({ 'example.com': {
+        first: snap('2024-01-01T00:00:00.000Z', { cookies: [sid('account-a')], localStorage: { a: '1' } }),
+      } });
+      chrome.tabs.sendMessage = vi.fn(async (_tabId, message) => {
+        if (message.type === 'clearStorageData') {
+          pageData = {};
+          return { success: true, blockedIndexedDB: [] };
+        }
+        if (message.type === 'ping') return { ok: true };
+        if (message.type === 'getStorageData') return structuredClone(pageData);
+        if (message.type === 'setStorageData') {
+          pageData = { ...pageData, ...structuredClone(message.data) };
+          return { success: true };
+        }
+      });
+    });
+
+    it('is off by default: only the active tab reloads and the status has no suffix', async () => {
+      await loadPopupWithTabs(ACTIVE, OTHERS);
+      await clickLoad('first');
+
+      expect(chrome._state.reloadedTabs).toEqual([1]);
+      expect((await storedCheck()).reloadTabs).toEqual([]);
+      expect($('statusMsg').textContent).toBe(LOADED);
+    });
+
+    it('is ignored while automatic reload is off', async () => {
+      await setReloadOtherTabs({ autoReload: false });
+      await loadPopupWithTabs(ACTIVE, OTHERS);
+      await clickLoad('first');
+
+      expect(chrome._state.reloadedTabs).toEqual([]);
+      expect((await storedCheck()).reloadTabs).toEqual([]);
+      expect($('statusMsg').textContent).toBe(LOADED);
+    });
+
+    describe('after a load that wrote cookies', () => {
+      it('hands the other tabs to the service worker before reloading the active tab, and reloads none itself', async () => {
+        await setReloadOtherTabs();
+        await loadPopupWithTabs(ACTIVE, OTHERS);
+        const events = recordOrder();
+        await clickLoad('first');
+
+        expect(events).toEqual(['cookieChecks', 'reload 1']);
+        expect(chrome._state.reloadedTabs).toEqual([1]);
+        expect((await storedCheck()).reloadTabs).toEqual([
+          { id: 2, origin: 'https://example.com' },
+          { id: 3, origin: 'https://sub.example.com' },
+          { id: 5, origin: 'http://example.com:8080' },
+          { id: 6, origin: 'https://example.com' },
+        ]);
+        expect($('statusMsg').textContent).toBe(LOADED + suffix(4));
+      });
+
+      it('still starts the check and reloads the active tab when listing the tabs fails', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        await setReloadOtherTabs();
+        await loadPopupWithTabs(ACTIVE, OTHERS, async () => {
+          throw new Error('query failed');
+        });
+        await clickLoad('first');
+
+        expect((await storedCheck()).reloadTabs).toEqual([]);
+        expect(chrome._state.reloadedTabs).toEqual([1]);
+        expect($('statusMsg').className).toContain('success');
+        expect($('statusMsg').textContent).toBe(LOADED);
+      });
+    });
+
+    describe('reloading from the popup', () => {
+      it('with cookies off, reloads the active tab first, then the same-origin tabs', async () => {
+        await setReloadOtherTabs({ enabledTypes: { cookies: false, localStorage: true, sessionStorage: true, indexedDB: true } });
+        await loadPopupWithTabs(ACTIVE, OTHERS);
+        const events = recordOrder();
+        await clickLoad('first');
+
+        expect(events).toEqual(['reload 1', 'reload 2', 'reload 6']);
+        expect(await storedCheck()).toBeUndefined();
+        expect($('statusMsg').textContent).toBe(LOADED + suffix(2));
+      });
+
+      it('with only sessionStorage written, reloads no other tab, since it belongs to the tab alone', async () => {
+        await setSnapshots({ 'example.com': {
+          first: snap('2024-01-01T00:00:00.000Z', { sessionStorage: { s: '1' } }),
+        } });
+        await setReloadOtherTabs({ enabledTypes: { cookies: false, localStorage: true, sessionStorage: true, indexedDB: true } });
+        await loadPopupWithTabs(ACTIVE, OTHERS);
+        await clickLoad('first');
+
+        expect(pageData.sessionStorage).toEqual({ s: '1' });
+        expect(chrome._state.reloadedTabs).toEqual([1]);
+        expect($('statusMsg').textContent).toBe(LOADED);
+      });
+
+      it('counts only the tabs that did reload', async () => {
+        await setReloadOtherTabs({ enabledTypes: { cookies: false, localStorage: true, sessionStorage: true, indexedDB: true } });
+        await loadPopupWithTabs(ACTIVE, OTHERS);
+        const update = chrome.tabs.update;
+        vi.spyOn(chrome.tabs, 'update').mockImplementation(async (id, details) => {
+          if (id === 6) throw new Error('No tab with id: 6');
+          return update(id, details);
+        });
+        await clickLoad('first');
+
+        expect(chrome._state.reloadedTabs).toEqual([1, 2]);
+        expect($('statusMsg').textContent).toBe(LOADED + suffix(1));
+      });
+
+      it('says "1 other tab" in English when one other tab reloaded', async () => {
+        chrome._state.uiLanguage = 'en-US';
+        await setReloadOtherTabs({ enabledTypes: { cookies: false, localStorage: true, sessionStorage: true, indexedDB: true } });
+        await loadPopupWithTabs(ACTIVE, [OTHERS[0]]);
+        await clickLoad('first');
+
+        expect($('statusMsg').textContent).toMatch(/ \(also reloading 1 other tab\)$/);
+      });
+
+      it('adds nothing when every other tab fails to reload', async () => {
+        await setReloadOtherTabs({ enabledTypes: { cookies: false, localStorage: true, sessionStorage: true, indexedDB: true } });
+        await loadPopupWithTabs(ACTIVE, OTHERS);
+        const update = chrome.tabs.update;
+        vi.spyOn(chrome.tabs, 'update').mockImplementation(async (id, details) => {
+          if (id !== 1) throw new Error(`No tab with id: ${id}`);
+          return update(id, details);
+        });
+        await clickLoad('first');
+
+        expect(chrome._state.reloadedTabs).toEqual([1]);
+        expect($('statusMsg').className).toContain('success');
+        expect($('statusMsg').textContent).toBe(LOADED);
+      });
+
+      it('with the host permission denied, reloads only the same-origin tabs', async () => {
+        await setReloadOtherTabs();
+        await loadPopupWithTabs(ACTIVE, OTHERS);
+        vi.spyOn(chrome.permissions, 'contains').mockResolvedValue(false);
+        vi.spyOn(chrome.permissions, 'request').mockResolvedValue(false);
+        await clickLoad('first');
+
+        expect(chrome._state.reloadedTabs).toEqual([1, 2, 6]);
+        expect(await storedCheck()).toBeUndefined();
+        expect($('statusMsg').textContent).toBe(LOADED + suffix(2));
+      });
+    });
+
+    describe('clearing the site\'s data', () => {
+      const APP = tab(1, 'https://app.example.com/');
+      const APP_OTHERS = [
+        tab(2, 'https://app.example.com/x'),
+        tab(3, 'https://api.app.example.com/'),
+        tab(4, 'https://www.example.com/'),
+        tab(5, 'https://example.com/'),
+        tab(6, 'https://notexample.com/'),
+      ];
+      const CLEARED = '"app.example.com" のデータを消去しました';
+
+      beforeEach(() => {
+        chrome._state.grantedOrigins.add('*://app.example.com/*');
+        chrome._state.cookies = [sid('a', 'app.example.com')];
+      });
+
+      it('outside a group, reloads the host\'s and its subdomains\' tabs, not a sibling\'s or the parent\'s', async () => {
+        await setReloadOtherTabs();
+        await loadPopupWithTabs(APP, APP_OTHERS);
+        const events = recordOrder();
+        await clearSite();
+
+        expect(events.filter(e => e.startsWith('reload'))).toEqual(['reload 1', 'reload 2', 'reload 3']);
+        expect($('statusMsg').textContent).toBe(CLEARED + suffix(2));
+      });
+
+      it('in a group, reloads every tab within the base', async () => {
+        await setGroups(['example.com']);
+        chrome._state.grantedOrigins.add('*://*.example.com/*');
+        await setReloadOtherTabs();
+        await loadPopupWithTabs(APP, APP_OTHERS);
+        await clearSite();
+
+        expect(chrome._state.reloadedTabs).toEqual([1, 2, 3, 4, 5]);
+        expect($('statusMsg').textContent).toContain(suffix(4));
+      });
+
+      // No cookie was cleared, so the subdomain's tab sees an unchanged jar.
+      it('with cookies on but the host permission denied, keeps the cookies and reloads only the same-origin tabs', async () => {
+        await setReloadOtherTabs();
+        await loadPopupWithTabs(APP, APP_OTHERS);
+        vi.spyOn(chrome.permissions, 'contains').mockResolvedValue(false);
+        vi.spyOn(chrome.permissions, 'request').mockResolvedValue(false);
+        await clearSite();
+
+        expect(chrome._state.cookies).toEqual([sid('a', 'app.example.com')]);
+        expect(chrome._state.reloadedTabs).toEqual([1, 2]);
+        expect($('statusMsg').textContent).toBe(CLEARED + suffix(1));
+      });
+
+      it('with cookies off, reloads only the same-origin tabs', async () => {
+        await setReloadOtherTabs({ enabledTypes: { cookies: false, localStorage: true, sessionStorage: true, indexedDB: true } });
+        await loadPopupWithTabs(APP, APP_OTHERS);
+        await clearSite();
+
+        expect(chrome._state.reloadedTabs).toEqual([1, 2]);
+        expect($('statusMsg').textContent).toBe(CLEARED + suffix(1));
+      });
+
+      it('with only IndexedDB on, reloads only the same-origin tabs and leaves the cookies', async () => {
+        await setReloadOtherTabs({ enabledTypes: { cookies: false, localStorage: false, sessionStorage: false, indexedDB: true } });
+        await loadPopupWithTabs(APP, APP_OTHERS);
+        await clearSite();
+
+        expect(chrome.tabs.sendMessage).toHaveBeenCalledWith(1, { type: 'clearStorageData', types: { localStorage: false, sessionStorage: false, indexedDB: true } });
+        expect(chrome._state.cookies).toHaveLength(1);
+        expect(chrome._state.reloadedTabs).toEqual([1, 2]);
+        expect($('statusMsg').textContent).toBe(CLEARED + suffix(1));
+      });
+
+      it('with only sessionStorage on, reloads no other tab', async () => {
+        await setReloadOtherTabs({ enabledTypes: { cookies: false, localStorage: false, sessionStorage: true, indexedDB: false } });
+        await loadPopupWithTabs(APP, APP_OTHERS);
+        await clearSite();
+
+        expect(chrome._state.reloadedTabs).toEqual([1]);
+        expect($('statusMsg').textContent).toBe(CLEARED);
+      });
+
+      function blockIndexedDB() {
+        const base = chrome.tabs.sendMessage;
+        chrome.tabs.sendMessage = vi.fn(async (tabId, message) => {
+          if (message.type === 'clearStorageData') return { success: true, blockedIndexedDB: ['app'] };
+          return base(tabId, message);
+        });
+      }
+
+      it('with a database the page keeps open, reloads the same-origin tabs too, so its deletion completes', async () => {
+        await setReloadOtherTabs({ enabledTypes: { cookies: false, localStorage: false, sessionStorage: false, indexedDB: true } });
+        await loadPopupWithTabs(APP, APP_OTHERS);
+        blockIndexedDB();
+        await clearSite();
+
+        expect(chrome._state.reloadedTabs).toEqual([1, 2]);
+        expect($('statusMsg').textContent).toBe(CLEARED + suffix(1));
+      });
+
+      it('with a database the page keeps open and automatic reload off, asks for a reload and reloads no tab', async () => {
+        await setReloadOtherTabs({ autoReload: false, enabledTypes: { cookies: false, localStorage: false, sessionStorage: false, indexedDB: true } });
+        await loadPopupWithTabs(APP, APP_OTHERS);
+        blockIndexedDB();
+        await clearSite();
+
+        expect(chrome._state.reloadedTabs).toEqual([]);
+        expect($('statusMsg').textContent).toBe('"app.example.com" のデータを消去しました。IndexedDB はページが使用中のため、ページを再読み込みすると消えます');
+      });
+
+      it('adds nothing when no other tab is of the site', async () => {
+        await setReloadOtherTabs();
+        await loadPopupWithTabs(APP, [tab(6, 'https://notexample.com/')]);
+        await clearSite();
+
+        expect(chrome._state.reloadedTabs).toEqual([1]);
+        expect($('statusMsg').textContent).toBe(CLEARED);
+      });
+    });
+
+    describe('a load in a subdomain group', () => {
+      beforeEach(async () => {
+        await setGroups(['example.com']);
+        chrome._state.grantedOrigins.add('*://*.example.com/*');
+      });
+
+      it('of another host\'s snapshot from before the group reloads only that host\'s tabs', async () => {
+        await setSnapshots({ 'www.example.com': {
+          first: snap('2024-01-01T00:00:00.000Z', { cookies: [sid('b', 'www.example.com')], localStorage: { a: '1' } }),
+        } });
+        await setReloadOtherTabs();
+        await loadPopupWithTabs(tab(1, 'https://app.example.com/'), [
+          tab(2, 'https://app.example.com/other'),
+          tab(3, 'https://www.example.com/'),
+          tab(4, 'https://api.www.example.com/'),
+          tab(5, 'https://example.com/'),
+        ]);
+        await clickLoad('first');
+
+        expect(await storedReloadIds()).toEqual([3, 4]);
+        expect(chrome._state.reloadedTabs).toEqual([1]);
+      });
+    });
+
+    describe('undo', () => {
+      it('outside a group, hands over the host\'s and its subdomains\' tabs', async () => {
+        await setBackups({ 'example.com': { savedAt: '2024-01-01T00:00:00.000Z', activeName: null, cookies: [sid('previous')], localStorage: { a: '0' } } });
+        await setReloadOtherTabs();
+        await loadPopupWithTabs(ACTIVE, OTHERS);
+        $('undoBtn').click();
+        await settle();
+
+        expect(await storedReloadIds()).toEqual([2, 3, 5, 6]);
+        expect(chrome._state.reloadedTabs).toEqual([1]);
+        expect($('statusMsg').textContent).toBe(`直前の状態に戻しました${suffix(4)}`);
+      });
+
+      it('with the host permission denied, starts no check and reloads the same-origin tabs itself', async () => {
+        await setBackups({ 'example.com': { savedAt: '2024-01-01T00:00:00.000Z', activeName: null, cookies: [sid('previous')], localStorage: { a: '0' } } });
+        await setReloadOtherTabs();
+        await loadPopupWithTabs(ACTIVE, OTHERS);
+        vi.spyOn(chrome.permissions, 'contains').mockResolvedValue(false);
+        vi.spyOn(chrome.permissions, 'request').mockResolvedValue(false);
+        const events = recordOrder();
+        $('undoBtn').click();
+        await settle();
+
+        expect(events).toEqual(['reload 1', 'reload 2', 'reload 6']);
+        expect(await storedCheck()).toBeUndefined();
+        expect(chrome._state.cookies.some(c => c.value === 'previous')).toBe(false);
+        expect(pageData.localStorage).toEqual({ a: '0' });
+        expect($('statusMsg').textContent).toBe(`直前の状態に戻しました${suffix(2)}`);
+      });
+
+      it('in a group, hands over every tab within the base', async () => {
+        await setGroups(['example.com']);
+        chrome._state.grantedOrigins.add('*://*.example.com/*');
+        await setBackups({ 'app.example.com': {
+          savedAt: '2024-01-01T00:00:00.000Z', activeName: null, cookieDomain: 'example.com',
+          cookies: [sid('previous', '.example.com')], localStorage: { a: '0' },
+        } });
+        await setReloadOtherTabs();
+        await loadPopupWithTabs(tab(1, 'https://app.example.com/'), [
+          tab(2, 'https://www.example.com/'),
+          tab(3, 'https://example.com/'),
+          tab(4, 'https://notexample.com/'),
+          tab(5, 'https://app.example.com/other'),
+        ]);
+        $('undoBtn').click();
+        await settle();
+
+        expect(await storedReloadIds()).toEqual([2, 3, 5]);
+        expect(chrome._state.reloadedTabs).toEqual([1]);
+      });
+
+      const UNDONE = '直前の状態に戻しました';
+      const backupWith = data => setBackups({ 'example.com': { savedAt: '2024-01-01T00:00:00.000Z', activeName: null, ...data } });
+
+      it('with only sessionStorage restored, reloads no other tab', async () => {
+        await backupWith({ sessionStorage: { s: '0' } });
+        await setReloadOtherTabs();
+        await loadPopupWithTabs(ACTIVE, OTHERS);
+        $('undoBtn').click();
+        await settle();
+
+        expect(pageData.sessionStorage).toEqual({ s: '0' });
+        expect(await storedCheck()).toBeUndefined();
+        expect(chrome._state.reloadedTabs).toEqual([1]);
+        expect($('statusMsg').textContent).toBe(UNDONE);
+      });
+
+      it('with the setting off, hands over and reloads no other tab', async () => {
+        await backupWith({ cookies: [sid('previous')], localStorage: { a: '0' } });
+        await setReloadOtherTabs({ reloadOtherTabs: false });
+        await loadPopupWithTabs(ACTIVE, OTHERS);
+        $('undoBtn').click();
+        await settle();
+
+        expect(await storedReloadIds()).toEqual([]);
+        expect(chrome._state.reloadedTabs).toEqual([1]);
+        expect($('statusMsg').textContent).toBe(UNDONE);
+      });
+
+      it('with automatic reload off, reloads no tab at all', async () => {
+        await backupWith({ cookies: [sid('previous')], localStorage: { a: '0' } });
+        await setReloadOtherTabs({ autoReload: false });
+        await loadPopupWithTabs(ACTIVE, OTHERS);
+        $('undoBtn').click();
+        await settle();
+
+        expect(await storedReloadIds()).toEqual([]);
+        expect(chrome._state.reloadedTabs).toEqual([]);
+        expect($('statusMsg').textContent).toBe(UNDONE);
+      });
+
+      it('still restores and reloads the active tab when listing the tabs fails', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        await backupWith({ cookies: [sid('previous')], localStorage: { a: '0' } });
+        await setReloadOtherTabs();
+        await loadPopupWithTabs(ACTIVE, OTHERS, async () => {
+          throw new Error('query failed');
+        });
+        $('undoBtn').click();
+        await settle();
+
+        expect(pageData.localStorage).toEqual({ a: '0' });
+        expect(await storedReloadIds()).toEqual([]);
+        expect(chrome._state.reloadedTabs).toEqual([1]);
+        expect($('statusMsg').className).toContain('success');
+        expect($('statusMsg').textContent).toBe(UNDONE);
+      });
+    });
+  });
+
   describe('in a subdomain group', () => {
     const GROUP_ORIGINS = ['*://example.com/*', '*://*.example.com/*'];
     const cookie = (name, domain, value) => ({ name, value, domain, path: '/', secure: true, httpOnly: false, sameSite: 'lax' });

@@ -12,6 +12,7 @@ import { cookiesWithin } from '../lib/cookie-handler.js';
 import { memberHosts, activeRef } from '../lib/groups.js';
 import { findChanges, withDigests, TYPE_LABELS } from '../lib/data-compare.js';
 import { getVolatileCookiesFor, startCookieCheck, ignoreCookieChange, hasPendingCookieCheck, cancelCookieChecksFor } from '../lib/volatile-cookies.js';
+import { otherSiteTabs, reloadTabs, tabsToReload } from '../lib/site-tabs.js';
 import { showConfirm, showFormDialog } from '../lib/dialog.js';
 import { bindInlineRename } from '../lib/inline-rename.js';
 import { $, showStatus, notify, reportError } from '../lib/ui.js';
@@ -149,15 +150,51 @@ async function saveCurrentAs(name, details) {
 }
 
 // Must run before the reload, so the service worker finds the check when the
-// reloaded page completes.
+// reloaded page completes. The service worker reloads `others` after it, so
+// resolves with whether a check was started to do that.
 // `storeKey` is the host the applied data is stored under (see applyData).
-async function watchCookiesAfterApply(storeKey, data) {
+async function watchCookiesAfterApply(storeKey, data, cookiesApplied, others) {
   const { scope } = state;
-  if (!state.settings.enabledTypes.cookies || !data.cookies) return;
+  if (!state.settings.enabledTypes.cookies || !data.cookies || !cookiesApplied) return false;
   const within = cookieDomainFor(data, storeKey, scope);
   await startCookieCheck(state.activeTab.id, scope.key, cookiesWithin(data.cookies, within), {
     origins: scope.origins, cookieDomain: within.domain, cookieExact: within.exact,
+    reloadTabs: tabsToReload(others),
   });
+  return true;
+}
+
+async function selectOtherTabs(target) {
+  const { settings, activeTab } = state;
+  if (!settings.autoReload || !settings.reloadOtherTabs) return [];
+  try {
+    return otherSiteTabs(await chrome.tabs.query({}), activeTab, target);
+  } catch (e) {
+    console.error(e);
+    return [];
+  }
+}
+
+async function reloadAfterChange(others, deferred) {
+  await reloadIfEnabled();
+  if (deferred) return others.length;
+  return reloadTabs(others.map(tab => tab.id));
+}
+
+function notifyDone(key, vars, count) {
+  const suffixKey = count === 1 ? 'status_other_tab_reloaded' : 'status_other_tabs_reloaded';
+  const suffix = count > 0 ? t(suffixKey, { count }) : '';
+  showStatus($('statusMsg'), t(key, vars) + suffix, 'success');
+}
+
+async function reloadAfterApply(storeKey, data, applied) {
+  const within = cookieDomainFor(data, storeKey, state.scope);
+  const others = await selectOtherTabs({
+    sameOrigin: applied.sharedStorageApplied,
+    cookieDomain: applied.cookiesApplied ? within.domain : null,
+  });
+  const deferred = await watchCookiesAfterApply(storeKey, data, applied.cookiesApplied, others);
+  return reloadAfterChange(others, deferred);
 }
 
 // The backup is a convenience: a full chrome.storage.local must not cost the
@@ -201,12 +238,11 @@ export function handleLoad(entry) {
 
     try {
       const backedUp = await backupCurrent();
-      const { storageSkipped } = await applyData(state.activeTab.id, scope, snapshot, settings.enabledTypes, entry.host);
+      const applied = await applyData(state.activeTab.id, scope, snapshot, settings.enabledTypes, entry.host);
       await setActiveSnapshot(scope.key, activeValue(entry));
       state.changes = [];
-      await watchCookiesAfterApply(entry.host, snapshot);
-      await reloadIfEnabled();
-      notify(loadedStatusKey(backedUp, storageSkipped), { name, host: entry.host });
+      const reloaded = await reloadAfterApply(entry.host, snapshot, applied);
+      notifyDone(loadedStatusKey(backedUp, applied.storageSkipped), { name, host: entry.host }, reloaded);
     } catch (e) {
       reportError('error_load_failed', e);
     }
@@ -236,13 +272,23 @@ export function handleClearSite() {
       // A check left from a recent load, in this tab or any other tab sharing
       // the jar, would compare that snapshot's cookies with the emptied jar and
       // mark them all as rewritten by the site.
-      const blocked = await clearData(state.activeTab.id, scope, types, { beforeCookies: cancelCookieChecksFor });
+      let clearedCookies = null;
+      const blocked = await clearData(state.activeTab.id, scope, types, {
+        beforeCookies: async cookieScope => {
+          clearedCookies = cookieScope;
+          await cancelCookieChecksFor(cookieScope);
+        },
+      });
       await setActiveSnapshot(scope.key, null);
       state.changes = [];
-      await reloadIfEnabled();
+      const others = await selectOtherTabs({
+        sameOrigin: types.localStorage || types.indexedDB,
+        cookieDomain: clearedCookies?.domain ?? null,
+      });
+      const reloaded = await reloadAfterChange(others, false);
       let statusKey = backedUp ? 'status_site_cleared' : 'status_site_cleared_no_backup';
       if (blocked.length && !settings.autoReload) statusKey = 'status_site_cleared_reload_needed';
-      notify(statusKey, { domain: scopeLabel() });
+      notifyDone(statusKey, { domain: scopeLabel() }, reloaded);
     } catch (e) {
       reportError('error_clear_site_failed', e);
     }
@@ -262,7 +308,7 @@ export async function handleUndo() {
     const types = state.settings.enabledTypes;
     try {
       const current = await collectData(state.activeTab.id, scope, types, { interactive: false });
-      await applyData(state.activeTab.id, scope, backup, types, scope.host);
+      const applied = await applyData(state.activeTab.id, scope, backup, types, scope.host);
       await tryBackup(current);
       const ref = activeRef(backup.activeName, scope.host);
       const restored = ref && snapshotOf(ref) ? { host: ref.host, name: ref.name } : null;
@@ -270,9 +316,8 @@ export async function handleUndo() {
       state.changes = restored
         ? findChanges(comparable(restored, snapshotOf(restored)), comparable(restored, backup), types, await getVolatileCookiesFor(scope.key))
         : [];
-      await watchCookiesAfterApply(scope.host, backup);
-      await reloadIfEnabled();
-      notify('status_restored');
+      const reloaded = await reloadAfterApply(scope.host, backup, applied);
+      notifyDone('status_restored', {}, reloaded);
     } catch (e) {
       reportError('error_restore_failed', e);
     }

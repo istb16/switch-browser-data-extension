@@ -33,6 +33,7 @@ export function createChromeMock() {
     tabs: [],
     messageHandlers: [],
     reloadedTabs: [],
+    navigatedTabs: [],
     badges: {},
     grantedOrigins: new Set(),
     uiLanguage: 'ja',
@@ -144,6 +145,16 @@ export function createChromeMock() {
         return clone(state.tabs);
       },
       async reload(tabId) {
+        state.reloadedTabs.push(tabId);
+      },
+      async get(tabId) {
+        const tab = state.tabs.find(t => t.id === tabId);
+        if (!tab) throw new Error(`No tab with id: ${tabId}.`);
+        return clone(tab);
+      },
+      // Navigating a tab to a URL loads it again, so it is recorded as a reload too.
+      async update(tabId, { url }) {
+        state.navigatedTabs.push({ tabId, url });
         state.reloadedTabs.push(tabId);
       },
       onUpdated: event(),

@@ -1,4 +1,4 @@
-import { test, expect, openPopupFor, readStorage } from './fixtures.js';
+import { test, expect, openPopupFor, waitForReady, readStorage } from './fixtures.js';
 import { TEST_PAGE_ORIGIN } from './test-page.js';
 
 // Cookies need the host permission; this copy of the extension has it from install.
@@ -71,6 +71,57 @@ test('learns the cookie the site rewrites on its own, and still flags an account
   await expect(row(switched, 'alice').locator('.badge--modified')).toBeHidden();
   expect(await storageGet(switched, 'volatileCookies'))
     .toEqual({ localhost: { 'localhost|/|csrf': 'value', 'localhost|/|sid': 'value' } });
+});
+
+async function enableReloadOtherTabs(context, extensionId) {
+  const options = await context.newPage();
+  await options.goto(`chrome-extension://${extensionId}/options/options.html#general`);
+  await waitForReady(options);
+  await options.locator('#toggleReloadOtherTabs').check();
+  await expect(options.locator('#statusMsg')).toHaveClass(/success/);
+  await options.close();
+}
+
+// A mark left in the page is gone once the tab has been loaded again.
+function markPage(page) {
+  return page.evaluate(() => { window.__e2eMark = true; });
+}
+
+function wasLoadedAgain(page) {
+  return page.evaluate(() => !window.__e2eMark).catch(() => null);
+}
+
+test('after a load that wrote cookies, the service worker reloads the site\'s other tabs once it has learned, without sending a form again', async ({ context, extensionId }) => {
+  await enableReloadOtherTabs(context, extensionId);
+  await context.request.get(`${TEST_PAGE_ORIGIN}/post/reset`);
+  const site = await context.newPage();
+  await site.goto(loginUrl('alice'));
+  const popup = await openPopupFor(context, extensionId, site);
+  await saveAs(popup, 'alice');
+  await site.goto(loginUrl('bob'));
+  await expect(site.locator('h1')).toHaveText('signed in as: bob');
+
+  const other = await context.newPage();
+  await other.goto(`${TEST_PAGE_ORIGIN}/cookies/`);
+  await expect(other.locator('h1')).toHaveText('signed in as: bob');
+  const postPage = await context.newPage();
+  await postPage.goto(`${TEST_PAGE_ORIGIN}/post/`);
+  await postPage.locator('button').click();
+  await expect(postPage.locator('h1')).toHaveText('posted 1');
+  for (const page of [other, postPage]) await markPage(page);
+
+  await row(popup, 'alice').locator('.snapshot__main').click();
+  await expect(popup.locator('#statusMsg')).toContainText(/ほかの 2 タブ|2 other tabs/);
+  await expect(site.locator('h1')).toHaveText('signed in as: alice');
+  await expect.poll(() => wasLoadedAgain(other), { timeout: 15_000 }).toBe(true);
+  await expect(other.locator('h1')).toHaveText('signed in as: alice');
+  await expect.poll(() => wasLoadedAgain(postPage), { timeout: 15_000 }).toBe(true);
+  expect(await (await context.request.get(`${TEST_PAGE_ORIGIN}/post/count`)).text()).toBe('1');
+  // Only the csrf the site rewrites on every load is learned. The order of learning and
+  // the other reloads is pinned by the service-worker unit tests, since no page here
+  // writes an old account's cookie back.
+  expect(await storageGet(popup, 'volatileCookies')).toEqual({ localhost: { 'localhost|/|csrf': 'value' } });
+  expect(await storageGet(popup, 'cookieChecks')).toEqual({});
 });
 
 test('clearing the site\'s data signs out, and the undo bar signs back in', async ({ context, extensionId }) => {

@@ -284,6 +284,56 @@ describe('options/options.js', () => {
     expect(document.getElementById('statusMsg').className).toContain('success');
   });
 
+  describe('reloading the other tabs', () => {
+    const toggle = () => document.getElementById('toggleReloadOtherTabs');
+    const autoReload = () => document.getElementById('toggleAutoReload');
+
+    it('is off by default, reflects the stored setting and saves a change', async () => {
+      await loadOptions();
+      expect(toggle().checked).toBe(false);
+      expect(toggle().disabled).toBe(false);
+
+      toggle().click();
+      await flush();
+      expect((await getSettings()).reloadOtherTabs).toBe(true);
+
+      await loadOptions();
+      expect(toggle().checked).toBe(true);
+    });
+
+    it('is disabled on open while auto reload is off, keeping its stored value', async () => {
+      await setSettings({ autoReload: false, reloadOtherTabs: true });
+      await loadOptions();
+      expect(toggle().disabled).toBe(true);
+      expect(toggle().checked).toBe(true);
+    });
+
+    it('turning auto reload off and on flips it and keeps its value', async () => {
+      for (const prior of [true, false]) {
+        await setSettings({ autoReload: true, reloadOtherTabs: prior });
+        await loadOptions();
+
+        autoReload().checked = false;
+        autoReload().dispatchEvent(new Event('change'));
+        await flush();
+        expect(toggle().disabled).toBe(true);
+        expect(await getSettings()).toMatchObject({ autoReload: false, reloadOtherTabs: prior });
+
+        autoReload().checked = true;
+        autoReload().dispatchEvent(new Event('change'));
+        await flush();
+        expect(toggle().disabled).toBe(false);
+        expect(await getSettings()).toMatchObject({ autoReload: true, reloadOtherTabs: prior });
+      }
+    });
+
+    it('has the hint under the toggles', async () => {
+      await loadOptions();
+      expect(document.getElementById('reloadOtherTabsHint').textContent).toBe(MESSAGES.ja.hint_reload_other_tabs);
+      expect(toggle().getAttribute('aria-describedby')).toBe('reloadOtherTabsHint');
+    });
+  });
+
   it('switching language re-renders text and the domain list', async () => {
     await setSnapshots({ 'a.com': { x: { savedAt: '2024-01-01T00:00:00.000Z' } } });
     await loadOptions();
