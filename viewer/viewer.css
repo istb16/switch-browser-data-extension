@@ -1,0 +1,358 @@
+:root {
+  --tk-accent: var(--tk-blue);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-size: 14px;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.container {
+  width: 100%;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 32px 24px 0;
+  flex: 1;
+}
+
+.not-found {
+  color: var(--tk-body);
+  padding: 24px;
+  background: var(--tk-surface);
+  border: 1px solid var(--tk-line);
+  border-radius: var(--tk-radius-sm);
+}
+
+.snapshot-head {
+  margin-bottom: 20px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--tk-line);
+}
+
+.eyebrow {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--tk-accent);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin-bottom: 6px;
+}
+
+.snapshot-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--tk-ink);
+  overflow-wrap: anywhere;
+}
+
+.snapshot-chip {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.snapshot-chip--red   { background: var(--tk-red); }
+.snapshot-chip--amber { background: var(--tk-amber); }
+.snapshot-chip--green { background: var(--tk-green); }
+.snapshot-chip--blue  { background: var(--tk-blue); }
+
+.snapshot-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--tk-muted);
+}
+
+.snapshot-host {
+  color: var(--tk-accent);
+  font-weight: 600;
+}
+
+.snapshot-size {
+  font-family: var(--tk-font-mono);
+}
+
+.snapshot-memo {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--tk-body);
+  overflow-wrap: anywhere;
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 20px;
+  margin-bottom: 12px;
+}
+
+.control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--tk-body);
+}
+
+.control--toggle {
+  cursor: pointer;
+}
+
+.compare-select {
+  background: var(--tk-surface);
+  /* Control borders must reach 3:1 against the page; --tk-line is for separators only. */
+  border: 1px solid var(--tk-line-strong);
+  color: var(--tk-ink);
+  padding: 4px 8px;
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+  max-width: 320px;
+  cursor: pointer;
+}
+
+.compare-select:focus {
+  border-color: var(--tk-accent);
+}
+
+.note {
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--tk-body);
+  background: var(--tk-surface-2);
+  border-radius: var(--tk-radius-sm);
+}
+
+.note p + p {
+  margin-top: 2px;
+}
+
+.note.error {
+  color: var(--tk-danger);
+}
+
+.types {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.section {
+  background: var(--tk-surface);
+  border: 1px solid var(--tk-line);
+  border-radius: var(--tk-radius-sm);
+}
+
+.section .section {
+  margin: 0 10px 8px;
+}
+
+.section > summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.section-title {
+  font-weight: 600;
+  color: var(--tk-ink);
+  overflow-wrap: anywhere;
+}
+
+.section-meta {
+  font-size: 12px;
+  color: var(--tk-muted);
+  font-family: var(--tk-font-mono);
+}
+
+.section-flag {
+  font-size: 12px;
+  color: var(--tk-amber);
+}
+
+.section-flag.section-added   { color: var(--tk-green); }
+.section-flag.section-removed { color: var(--tk-red); }
+
+.section-counts {
+  font-size: 12px;
+  font-family: var(--tk-font-mono);
+  color: var(--tk-body);
+}
+
+.count-added   { color: var(--tk-green); }
+.count-removed { color: var(--tk-red); }
+.count-changed { color: var(--tk-amber); }
+
+.not-comparable {
+  font-size: 12px;
+  color: var(--tk-muted);
+}
+
+.section-body {
+  padding: 0 12px 10px;
+  overflow-x: auto;
+}
+
+.empty {
+  font-size: 12px;
+  color: var(--tk-muted);
+  padding: 4px 0;
+}
+
+.rows {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.rows th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--tk-muted);
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--tk-line);
+  white-space: nowrap;
+}
+
+/* Narrow windows scroll the table sideways instead of breaking keys letter by letter. */
+.rows-scroll {
+  overflow-x: auto;
+}
+
+.rows td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--tk-line);
+  vertical-align: top;
+  color: var(--tk-ink);
+  overflow-wrap: break-word;
+}
+
+.rows tr:last-child td {
+  border-bottom: none;
+}
+
+.cell-mono {
+  font-family: var(--tk-font-mono);
+}
+
+.cell-status {
+  white-space: nowrap;
+}
+
+.status-mark {
+  display: inline-block;
+  width: 1em;
+  font-family: var(--tk-font-mono);
+  font-weight: 700;
+}
+
+.status-added   { background: color-mix(in srgb, var(--tk-green) 10%, var(--tk-surface)); }
+.status-removed { background: color-mix(in srgb, var(--tk-red) 10%, var(--tk-surface)); }
+.status-changed { background: color-mix(in srgb, var(--tk-amber) 12%, var(--tk-surface)); }
+
+.status-added .cell-status   { color: var(--tk-green); }
+.status-removed .cell-status { color: var(--tk-red); }
+.status-changed .cell-status { color: var(--tk-amber); }
+
+.status-notCompared .cell-status {
+  color: var(--tk-muted);
+}
+
+.tag {
+  display: inline-block;
+  margin: 0 4px 2px 0;
+  padding: 0 6px;
+  font-size: 11px;
+  color: var(--tk-body);
+  border: 1px solid var(--tk-line-strong);
+  border-radius: var(--tk-radius-pill);
+  white-space: nowrap;
+}
+
+.value-pair {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.value-arrow {
+  color: var(--tk-muted);
+  margin-right: 4px;
+}
+
+.value {
+  font-family: var(--tk-font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.value-mask {
+  background: none;
+  border: 1px dashed var(--tk-line-strong);
+  border-radius: 4px;
+  color: var(--tk-muted);
+  font: inherit;
+  font-size: 11px;
+  padding: 0 6px;
+  cursor: pointer;
+}
+
+.value-mask:hover {
+  color: var(--tk-ink);
+  border-color: var(--tk-accent);
+}
+
+.value-expand,
+.more-rows {
+  background: none;
+  border: none;
+  color: var(--tk-accent);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.more-rows {
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.value-capped {
+  display: block;
+  font-size: 11px;
+  color: var(--tk-muted);
+}
+
+.tk-footer {
+  margin-top: 32px;
+  border-top: 1px solid var(--tk-line);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.hidden {
+  display: none !important;
+}

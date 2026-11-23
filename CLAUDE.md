@@ -55,6 +55,14 @@ Chrome / Edge 向けブラウザ拡張機能。ドメインごとに Cookie・lo
   - 「変更あり」のバッジはメニューを開くボタンで、変わった Cookie ごとに「変化を無視」を選べる。値の変化なら「値は比べない」、増減なら「比べない」として `volatileCookies` に記録する。今のホストの行では、メニューの「現在の状態で上書き」でそのスナップショットを上書きすることもできる（上書きすると「変更あり」は消える）
   - IndexedDB はページ側（コンテンツスクリプト）で中身のハッシュ（`lib/storage-digest.js`）だけを計算して受け渡す。スナップショット側のハッシュは保存時に `indexedDBDigest` として一緒に残す
 - **名前の変更・削除**: 各行のメニューから行う（削除は確認あり）
+- **中身の表示と比較**: ポップアップの行メニューの「中身を見る」（グループのほかのホストの行にも出す）か、設定画面のスナップショットの行のボタンで、`viewer/viewer.html?host=<ホスト>&name=<名前>[&tab=<タブ ID>]` を新しいタブで開く（`openViewer`、`lib/viewer-link.js`。`tab` はポップアップから開いたときの今のタブ）。保存したものを種類ごとの表（Cookie / localStorage / sessionStorage / IndexedDB はデータベースとストアごとに `version` `keyPath` `autoIncrement` を添える）で見せる。スナップショットにない種類は出さない。ホストか名前がない、または読んだデータに自分のプロパティとしてない（`__proto__` など）ときは「見つかりません」を出す
+  - 値はすべての種類で既定で隠し、`••••••` と文字数だけを出す（隠している間は値を DOM のテキストにも属性にも置かない）。セルをクリックするとそのセルだけ、「値を表示」のトグルですべてを出す。覚えておくのはトグルだけで、表を描き直すとクリックで出した値は隠れ、トグルをオフにするとすべて隠す。トグルも保存せず、開くたびにオフ（保存すると書き込みになるため）。Cookie の名前・ドメイン・パス、ストレージのキー、比べた結果の印は隠さない（ただし IndexedDB の `keyPath` に `''` を含むストアはキーがレコードそのものなので、キーも値と同じように隠す）。長い値は 200 文字までを出し、「全体を表示」でも 100,000 文字まで
+  - 表は `<details>` を初めて開いたときに描き、200 行ずつ「さらに表示」で足す（「違いだけ」で絞ったあとに数える）
+  - 比べる相手は「なし」「現在の状態」と、同じホストのほかのスナップショット（並び順のとおり）。違いは行ごとに追加 `+`・削除 `−`・変更 `~` で示し、種類ごとに件数を出す（「違いだけ」は比べている間だけ出し、既定はオン）。突き合わせは `lib/snapshot-diff.js` で、Cookie は `cookieKey` で値と `secure` `httpOnly` `sameSite` を比べ（有効期限は更新のたびに変わるので比べない）、Web Storage はキー、IndexedDB は `keyPath` の値で突き合わせる。`keyPath` のない（文字列か文字列の配列でないものを含む）ストアやキーのないレコードは中身の一致だけを見て、追加と削除だけを出す。ストアの構成の違いはストアの見出しに出し、片方にしかないデータベース・ストアは見出しに「追加」「削除」を出す（空のものでもわかるように）。片方にない種類は「比べられません」と理由を出す（空の種類は比べて、すべて削除になる）
+  - Cookie には2つの範囲がある。**読み込む範囲**は見ているスナップショットの `cookieDomainFor` で、読み込んだときに書き戻す範囲。その外の Cookie（と `cookiesWithin` が捨てる Cookie）には、比べるかどうかにかかわらず「読み込まない」を付ける。**比べる範囲**は、現在の状態となら読み込む範囲、ほかのスナップショットとなら2つの読み込む範囲のうち内側のほう（`narrowerScope`）で、両方をこの範囲に絞ってから突き合わせる。比べる範囲に入るかは Cookie の `domain` だけで決める（形の崩れた Cookie も範囲内なら比べ、「読み込まない」を付ける）。見ているスナップショットの範囲外の Cookie は「範囲外」として件数に数えず「違いだけ」で隠し、相手の範囲外の Cookie は行にしない。範囲と、範囲外になった件数を注記に出す。どちらの範囲もほかの内側にないときは Cookie を比べない（範囲を推測しない）。「期限切れ」「自動で変わる」（`volatileCookies` にあるもの）の印も付ける（ポップアップの「変更あり」で比べないもの）
+  - 現在の状態は選んだときだけ読む。ページのデータはホスト名がちょうど同じ（サブドメインは含まない）`http(s)` のタブで、破棄されておらず、ビューアーと同じシークレットモードのものから読み、`tab` のタブが当てはまればそれを先に使う。読んだタブのオリジンを注記に出す。読んだあとで `chrome.tabs.get` でそのタブが今も同じオリジンにあるか確かめ直し、ほかのサイトに移っていればページのデータを捨てて「読めませんでした」にする（ほかのサイトのデータをこのホストのものとして出さないため）。IndexedDB は Web Storage と別に読む（大きすぎて渡せなくても Web Storage の比較を失わないため）。タブがない・読めない種類は「比べられません」と、何をすればよいかを出す。ビューアーはいつも通常のプロファイルで開くので、`tab` のタブがシークレットウィンドウなら（どのホストでも）現在の状態は Cookie も含めて何も読まない（ほかのセッションのデータと比べてしまうため）
+  - ホスト権限はビューアーからは求めず（`interactive: false`）、Cookie の比較だけを止めてポップアップで許可するよう案内する。ページのデータはポップアップと同じくコンテンツスクリプトから読み、ホスト権限を要しない
+  - 見るだけで書き込まない（`chrome.storage`・Cookie・ページのどれにも書かない。ページに送るのは `getStorageData` だけ）。`migrateStorage` も呼ばない（開く前にポップアップか設定画面がすでに呼んでいる）。`storage.onChanged` も聞かず、新しい内容はタブの再読み込みで見る。グループのほかのホストのスナップショットとは比べない
 - **サイトのデータの消去**: ポップアップの「このサイトのデータを消去」で、設定のデータ種別トグルで有効な種類（Cookie / localStorage / sessionStorage / IndexedDB）を確認後に消す。自動バックアップが有効なら消す前の状態を残し（「戻す」で復元）、適用中の記録を外し、自動リロードの設定に従って再読み込みする。IndexedDB はデータベースごと削除する（ページが接続を開いたままなら削除は予約され、再読み込みで完了する。自動リロードがオフならその旨を表示する）。ほかのタブの再読み込みがオンなら、同じサイトのほかのタブも再読み込みする（「読み込み」の「ほかのタブの再読み込み」を参照。ほかの同じオリジンのタブが開いたままの IndexedDB の削除もそこで終わる）
   - 消す前にコンテンツスクリプトに届くか確かめ（`ping`）、届かなければ何も消さず、バックアップも上書きしない。消す順番はページの保存領域が先で Cookie が後（途中で失敗しても Cookie だけ消えた状態にしない）
   - 読み込み直後の Cookie の確認待ち（`cookieChecks`）は消去時に、同じ Cookie の範囲を見ているすべてのタブの分を取り消す（空になった Cookie を「サイトが自分で消した」と覚えないため）。読み込みで新しく確認待ちを始めるときも、範囲の重なるほかのタブの確認待ちは捨てる。重なりは各確認待ちの `cookieDomain` と `cookieExact` で決める（`exact` の範囲はそのホストの Cookie だけなので、兄弟のホストやサブドメインとは重ならない）。取り消すのは Cookie を消す直前（`clearData` の `beforeCookies`）なので、Cookie を消さない設定や、その前に失敗したときは確認待ちを残す
@@ -101,7 +109,8 @@ graph TD
   popup --> domain["現在のドメイン表示｜グループならグループのチップ"]
   popup --> search["検索ボックス｜5件以上のとき表示。/ でフォーカス。名前とメモに当たる"]
   popup --> list["スナップショット一覧｜行クリックで読み込み、色ラベル・メモ・中身のプレビュー・期限切れの警告、適用中・変更ありのバッジ。グループならほかのホストの行も"]
-  list --> row_menu["行メニュー｜現在の状態で上書き（今のホストの行だけ） / メモと色を編集 / 一部だけ読み込む（今のホストの行で、読み込める種類が2つ以上のとき） / 名前を変更 / 削除"]
+  list --> row_menu["行メニュー｜現在の状態で上書き（今のホストの行だけ） / メモと色を編集 / 一部だけ読み込む（今のホストの行で、読み込める種類が2つ以上のとき） / 名前を変更 / 中身を見る / 削除"]
+  row_menu --> viewer["中身の表示 viewer.html｜種類ごとの表（値は隠す）、比べる相手（なし / 現在の状態 / ほかのスナップショット）、値を表示 / 違いだけ"]
   popup --> undo["切り替え前の状態に戻す"]
   popup --> save["現在の状態を保存｜名前・メモ・色を入力して保存"]
   popup --> clear_site["このサイトのデータを消去（確認あり）"]
@@ -113,7 +122,8 @@ graph TD
   options --> snapshots_pane["スナップショット"]
   snapshots_pane --> meter["使用量のメーター"]
   snapshots_pane --> groups["サブドメインのグループ（追加・削除）"]
-  snapshots_pane --> domain_list["ドメイン一覧｜名前順 / 大きい順、エクスポート・名前の変更・削除"]
+  snapshots_pane --> domain_list["ドメイン一覧｜名前順 / 大きい順、中身を見る・エクスポート・名前の変更・削除"]
+  domain_list --> viewer
   options --> data_pane["データ管理"]
   data_pane --> encrypt["エクスポートの暗号化トグル"]
   data_pane --> export_import["全データのエクスポート / インポート"]
@@ -148,6 +158,11 @@ graph TD
   options --> options_groups["groups-pane.js｜グループの一覧・追加・削除"]
   options --> options_transfer["transfer-ui.js｜エクスポート・パスフレーズ・インポート"]
 
+  root --> viewer["viewer/"]
+  viewer --> viewer_html["viewer.html"]
+  viewer --> viewer_css["viewer.css"]
+  viewer --> viewer_js["viewer.js｜スナップショットの中身の表示・比べる相手の読み込み・値の表示の切り替え（見るだけ）"]
+
   root --> background["background/"]
   background --> sw["service-worker.js｜アイコンのバッジ更新・読み込み後の Cookie の学習とほかのタブの再読み込み"]
 
@@ -163,6 +178,8 @@ graph TD
   lib --> cookie_js["cookie-handler.js｜Cookie 保存・復元"]
   lib --> bridge_js["data-bridge.js｜データの収集・適用"]
   lib --> compare_js["data-compare.js｜スナップショットと現在のデータの比較"]
+  lib --> diff_js["snapshot-diff.js｜中身の表示の行と項目ごとの突き合わせ（読み込む範囲・比べる範囲）"]
+  lib --> viewer_link_js["viewer-link.js｜中身の表示を開く URL の組み立てと新しいタブ"]
   lib --> menu_js["menu.js｜行メニュー（popover + focusgroup）"]
   lib --> rename_js["inline-rename.js｜その場での名前変更（ポップアップ・設定画面で共通）"]
   lib --> digest_js["storage-digest.js｜データのハッシュ（コンテンツスクリプトとポップアップで共通の非モジュール）"]
@@ -320,12 +337,12 @@ graph TD
 ```
 
 - 手動テストは Chrome の DevTools → Application タブで各ストレージの状態を確認しながら行う
-- ストアに提出する zip は `deploy/build.ps1`（`build.sh` `build.cmd` も同じ）で `store/manifest.zip` に作る。入れるのは manifest.json・popup・options・lib・icons・content・_locales・background だけ。zip はコミットしない（`.gitignore` 済み）
+- ストアに提出する zip は `deploy/build.ps1`（`build.sh` `build.cmd` も同じ）で `store/manifest.zip` に作る。入れるのは manifest.json・popup・options・lib・icons・content・_locales・viewer・background だけ（フォルダを足したら `tests/e2e/fixtures.js` の `RUNTIME_DIRS` にも足す。`tests/unit/packaging.test.js` が確かめる）。zip はコミットしない（`.gitignore` 済み）
 - `v` で始まるタグ（例: `v2.0.1`）を push すると、`.github/workflows/release.yml` が `build.sh` で zip を作り、GitHub のリリースの下書きに添付する。タグと `manifest.json` の `version` が違えば止まる。リリースの説明を書いてから公開する（同じタグのリリースがすでにあれば zip だけ差し替える）
 
 ### 自動テスト
 
-- **ユニットテスト**: [Vitest](https://vitest.dev/)。`tests/unit/` に配置。対象は `lib/` 配下のロジックに加え、`popup/popup.js` `options/options.js`（jsdomにHTMLを読み込み、DOM操作込みで検証）。`chrome.*` API は `tests/support/chrome-mock.js` のインメモリモックを使う。ポップアップ・設定画面は分けたファイルごとではなく、入口（`popup.js` `options.js`）を `vi.resetModules()` のあとに読み込んで確かめる
+- **ユニットテスト**: [Vitest](https://vitest.dev/)。`tests/unit/` に配置。対象は `lib/` 配下のロジックに加え、`popup/popup.js` `options/options.js` `viewer/viewer.js`（jsdomにHTMLを読み込み、DOM操作込みで検証）。`chrome.*` API は `tests/support/chrome-mock.js` のインメモリモックを使う。ポップアップ・設定画面・中身の表示は分けたファイルごとではなく、入口（`popup.js` `options.js` `viewer.js`）を `vi.resetModules()` のあとに読み込んで確かめる
   - モックの `storage.local` は、値が変わった書き込み（`set` `remove` `clear`）ごとに `storage.onChanged` のイベントを溜めるだけで、自分からは届けない。テストが `chrome._deliverStorageEvents()` を呼んだときに `'local'` で届ける（タイマーを使わないので fake timers と干渉せず、イベントの前と後のどちらを確かめるかをテストが選べる）。イベントを待つコードのテストでは届け忘れに気をつける
   - `chrome._holdGet(match)` は、`match`（`get` が求めるキー名の配列。`get(null)` なら保存されている全キー）に合う次の `get` を、その時点の値で結果を作ったまま止め、返した `release()` で解く。読み込み中に書き込みが入る競合のテストに使う
   - `var` グローバルとして書かれた非モジュールスクリプト（`lib/web-storage-handlers.js` `lib/indexeddb-handler.js` `lib/storage-digest.js` `content/content-script.js`）は `import` できないため、`tests/support/load-script.js` でソースを読み込み `Function` コンストラクタでスコープを分離しつつ実行し、生成されたハンドラを取り出してテストする

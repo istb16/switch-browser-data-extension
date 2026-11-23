@@ -1,6 +1,6 @@
 Push-Location (Split-Path $PSScriptRoot -Parent)
 try {
-    $targets = @("manifest.json", "popup", "options", "lib", "icons", "content", "_locales") |
+    $targets = @("manifest.json", "popup", "options", "lib", "icons", "content", "_locales", "viewer") |
         Where-Object { Test-Path $_ }
     if (Test-Path "background") { $targets += "background" }
 
