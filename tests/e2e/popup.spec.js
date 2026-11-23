@@ -126,6 +126,18 @@ test('loading a snapshot on a form POST result loads the page again without send
   expect(await (await context.request.get(`${TEST_PAGE_ORIGIN}/post/count`)).text()).toBe('1');
 });
 
+// Navigating to the same URL asks the server again, like a reload, so a page the
+// browser may keep does not show the account switched away from.
+test('loading a snapshot on a page the browser may keep asks the server for it again', async ({ context, extensionId }) => {
+  await disableCookieCollection(context, extensionId);
+  const cachedPage = await context.newPage();
+  await cachedPage.goto(`${TEST_PAGE_ORIGIN}/cache/`);
+  const servedBefore = Number(await (await context.request.get(`${TEST_PAGE_ORIGIN}/cache/count`)).text());
+
+  await saveAndLoad(context, extensionId, cachedPage);
+  await expect(cachedPage.locator('h1')).toHaveText(`served ${servedBefore + 1}`);
+});
+
 test.describe('reloading the other tabs of the site', () => {
   // Longer than the service worker's settle time after a load (3 s).
   const SETTLE_MS = 4000;

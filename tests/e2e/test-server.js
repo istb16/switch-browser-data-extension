@@ -78,10 +78,28 @@ function servePostPages(req, res, url) {
 <form method="post" action="/post/submit"><input name="v" value="1"><button>send</button></form>`);
 }
 
+// /cache/: a page the browser may keep for five minutes, counting the requests that
+// reach the server at /cache/count, to see whether loading a tab again asks the server.
+let cacheHits = 0;
+function serveCachePages(req, res, url) {
+  if (url.pathname === '/cache/count') {
+    res.writeHead(200, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' });
+    res.end(String(cacheHits));
+    return;
+  }
+  cacheHits++;
+  res.writeHead(200, { 'Content-Type': 'text/html', 'Cache-Control': 'private, max-age=300' });
+  res.end(`<!doctype html><title>tk3 e2e cached page</title><h1>served ${cacheHits}</h1>`);
+}
+
 createServer((req, res) => {
   const url = new URL(req.url, `http://localhost:${TEST_PAGE_PORT}`);
   if (url.pathname.startsWith('/post/')) {
     servePostPages(req, res, url);
+    return;
+  }
+  if (url.pathname.startsWith('/cache/')) {
+    serveCachePages(req, res, url);
     return;
   }
   if (url.pathname.startsWith('/cookies/')) {
