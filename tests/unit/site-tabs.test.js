@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { otherSiteTabs, reloadTabs } from '../../lib/site-tabs.js';
+import { otherSiteTabs, reloadTabs, tabsToReload, reloadTabsStillOn } from '../../lib/site-tabs.js';
 
 const tab = (id, url, more = {}) => ({ id, url, status: 'complete', ...more });
 const ids = tabs => tabs.map(t => t.id);
@@ -77,7 +77,7 @@ describe('lib/site-tabs otherSiteTabs', () => {
   });
 
   it('leaves out the active tab, and an empty cookie domain matches nothing', () => {
-    const file = tab(1, 'file:///C:/page.html');
+    const file = tab(7, 'file:///C:/page.html');
     const tabs = [active, tab(2, 'https://app.example.com/other'), file];
     expect(ids(otherSiteTabs(tabs, active, { sameOrigin: true, cookieDomain: 'app.example.com' }))).toEqual([2]);
     expect(otherSiteTabs([file, tab(3, 'https://a.com/')], { ...file, id: 9 }, { sameOrigin: true, cookieDomain: '' })).toEqual([]);
@@ -127,5 +127,30 @@ describe('lib/site-tabs reloadTabs', () => {
     });
     expect(await reloadTabs([2, 3, 4, 5])).toBe(2);
     expect(chrome._state.reloadedTabs).toEqual([2, 5]);
+  });
+});
+
+describe('lib/site-tabs tabsToReload / reloadTabsStillOn', () => {
+  const r = (id, origin = 'https://a.com') => ({ id, origin });
+
+  it("keeps each tab's id with the origin it showed", () => {
+    expect(tabsToReload([tab(2, 'https://a.com/x?y#z'), tab(3, 'http://localhost:3000/')]))
+      .toEqual([r(2), r(3, 'http://localhost:3000')]);
+  });
+
+  it('reloads only the tabs still loaded on the stored origin, the same way as reloadTabs', async () => {
+    chrome._state.tabs = [
+      tab(2, 'https://a.com/post/submit'),
+      tab(3, 'https://a.com/#/inbox'),
+      tab(4, 'https://b.com/'),
+      tab(5, 'https://a.com:8443/'),
+      tab(6, 'https://a.com/d', { discarded: true }),
+      tab(7, 'https://a.com/u', { status: 'unloaded' }),
+      tab(8, 'chrome://settings/'),
+      { id: 9 },
+    ];
+    expect(await reloadTabsStillOn([2, 3, 4, 5, 6, 7, 8, 9, 10].map(id => r(id)))).toBe(2);
+    expect(chrome._state.navigatedTabs).toEqual([{ tabId: 2, url: 'https://a.com/post/submit' }]);
+    expect(chrome._state.reloadedTabs).toEqual([2, 3]);
   });
 });

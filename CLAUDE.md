@@ -32,7 +32,7 @@ Chrome / Edge 向けブラウザ拡張機能。ドメインごとに Cookie・lo
     - Cookie を実際に書いたとき、そのタブのホストが書いた範囲に入る（`isWithin(ホスト, 範囲の domain)`。`exact` の範囲でも `.host` の Cookie はサブドメインに届くのでサブドメインを含む。スキームとポートは問わない）。書いたかは `applyData` の `cookiesApplied`、消去では `clearData` の `beforeCookies` に渡る範囲で決める
     - localStorage か IndexedDB を実際に書いたとき、今のタブと同じオリジン（`applyData` の `sharedStorageApplied`。消去では localStorage か IndexedDB が有効なとき）。sessionStorage はタブごとでほかのタブに届かないので、sessionStorage だけを書いた・消したときは同じオリジンのタブを再読み込みしない
     - 破棄されたタブ（`discarded`・`status: 'unloaded'`）は選ばない（開いたときに新しいデータで読み込むため）
-  - 読み込み・「戻す」で Cookie の確認待ちを始めたときは、ほかのタブの ID を確認待ちに `reloadTabs` として残し、ポップアップは今のタブだけを再読み込みする。Service Worker が今のタブの確認待ちを受け取って学習してから `reloadTabs` を再読み込みする（同時に読み込むと、ほかのタブが sessionStorage に残る前のアカウントの Cookie を書き戻し、それを「サイトが自分で書き換えた」と覚えてしまうため）。確認待ちが期限切れ・権限なしで学習できなくても `reloadTabs` は再読み込みする。確認待ちのない場合（消去、Cookie を書かなかった読み込み・「戻す」）はポップアップが今のタブ、ほかのタブの順に再読み込みする
+  - 読み込み・「戻す」で Cookie の確認待ちを始めたときは、ほかのタブの ID を確認待ちに `reloadTabs` として残し、ポップアップは今のタブだけを再読み込みする。Service Worker が今のタブの確認待ちを受け取って学習してから `reloadTabs` を再読み込みする（同時に読み込むと、ほかのタブが sessionStorage に残る前のアカウントの Cookie を書き戻し、それを「サイトが自分で書き換えた」と覚えてしまうため）。確認待ちが期限切れ・権限なしで学習できなくても `reloadTabs` は再読み込みする。`reloadTabs` には各タブの ID と選んだときのオリジンを `{ id, origin }` で残し（`tabsToReload`）、Service Worker は再読み込みの直前に `chrome.tabs.get` で確かめ直して、破棄された（`discarded`・`status: 'unloaded'`）タブ、`http(s)` でなくなったタブ、オリジンが変わったタブは再読み込みしない（`reloadTabsStillOn`。選んでから今のタブの読み込みが終わるまでに、ほかのサイトに移ったり破棄されたりしていることがあるため。期限切れの確認待ちでも同じ）。オリジンのない古い形（ID だけ）の項目は `takeCookieCheck` が捨てる。確認待ちのない場合（消去、Cookie を書かなかった読み込み・「戻す」）はポップアップが今のタブ、ほかのタブの順に再読み込みする
   - ステータスには、再読み込みしたほかのタブの数を「（ほかの 2 タブも再読み込み）」と添える（Service Worker に任せたときは任せた数）。0 なら何も添えない
   - 再読み込みしても切り替わらないもの: ほかのタブの sessionStorage（タブごとで再読み込みでも残るので、そこにログイン情報を置くサイトではほかのタブは前のアカウントのまま。設定画面のトグルの下に注意書きを出す）、グループのほかのホストのページの保存領域、Service Worker や Cache API の中身、選ばなかった破棄済みのタブ（次に読み込むまで）。今のタブが閉じられた・読み込みが終わらない・範囲の重なる読み込みで確認待ちが置き換わった・全データ削除で `cookieChecks` が空になった、のときは後からの再読み込みは起きない
   - ほかのタブは、そのタブの URL に `chrome.tabs.update` で移って読み直す（`reloadTabs`）。`chrome.tabs.reload` は、フォームの POST の結果を出しているタブでは確認なしにフォームを送り直し、切り替えたあとのアカウントで送ってしまうため。URL に `#` があるタブだけは、同じ URL に移ってもページ内の移動になって読み直されないので `chrome.tabs.reload` を使う（`#` 付きの URL が POST の結果であることはまれ）。POST を送り直さないことは E2E で、ポップアップが再読み込みする場合（`tests/e2e/popup.spec.js`）と Service Worker が確認待ちのあとで再読み込みする場合（`tests/e2e/cookies.spec.js`）の両方を確かめる。今のタブの自動リロードは今も `chrome.tabs.reload` で、POST の結果のページでは送り直す
@@ -241,8 +241,9 @@ graph TD
   // 読み込み直後の Cookie の確認待ち（タブ ID ごと、60秒で期限切れ）。origins は確認に要る権限、
   // cookieDomain は今の Cookie を読む範囲（cookieExact: true ならそのホストの Cookie だけ）。origins と cookieDomain は
   // 必須（startCookieCheck は両方を受け取る）。どちらかがない記録（グループ機能より前の形）は読むときに捨て、学習しない。
-  // reloadTabs は学習のあとで Service Worker が再読み込みするほかのタブの ID（ないときは空。確認待ちが使えなくても再読み込みする）
-  "cookieChecks": { "123": { "domain": "example.com", "cookies": [], "origins": ["*://example.com/*", "*://*.example.com/*"], "cookieDomain": "example.com", "cookieExact": false, "reloadTabs": [124], "until": 0 } },
+  // reloadTabs は学習のあとで Service Worker が再読み込みするほかのタブの ID と、選んだときのそのタブのオリジン
+  // （ないときは空。確認待ちが使えなくても、再読み込みの直前に確かめ直して同じオリジンに残っているタブは再読み込みする。ID だけの古い形は捨てる）
+  "cookieChecks": { "123": { "domain": "example.com", "cookies": [], "origins": ["*://example.com/*", "*://*.example.com/*"], "cookieDomain": "example.com", "cookieExact": false, "reloadTabs": [{ "id": 124, "origin": "https://example.com" }], "until": 0 } },
   // 読み込み直前の状態。ホストごとのキー（"backups/" + ホスト）に1件。スナップショット一覧・エクスポートには含めない
   "backups/example.com": { "savedAt": "...", "activeName": "スナップショット名 | null", "cookies": [], ... },
   // バックアップのキーのあるホストの一覧（snapshotHosts と同じ扱い）

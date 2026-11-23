@@ -32,7 +32,7 @@ describe('background/service-worker', () => {
 
   describe('reloading the other tabs of a check', () => {
     const csrf = value => ({ name: 'csrf', value, domain: 'a.com', path: '/' });
-    const withReload = reloadTabs => ({ ...A_SCOPE, reloadTabs });
+    const withReload = ids => ({ ...A_SCOPE, reloadTabs: ids.map(id => ({ id, origin: 'https://a.com' })) });
 
     beforeEach(() => {
       chrome._state.tabs = [tab, { id: 2, url: 'https://a.com/other' }, { id: 3, url: 'https://a.com/third' }];
@@ -149,6 +149,50 @@ describe('background/service-worker', () => {
       chrome.tabs.onUpdated.dispatch(1, { status: 'complete' }, tab);
       await vi.advanceTimersByTimeAsync(3000);
       expect(chrome._state.reloadedTabs).toEqual([3]);
+    });
+
+    it('leaves out a listed tab that has since moved to another origin or been discarded', async () => {
+      chrome._state.grantedOrigins.add('*://a.com/*');
+      await loadServiceWorker();
+      await startCookieCheck(1, 'a.com', [sid('applied')], withReload([2, 3, 4, 5, 6, 7]));
+      chrome._state.tabs = [
+        tab,
+        { id: 2, url: 'https://other.com/' },
+        { id: 3, url: 'https://a.com/third', discarded: true },
+        { id: 4, url: 'https://a.com/fourth', status: 'unloaded' },
+        { id: 5, url: 'http://a.com/insecure' },
+        { id: 6, url: 'chrome://newtab/' },
+        { id: 7, url: 'https://a.com/still', status: 'complete' },
+      ];
+
+      chrome.tabs.onUpdated.dispatch(1, { status: 'complete' }, tab);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(chrome._state.reloadedTabs).toEqual([7]);
+      expect(chrome._state.navigatedTabs).toEqual([{ tabId: 7, url: 'https://a.com/still' }]);
+    });
+
+    it('an expired check re-checks its tabs too, minutes later', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'Date'], now: 0 });
+      await loadServiceWorker();
+      await startCookieCheck(1, 'a.com', [sid('applied')], withReload([2, 3]));
+      vi.setSystemTime(5 * 60_000);
+      chrome._state.tabs = [tab, { id: 2, url: 'https://unrelated.example/' }, { id: 3, url: 'https://a.com/third' }];
+
+      chrome.tabs.onUpdated.dispatch(1, { status: 'complete' }, tab);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(chrome._state.reloadedTabs).toEqual([3]);
+    });
+
+    it('a check stored with plain tab ids by an older version reloads none of them', async () => {
+      chrome._state.grantedOrigins.add('*://a.com/*');
+      await loadServiceWorker();
+      await startCookieCheck(1, 'a.com', [sid('applied')], { ...A_SCOPE, reloadTabs: [2, 3] });
+      chrome._state.cookies = [sid('rotated')];
+
+      chrome.tabs.onUpdated.dispatch(1, { status: 'complete' }, tab);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(await getVolatileCookiesFor('a.com')).toEqual({ 'a.com|/|sid': 'value' });
+      expect(chrome._state.reloadedTabs).toEqual([]);
     });
   });
 

@@ -5,16 +5,27 @@ const cookie = (name, value) => ({ name, value, domain: 'a.com', path: '/' });
 const scope = (domain, cookieExact = false) => ({ origins: [`*://${domain}/*`], cookieDomain: domain, cookieExact });
 const stored = (domain, until, more = {}) => ({ domain, cookies: [], ...scope(domain), until, ...more });
 const takeCheck = async tabId => (await takeCookieCheck(tabId)).check;
+const r = (id, origin = 'https://a.com') => ({ id, origin });
 
 describe('lib/volatile-cookies', () => {
   afterEach(() => vi.useRealTimers());
 
   it('stores the tabs to reload and hands them over with the check', async () => {
-    await startCookieCheck(5, 'a.com', [], { ...scope('a.com'), reloadTabs: [7, 8] });
-    expect((await chrome.storage.local.get('cookieChecks')).cookieChecks[5].reloadTabs).toEqual([7, 8]);
+    await startCookieCheck(5, 'a.com', [], { ...scope('a.com'), reloadTabs: [r(7), r(8, 'http://a.com:8080')] });
+    expect((await chrome.storage.local.get('cookieChecks')).cookieChecks[5].reloadTabs).toEqual([r(7), r(8, 'http://a.com:8080')]);
     const taken = await takeCookieCheck(5);
     expect(taken.check).toMatchObject({ domain: 'a.com' });
-    expect(taken.reloadTabs).toEqual([7, 8]);
+    expect(taken.reloadTabs).toEqual([r(7), r(8, 'http://a.com:8080')]);
+  });
+
+  it('hands over only well-formed tabs to reload, dropping plain ids from an older version', async () => {
+    const until = Date.now() + 60_000;
+    await chrome.storage.local.set({ cookieChecks: {
+      5: stored('a.com', until, { reloadTabs: [7, r(8), { id: 9 }, { origin: 'https://a.com' }, null, r('10'), { id: 11, origin: 5 }, r(12)] }),
+    } });
+    const taken = await takeCookieCheck(5);
+    expect(taken.check).not.toBeNull();
+    expect(taken.reloadTabs).toEqual([r(8), r(12)]);
   });
 
   it('a check without tabs to reload hands over an empty list', async () => {
@@ -25,9 +36,9 @@ describe('lib/volatile-cookies', () => {
 
   it('an expired check still hands over its tabs to reload', async () => {
     vi.useFakeTimers({ now: 0 });
-    await startCookieCheck(5, 'a.com', [], { ...scope('a.com'), reloadTabs: [7] });
+    await startCookieCheck(5, 'a.com', [], { ...scope('a.com'), reloadTabs: [r(7)] });
     vi.setSystemTime(61_000);
-    expect(await takeCookieCheck(5)).toEqual({ check: null, reloadTabs: [7] });
+    expect(await takeCookieCheck(5)).toEqual({ check: null, reloadTabs: [r(7)] });
   });
 
   it('a stored check without a list of tabs to reload hands over an empty list', async () => {
@@ -47,25 +58,25 @@ describe('lib/volatile-cookies', () => {
   // The new load writes the jar again and lists the tabs to reload itself, so a
   // replaced check's list goes with it and those tabs are not reloaded later.
   it('a new check on an overlapping scope drops the replaced check with its tabs to reload', async () => {
-    await startCookieCheck(5, 'a.com', [], { ...scope('a.com'), reloadTabs: [7, 8] });
-    await startCookieCheck(6, 'a.com', [], { ...scope('a.com'), reloadTabs: [9] });
+    await startCookieCheck(5, 'a.com', [], { ...scope('a.com'), reloadTabs: [r(7), r(8)] });
+    await startCookieCheck(6, 'a.com', [], { ...scope('a.com'), reloadTabs: [r(9)] });
     expect(await takeCookieCheck(5)).toEqual({ check: null, reloadTabs: [] });
-    expect((await takeCookieCheck(6)).reloadTabs).toEqual([9]);
+    expect((await takeCookieCheck(6)).reloadTabs).toEqual([r(9)]);
   });
 
   it('a new check on a separate scope keeps the other check\'s tabs to reload', async () => {
-    await startCookieCheck(5, 'a.com', [], { ...scope('a.com'), reloadTabs: [7] });
-    await startCookieCheck(6, 'b.com', [], { ...scope('b.com'), reloadTabs: [9] });
-    expect((await takeCookieCheck(5)).reloadTabs).toEqual([7]);
-    expect((await takeCookieCheck(6)).reloadTabs).toEqual([9]);
+    await startCookieCheck(5, 'a.com', [], { ...scope('a.com'), reloadTabs: [r(7)] });
+    await startCookieCheck(6, 'b.com', [], { ...scope('b.com'), reloadTabs: [r(9, 'https://b.com')] });
+    expect((await takeCookieCheck(5)).reloadTabs).toEqual([r(7)]);
+    expect((await takeCookieCheck(6)).reloadTabs).toEqual([r(9, 'https://b.com')]);
   });
 
   it('cancelling on clear drops the overlapping checks with their tabs to reload', async () => {
-    await startCookieCheck(5, 'app.a.com', [], { ...scope('app.a.com'), reloadTabs: [7] });
-    await startCookieCheck(6, 'b.com', [], { ...scope('b.com'), reloadTabs: [9] });
+    await startCookieCheck(5, 'app.a.com', [], { ...scope('app.a.com'), reloadTabs: [r(7, 'https://app.a.com')] });
+    await startCookieCheck(6, 'b.com', [], { ...scope('b.com'), reloadTabs: [r(9, 'https://b.com')] });
     await cancelCookieChecksFor('a.com');
     expect(await takeCookieCheck(5)).toEqual({ check: null, reloadTabs: [] });
-    expect((await takeCookieCheck(6)).reloadTabs).toEqual([9]);
+    expect((await takeCookieCheck(6)).reloadTabs).toEqual([r(9, 'https://b.com')]);
   });
 
   it('hands a started check to the next take, once', async () => {

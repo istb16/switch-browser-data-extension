@@ -12,7 +12,7 @@ import { cookiesWithin } from '../lib/cookie-handler.js';
 import { memberHosts, activeRef } from '../lib/groups.js';
 import { findChanges, withDigests, TYPE_LABELS } from '../lib/data-compare.js';
 import { getVolatileCookiesFor, startCookieCheck, ignoreCookieChange, hasPendingCookieCheck, cancelCookieChecksFor } from '../lib/volatile-cookies.js';
-import { otherSiteTabs, reloadTabs } from '../lib/site-tabs.js';
+import { otherSiteTabs, reloadTabs, tabsToReload } from '../lib/site-tabs.js';
 import { showConfirm, showFormDialog } from '../lib/dialog.js';
 import { bindInlineRename } from '../lib/inline-rename.js';
 import { $, showStatus, notify, reportError } from '../lib/ui.js';
@@ -159,7 +159,7 @@ async function watchCookiesAfterApply(storeKey, data, cookiesApplied, others) {
   const within = cookieDomainFor(data, storeKey, scope);
   await startCookieCheck(state.activeTab.id, scope.key, cookiesWithin(data.cookies, within), {
     origins: scope.origins, cookieDomain: within.domain, cookieExact: within.exact,
-    reloadTabs: others.map(tab => tab.id),
+    reloadTabs: tabsToReload(others),
   });
   return true;
 }

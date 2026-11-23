@@ -835,6 +835,7 @@ describe('popup/popup.js', () => {
     }
 
     const storedCheck = async (tabId = 1) => (await chrome.storage.local.get('cookieChecks')).cookieChecks?.[tabId];
+    const storedReloadIds = async () => (await storedCheck()).reloadTabs.map(entry => entry.id);
 
     async function clickLoad(name) {
       row(name).querySelector('.snapshot__main').click();
@@ -894,7 +895,12 @@ describe('popup/popup.js', () => {
 
         expect(events).toEqual(['cookieChecks', 'reload 1']);
         expect(chrome._state.reloadedTabs).toEqual([1]);
-        expect((await storedCheck()).reloadTabs).toEqual([2, 3, 5, 6]);
+        expect((await storedCheck()).reloadTabs).toEqual([
+          { id: 2, origin: 'https://example.com' },
+          { id: 3, origin: 'https://sub.example.com' },
+          { id: 5, origin: 'http://example.com:8080' },
+          { id: 6, origin: 'https://example.com' },
+        ]);
         expect($('statusMsg').textContent).toBe(LOADED + suffix(4));
       });
 
@@ -1026,6 +1032,19 @@ describe('popup/popup.js', () => {
         expect($('statusMsg').textContent).toContain(suffix(4));
       });
 
+      // No cookie was cleared, so the subdomain's tab sees an unchanged jar.
+      it('with cookies on but the host permission denied, keeps the cookies and reloads only the same-origin tabs', async () => {
+        await setReloadOtherTabs();
+        await loadPopupWithTabs(APP, APP_OTHERS);
+        vi.spyOn(chrome.permissions, 'contains').mockResolvedValue(false);
+        vi.spyOn(chrome.permissions, 'request').mockResolvedValue(false);
+        await clearSite();
+
+        expect(chrome._state.cookies).toEqual([sid('a', 'app.example.com')]);
+        expect(chrome._state.reloadedTabs).toEqual([1, 2]);
+        expect($('statusMsg').textContent).toBe(CLEARED + suffix(1));
+      });
+
       it('with cookies off, reloads only the same-origin tabs', async () => {
         await setReloadOtherTabs({ enabledTypes: { cookies: false, localStorage: true, sessionStorage: true, indexedDB: true } });
         await loadPopupWithTabs(APP, APP_OTHERS);
@@ -1112,7 +1131,7 @@ describe('popup/popup.js', () => {
         ]);
         await clickLoad('first');
 
-        expect((await storedCheck()).reloadTabs).toEqual([3, 4]);
+        expect(await storedReloadIds()).toEqual([3, 4]);
         expect(chrome._state.reloadedTabs).toEqual([1]);
       });
     });
@@ -1125,7 +1144,7 @@ describe('popup/popup.js', () => {
         $('undoBtn').click();
         await settle();
 
-        expect((await storedCheck()).reloadTabs).toEqual([2, 3, 5, 6]);
+        expect(await storedReloadIds()).toEqual([2, 3, 5, 6]);
         expect(chrome._state.reloadedTabs).toEqual([1]);
         expect($('statusMsg').textContent).toBe(`直前の状態に戻しました${suffix(4)}`);
       });
@@ -1164,8 +1183,65 @@ describe('popup/popup.js', () => {
         $('undoBtn').click();
         await settle();
 
-        expect((await storedCheck()).reloadTabs).toEqual([2, 3, 5]);
+        expect(await storedReloadIds()).toEqual([2, 3, 5]);
         expect(chrome._state.reloadedTabs).toEqual([1]);
+      });
+
+      const UNDONE = '直前の状態に戻しました';
+      const backupWith = data => setBackups({ 'example.com': { savedAt: '2024-01-01T00:00:00.000Z', activeName: null, ...data } });
+
+      it('with only sessionStorage restored, reloads no other tab', async () => {
+        await backupWith({ sessionStorage: { s: '0' } });
+        await setReloadOtherTabs();
+        await loadPopupWithTabs(ACTIVE, OTHERS);
+        $('undoBtn').click();
+        await settle();
+
+        expect(pageData.sessionStorage).toEqual({ s: '0' });
+        expect(await storedCheck()).toBeUndefined();
+        expect(chrome._state.reloadedTabs).toEqual([1]);
+        expect($('statusMsg').textContent).toBe(UNDONE);
+      });
+
+      it('with the setting off, hands over and reloads no other tab', async () => {
+        await backupWith({ cookies: [sid('previous')], localStorage: { a: '0' } });
+        await setReloadOtherTabs({ reloadOtherTabs: false });
+        await loadPopupWithTabs(ACTIVE, OTHERS);
+        $('undoBtn').click();
+        await settle();
+
+        expect(await storedReloadIds()).toEqual([]);
+        expect(chrome._state.reloadedTabs).toEqual([1]);
+        expect($('statusMsg').textContent).toBe(UNDONE);
+      });
+
+      it('with automatic reload off, reloads no tab at all', async () => {
+        await backupWith({ cookies: [sid('previous')], localStorage: { a: '0' } });
+        await setReloadOtherTabs({ autoReload: false });
+        await loadPopupWithTabs(ACTIVE, OTHERS);
+        $('undoBtn').click();
+        await settle();
+
+        expect(await storedReloadIds()).toEqual([]);
+        expect(chrome._state.reloadedTabs).toEqual([]);
+        expect($('statusMsg').textContent).toBe(UNDONE);
+      });
+
+      it('still restores and reloads the active tab when listing the tabs fails', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        await backupWith({ cookies: [sid('previous')], localStorage: { a: '0' } });
+        await setReloadOtherTabs();
+        await loadPopupWithTabs(ACTIVE, OTHERS, async () => {
+          throw new Error('query failed');
+        });
+        $('undoBtn').click();
+        await settle();
+
+        expect(pageData.localStorage).toEqual({ a: '0' });
+        expect(await storedReloadIds()).toEqual([]);
+        expect(chrome._state.reloadedTabs).toEqual([1]);
+        expect($('statusMsg').className).toContain('success');
+        expect($('statusMsg').textContent).toBe(UNDONE);
       });
     });
   });

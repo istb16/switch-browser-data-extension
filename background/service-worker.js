@@ -4,7 +4,7 @@ import { resolveScope, activeRef } from '../lib/groups.js';
 import { getCookiesForDomain, cookiesWithin } from '../lib/cookie-handler.js';
 import { hasHostPermission } from '../lib/data-bridge.js';
 import { takeCookieCheck, learnVolatileCookies } from '../lib/volatile-cookies.js';
-import { reloadTabs } from '../lib/site-tabs.js';
+import { reloadTabsStillOn } from '../lib/site-tabs.js';
 
 // Scripts on the page may still set cookies just after the load completes.
 const SETTLE_MS = 3000;
@@ -91,7 +91,7 @@ async function checkCookiesAfterLoad(tabId) {
   try {
     await learnFromCheck(check);
   } finally {
-    await reloadTabs(others);
+    await reloadTabsStillOn(others);
   }
 }
 
