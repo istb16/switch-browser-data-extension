@@ -124,6 +124,33 @@ test('after a load that wrote cookies, the service worker reloads the site\'s ot
   expect(await storageGet(popup, 'cookieChecks')).toEqual({});
 });
 
+test('a load that wrote cookies on a form POST result loads the tab again without sending the form, and the service worker still takes its check', async ({ context, extensionId }) => {
+  await context.request.get(`${TEST_PAGE_ORIGIN}/post/reset`);
+  const site = await context.newPage();
+  await site.goto(loginUrl('alice'));
+  const savePopup = await openPopupFor(context, extensionId, site);
+  await saveAs(savePopup, 'alice');
+  await savePopup.close();
+  await site.goto(loginUrl('bob'));
+  await expect(site.locator('h1')).toHaveText('signed in as: bob');
+
+  await site.goto(`${TEST_PAGE_ORIGIN}/post/`);
+  await site.locator('button').click();
+  await expect(site.locator('h1')).toHaveText('posted 1');
+  await markPage(site);
+  const popup = await openPopupFor(context, extensionId, site);
+  await row(popup, 'alice').locator('.snapshot__main').click();
+  await expect(popup.locator('#statusMsg')).toHaveClass(/success/);
+
+  await expect.poll(() => wasLoadedAgain(site)).toBe(true);
+  await expect(site.locator('form')).toBeVisible();
+  expect(await (await context.request.get(`${TEST_PAGE_ORIGIN}/post/count`)).text()).toBe('1');
+  // The service worker takes the check once the page loaded by navigating completes.
+  await expect.poll(() => storageGet(popup, 'cookieChecks'), { timeout: 15_000 }).toEqual({});
+  await site.goto(`${TEST_PAGE_ORIGIN}/cookies/`);
+  await expect(site.locator('h1')).toHaveText('signed in as: alice');
+});
+
 test('clearing the site\'s data signs out, and the undo bar signs back in', async ({ context, extensionId }) => {
   const site = await context.newPage();
   await site.goto(loginUrl('alice'));

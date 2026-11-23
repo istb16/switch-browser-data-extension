@@ -38,7 +38,9 @@ function mockContentScript() {
 
 async function loadPopup(tabUrl) {
   document.body.innerHTML = bodyHtml;
-  chrome.tabs.query = vi.fn().mockResolvedValue(tabUrl == null ? [] : [{ id: 1, url: tabUrl }]);
+  // chrome.tabs.get reads the active tab from here when it is loaded again.
+  chrome._state.tabs = tabUrl == null ? [] : [{ id: 1, url: tabUrl }];
+  chrome.tabs.query = vi.fn().mockResolvedValue(structuredClone(chrome._state.tabs));
   vi.resetModules();
   await import('../../popup/popup.js');
   await settle();
@@ -421,6 +423,28 @@ describe('popup/popup.js', () => {
       expect(row('first').classList.contains('is-active')).toBe(true);
       expect($('undoBar').classList.contains('hidden')).toBe(false);
       expect($('statusMsg').className).toContain('success');
+    });
+
+    it('loads the tab again by navigating to its current URL, so a form POST is not sent again', async () => {
+      await loadPopup('https://example.com/');
+      chrome._state.tabs[0].url = 'https://example.com/post/submit';
+      const reload = vi.spyOn(chrome.tabs, 'reload');
+
+      row('first').querySelector('.snapshot__main').click();
+      await settle();
+
+      expect(chrome._state.navigatedTabs).toEqual([{ tabId: 1, url: 'https://example.com/post/submit' }]);
+      expect(reload).not.toHaveBeenCalled();
+    });
+
+    it('reloads the tab when its URL has a fragment, since navigating there would only scroll', async () => {
+      await loadPopup('https://example.com/#top');
+
+      row('first').querySelector('.snapshot__main').click();
+      await settle();
+
+      expect(chrome._state.navigatedTabs).toEqual([]);
+      expect(chrome._state.reloadedTabs).toEqual([1]);
     });
 
     it('still loads, and says so, when there is no room left to keep the backup', async () => {
@@ -956,6 +980,23 @@ describe('popup/popup.js', () => {
 
         expect(chrome._state.reloadedTabs).toEqual([1, 2]);
         expect($('statusMsg').textContent).toBe(LOADED + suffix(1));
+      });
+
+      it('still reloads the other tabs and reports the load done when the active tab was closed meanwhile', async () => {
+        await setReloadOtherTabs({ enabledTypes: { cookies: false, localStorage: true, sessionStorage: true, indexedDB: true } });
+        await loadPopupWithTabs(ACTIVE, OTHERS);
+        const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+        const get = chrome.tabs.get;
+        vi.spyOn(chrome.tabs, 'get').mockImplementation(async id => {
+          if (id === 1) throw new Error('No tab with id: 1.');
+          return get(id);
+        });
+        await clickLoad('first');
+
+        expect(chrome._state.reloadedTabs).toEqual([2, 6]);
+        expect(error).toHaveBeenCalled();
+        expect($('statusMsg').className).toContain('success');
+        expect($('statusMsg').textContent).toBe(LOADED + suffix(2));
       });
 
       it('says "1 other tab" in English when one other tab reloaded', async () => {

@@ -12,7 +12,7 @@ import { cookiesWithin } from '../lib/cookie-handler.js';
 import { memberHosts, activeRef } from '../lib/groups.js';
 import { findChanges, withDigests, TYPE_LABELS } from '../lib/data-compare.js';
 import { getVolatileCookiesFor, startCookieCheck, ignoreCookieChange, hasPendingCookieCheck, cancelCookieChecksFor } from '../lib/volatile-cookies.js';
-import { otherSiteTabs, reloadTabs, tabsToReload } from '../lib/site-tabs.js';
+import { otherSiteTabs, reloadTab, reloadTabs, tabsToReload } from '../lib/site-tabs.js';
 import { showConfirm, showFormDialog } from '../lib/dialog.js';
 import { bindInlineRename } from '../lib/inline-rename.js';
 import { $, showStatus, notify, reportError } from '../lib/ui.js';
@@ -278,8 +278,15 @@ async function backupCurrent() {
   return tryBackup(current);
 }
 
+// The data is already switched by then, so a tab closed meanwhile must not turn
+// the change into an error or keep the site's other tabs from reloading.
 async function reloadIfEnabled() {
-  if (state.settings.autoReload) await chrome.tabs.reload(state.activeTab.id);
+  if (!state.settings.autoReload) return;
+  try {
+    await reloadTab(state.activeTab.id);
+  } catch (e) {
+    console.error(e);
+  }
 }
 
 function loadedStatusKey(backedUp, storageSkipped, partial) {

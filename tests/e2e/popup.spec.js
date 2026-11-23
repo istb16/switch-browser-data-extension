@@ -89,13 +89,8 @@ async function enableReloadOtherTabs(context, extensionId) {
   await options.close();
 }
 
-// "reload" once the tab was reloaded, "navigate" while it still shows its first load.
-function navigationType(page) {
-  return page.evaluate(() => performance.getEntriesByType('navigation')[0]?.type).catch(() => null);
-}
-
-// Other tabs are loaded again by navigating to their URL, which reports "navigate"
-// like the first load, so a mark left in the page tells whether it was replaced.
+// Tabs are loaded again by navigating to their URL, which reports "navigate" like
+// the first load, so a mark left in the page tells whether it was replaced.
 function markPage(page) {
   return page.evaluate(() => { window.__e2eMark = true; });
 }
@@ -104,18 +99,44 @@ function wasLoadedAgain(page) {
   return page.evaluate(() => !window.__e2eMark).catch(() => null);
 }
 
-// Saves a snapshot on `targetPage` and loads it again, which reloads the page.
+// Saves a snapshot on `targetPage` and loads it again, which loads the page again.
 async function saveAndLoad(context, extensionId, targetPage) {
   const savePopup = await openPopupFor(context, extensionId, targetPage);
   await saveAs(savePopup, 'snap1');
   await savePopup.close();
 
+  await markPage(targetPage);
   const loadPopup = await openPopupFor(context, extensionId, targetPage);
   await row(loadPopup, 'snap1').locator('.snapshot__main').click();
   await expect(loadPopup.locator('#statusMsg')).toHaveClass(/success/);
-  await expect.poll(() => navigationType(targetPage)).toBe('reload');
+  await expect.poll(() => wasLoadedAgain(targetPage)).toBe(true);
   return loadPopup;
 }
+
+test('loading a snapshot on a form POST result loads the page again without sending the form again', async ({ context, extensionId }) => {
+  await disableCookieCollection(context, extensionId);
+  await context.request.get(`${TEST_PAGE_ORIGIN}/post/reset`);
+  const postPage = await context.newPage();
+  await postPage.goto(`${TEST_PAGE_ORIGIN}/post/`);
+  await postPage.locator('button').click();
+  await expect(postPage.locator('h1')).toHaveText('posted 1');
+
+  await saveAndLoad(context, extensionId, postPage);
+  await expect(postPage.locator('form')).toBeVisible();
+  expect(await (await context.request.get(`${TEST_PAGE_ORIGIN}/post/count`)).text()).toBe('1');
+});
+
+// Navigating to the same URL asks the server again, like a reload, so a page the
+// browser may keep does not show the account switched away from.
+test('loading a snapshot on a page the browser may keep asks the server for it again', async ({ context, extensionId }) => {
+  await disableCookieCollection(context, extensionId);
+  const cachedPage = await context.newPage();
+  await cachedPage.goto(`${TEST_PAGE_ORIGIN}/cache/`);
+  const servedBefore = Number(await (await context.request.get(`${TEST_PAGE_ORIGIN}/cache/count`)).text());
+
+  await saveAndLoad(context, extensionId, cachedPage);
+  await expect(cachedPage.locator('h1')).toHaveText(`served ${servedBefore + 1}`);
+});
 
 test.describe('reloading the other tabs of the site', () => {
   // Longer than the service worker's settle time after a load (3 s).
