@@ -100,6 +100,21 @@ describe('lib/groups', () => {
     expect(await getActiveSnapshots()).toEqual({ 'example.com': 'first', 'plain.net': 'third' });
   });
 
+  it('removeGroup keeps a base-host reference that has types', async () => {
+    await setGroups(['example.com', 'other.org']);
+    await setActiveSnapshots({
+      'example.com': { host: 'example.com', name: 'first', types: ['cookies'] },
+      'other.org':   { host: 'app.other.org', name: 'second', types: ['cookies'] },
+    });
+
+    await removeGroup('example.com');
+    await removeGroup('other.org');
+
+    expect(await getActiveSnapshots()).toEqual({
+      'example.com': { host: 'example.com', name: 'first', types: ['cookies'] },
+    });
+  });
+
   it('removeGroup leaves a string reference as it is', async () => {
     await setGroups(['example.com']);
     await setActiveSnapshots({ 'example.com': 'first' });

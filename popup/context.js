@@ -1,6 +1,7 @@
-import { t } from '../lib/i18n.js';
+import { t, getLang } from '../lib/i18n.js';
 import { cookieDomainFor } from '../lib/data-bridge.js';
 import { cookiesWithin } from '../lib/cookie-handler.js';
+import { TYPE_LABELS } from '../lib/data-compare.js';
 
 export const state = {
   // See resolveScope() in lib/groups.js: `host` is the tab's host, `key` the group
@@ -16,6 +17,8 @@ export const state = {
   // Per-entry summarize() results, computed once per refresh rather than per render,
   // since search re-renders on every keystroke.
   summaries: new Map(),
+  // { host, name }, plus `types` (see recordedTypes) when only some types of it
+  // were loaded; null when no listed snapshot is active.
   activeEntry: null,
   // This host's backup, or null when there is none or automatic backups are off.
   backup: null,
@@ -35,7 +38,31 @@ export const entryOfRow = row => ({ host: row.dataset.host, name: row.dataset.na
 // In a group the active snapshot is one reference for every member host, so it
 // has to say which host's snapshot it is.
 export function activeValue(entry) {
+  if (entry.types) return { host: entry.host, name: entry.name, types: entry.types };
   return state.scope.group ? { host: entry.host, name: entry.name } : entry.name;
+}
+
+// The types a partial load recorded; undefined stands for every type, which is
+// also how a value an older or damaged record holds is read.
+export function recordedTypes(value) {
+  if (!Array.isArray(value?.types)) return undefined;
+  const types = Object.keys(TYPE_LABELS).filter(type => value.types.includes(type));
+  return types.length ? types : undefined;
+}
+
+export function comparedTypes(types) {
+  const { enabledTypes } = state.settings;
+  if (!types) return enabledTypes;
+  return Object.fromEntries(Object.keys(TYPE_LABELS).map(type => [type, Boolean(enabledTypes[type]) && types.includes(type)]));
+}
+
+export function typeNamesOf(types) {
+  return types.map(type => TYPE_LABELS[type]).join(getLang() === 'ja' ? '・' : ', ');
+}
+
+export function loadableTypes(entry) {
+  const snapshot = snapshotOf(entry);
+  return Object.keys(TYPE_LABELS).filter(type => state.settings.enabledTypes[type] && Boolean(snapshot?.[type]));
 }
 
 export function scopeLabel() {

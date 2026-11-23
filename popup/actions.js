@@ -1,7 +1,7 @@
 import { t, getLang } from '../lib/i18n.js';
 import {
   orderedNames, saveSnapshot, deleteSnapshot, renameSnapshot,
-  loadSnapshot, setActiveSnapshot, saveBackup, getBackup, updateSnapshotDetails,
+  loadSnapshot, setActiveSnapshot, saveBackup, getBackup, updateSnapshotDetails, replaceSnapshotFields,
 } from '../lib/snapshot.js';
 import { summarize, sizeOf } from '../lib/snapshot-summary.js';
 import { readKeys, SNAPSHOT_PREFIX, BACKUP_PREFIX } from '../lib/storage.js';
@@ -18,9 +18,18 @@ import { bindInlineRename } from '../lib/inline-rename.js';
 import { $, showStatus, notify, reportError } from '../lib/ui.js';
 import {
   state, entryId, sameEntry, snapshotOf, entryOfRow, activeValue, scopeLabel, comparable,
+  recordedTypes, comparedTypes, loadableTypes, typeNamesOf,
 } from './context.js';
 import { renderList, renderUndo, visibleMains, rowOf, focusRow, focusRowAt } from './list.js';
 import { closeSaveForm, saveFormDetails, buildDetailFields } from './save-form.js';
+import { buildTypePicker } from './type-picker.js';
+
+const TYPE_FIELDS = {
+  cookies: ['cookies', 'cookieDomain'],
+  localStorage: ['localStorage'],
+  sessionStorage: ['sessionStorage'],
+  indexedDB: ['indexedDB', 'indexedDBDigest'],
+};
 
 // Every action runs alone: a double click or a key held down would otherwise
 // start a second load while the first is still writing.
@@ -74,7 +83,10 @@ export async function refresh(lists) {
     bytes: sizeOf(snapshotOf(entry)),
   }]));
   const ref = activeRef(activeSnapshots[scope.key] ?? null, scope.key);
-  state.activeEntry = ref && state.snapshots[ref.host]?.[ref.name] ? { host: ref.host, name: ref.name } : null;
+  const types = recordedTypes(ref);
+  state.activeEntry = ref && state.snapshots[ref.host]?.[ref.name]
+    ? { host: ref.host, name: ref.name, ...(types && { types }) }
+    : null;
   if (!state.activeEntry) state.changes = [];
   renderList();
   renderUndo();
@@ -93,7 +105,8 @@ export async function detectChanges() {
   if (version !== state.dataVersion || !sameEntry(entry, state.activeEntry)) return;
   // Until the service worker has seen which cookies the site rewrites after the
   // load, those rewrites would all look like changes.
-  const types = learning ? { ...settings.enabledTypes, cookies: false } : settings.enabledTypes;
+  const compared = comparedTypes(entry.types);
+  const types = learning ? { ...compared, cookies: false } : compared;
   state.changes = findChanges(comparable(entry, snapshotOf(entry)), comparable(entry, current), types, volatile);
   if (state.changes.length) renderList();
 }
@@ -117,7 +130,7 @@ export async function handleSaveNew() {
       return;
     }
     await ensureCookiePermission();
-    if (state.snapshots[state.scope.host]?.[name] && !await showConfirm(t('confirm_overwrite', { name }))) return;
+    if (state.snapshots[state.scope.host]?.[name] && !await confirmOverwrite(name)) return;
     saved = await saveCurrentAs(name, saveFormDetails());
   });
   if (saved) closeSaveForm();
@@ -127,21 +140,70 @@ export async function handleSaveNew() {
 export async function handleOverwrite(entry) {
   await exclusive(async () => {
     await ensureCookiePermission();
-    if (!await showConfirm(t('confirm_overwrite', { name: entry.name }))) return;
+    if (!await confirmOverwrite(entry.name)) return;
     await saveCurrentAs(entry.name);
   });
   focusRow(entry);
 }
 
+function isPartlyActive(name) {
+  const active = state.activeEntry;
+  return Boolean(active?.types && active.host === state.scope.host && active.name === name);
+}
+
+async function confirmOverwrite(name) {
+  if (!isPartlyActive(name)) return showConfirm(t('confirm_overwrite', { name }));
+  const types = state.activeEntry.types.filter(type => state.settings.enabledTypes[type]);
+  if (!types.length) {
+    notify('error_overwrite_no_types', {}, 'error');
+    return false;
+  }
+  return showConfirm(t('confirm_overwrite_partial', { name, types: typeNamesOf(types) }));
+}
+
+// Only the types loaded from the snapshot are taken from the page: the rest of
+// the page may belong to another account and never came from this snapshot.
+// Resolves with the types it replaced.
+async function overwritePartly(name, details) {
+  const { scope } = state;
+  const { types } = state.activeEntry;
+  const collected = withDigests(await collectData(state.activeTab.id, scope, comparedTypes(types)));
+  const replaced = types.filter(type => type in collected);
+  // Saving the snapshot unchanged would report a save that captured nothing.
+  if (!replaced.length) throw new Error('no recorded type could be read');
+  const fields = {};
+  const removed = [];
+  for (const field of replaced.flatMap(type => TYPE_FIELDS[type])) {
+    if (field in collected) fields[field] = collected[field];
+    else removed.push(field);
+  }
+  // A full save here would store the types never loaded from it after all.
+  if (!await replaceSnapshotFields(scope.host, name, fields, removed, details)) throw new Error('snapshot is gone');
+  await setActiveSnapshot(scope.key, activeValue({ host: scope.host, name, types }));
+  return replaced;
+}
+
 async function saveCurrentAs(name, details) {
   const { scope } = state;
   try {
-    const data = await collectData(state.activeTab.id, scope, state.settings.enabledTypes);
-    await saveSnapshot(scope.host, name, withDigests(data), details);
-    await setActiveSnapshot(scope.key, activeValue({ host: scope.host, name }));
-    state.changes = [];
+    let replaced = null;
+    let wanted = 0;
+    if (isPartlyActive(name)) {
+      wanted = state.activeEntry.types.filter(type => state.settings.enabledTypes[type]).length;
+      replaced = await overwritePartly(name, details);
+    } else {
+      const data = await collectData(state.activeTab.id, scope, state.settings.enabledTypes);
+      await saveSnapshot(scope.host, name, withDigests(data), details);
+      await setActiveSnapshot(scope.key, activeValue({ host: scope.host, name }));
+    }
+    // A recorded type the page could not give still differs from what is stored.
+    state.changes = replaced ? state.changes.filter(change => !replaced.includes(change.type)) : [];
     await refresh();
-    notify('status_saved', { name });
+    if (replaced && replaced.length < wanted) {
+      notify('status_saved_partial', { name, types: typeNamesOf(replaced) });
+    } else {
+      notify('status_saved', { name });
+    }
     return true;
   } catch (e) {
     reportError('error_save_failed', e);
@@ -220,7 +282,8 @@ async function reloadIfEnabled() {
   if (state.settings.autoReload) await chrome.tabs.reload(state.activeTab.id);
 }
 
-function loadedStatusKey(backedUp, storageSkipped) {
+function loadedStatusKey(backedUp, storageSkipped, partial) {
+  if (partial) return backedUp ? 'status_loaded_partial' : 'status_loaded_partial_no_backup';
   if (storageSkipped) return backedUp ? 'status_loaded_cookies_only' : 'status_loaded_cookies_only_no_backup';
   return backedUp ? 'status_loaded' : 'status_loaded_no_backup';
 }
@@ -228,26 +291,94 @@ function loadedStatusKey(backedUp, storageSkipped) {
 export function handleLoad(entry) {
   const { name } = entry;
   return exclusive(async () => {
-    const { scope, settings } = state;
     await ensureCookiePermission();
     // With a backup the load can be undone, so it runs without asking first.
-    if (!settings.autoBackup && !await showConfirm(t('confirm_load', { name }))) return;
+    if (!state.settings.autoBackup && !await showConfirm(t('confirm_load', { name }))) return;
+    await loadEntry(entry);
+  });
+}
 
-    const snapshot = await loadSnapshot(entry.host, name);
-    if (!snapshot) return;
+// The types a partial load leaves recorded: what it applied, added to what an
+// earlier partial load of the same snapshot applied. Covering every loadable
+// type makes it a full record again.
+function recordAfterPartialLoad(entry, applied) {
+  const active = state.activeEntry;
+  const types = sameEntry(entry, active) && active.types
+    ? Object.keys(TYPE_LABELS).filter(type => active.types.includes(type) || applied.includes(type))
+    : applied;
+  const full = loadableTypes(entry).every(type => types.includes(type));
+  return full ? { host: entry.host, name: entry.name } : { host: entry.host, name: entry.name, types };
+}
 
-    try {
-      const backedUp = await backupCurrent();
-      const applied = await applyData(state.activeTab.id, scope, snapshot, settings.enabledTypes, entry.host);
-      await setActiveSnapshot(scope.key, activeValue(entry));
-      state.changes = [];
-      const reloaded = await reloadAfterApply(entry.host, snapshot, applied);
-      notifyDone(loadedStatusKey(backedUp, applied.storageSkipped), { name, host: entry.host }, reloaded);
-    } catch (e) {
-      reportError('error_load_failed', e);
+export async function loadEntry(entry, chosen) {
+  const { scope, settings } = state;
+  const { name } = entry;
+  const snapshot = await loadSnapshot(entry.host, name);
+  if (!snapshot) return;
+
+  try {
+    let types = settings.enabledTypes;
+    let picked = null;
+    if (chosen) {
+      const loadable = loadableTypes(entry);
+      picked = loadable.filter(type => chosen.includes(type));
+      if (!picked.length) throw new Error('no loadable type chosen');
+      // Every loadable type chosen is a full load, with nothing partial about it.
+      if (picked.length === loadable.length) picked = null;
     }
-    await refresh();
-    focusRow(entry);
+    if (picked) {
+      types = comparedTypes(picked);
+      // Checked before the backup, so a page that can't take the data never
+      // replaces the backup that is still useful.
+      if (!types.cookies && !await canReachPage(state.activeTab.id, types)) throw new Error('content script unreachable');
+    }
+    const backedUp = await backupCurrent();
+    const applied = await applyData(state.activeTab.id, scope, snapshot, types, entry.host);
+    let record = { host: entry.host, name };
+    let appliedTypes = null;
+    let kept = [];
+    if (picked) {
+      appliedTypes = picked.filter(type => (type === 'cookies' ? applied.cookiesApplied : applied.storageApplied));
+      if (!appliedTypes.length) throw new Error('nothing was applied');
+      record = recordAfterPartialLoad(entry, appliedTypes);
+      // Types an earlier partial load of this snapshot recorded stay compared,
+      // and this load left their differences as they were.
+      const active = state.activeEntry;
+      if (sameEntry(entry, active) && active.types) {
+        kept = state.changes.filter(change => !appliedTypes.includes(change.type));
+      }
+    }
+    await setActiveSnapshot(scope.key, activeValue(record));
+    state.changes = kept;
+    const reloaded = await reloadAfterApply(entry.host, snapshot, applied);
+    const vars = { name, host: entry.host, ...(appliedTypes && { types: typeNamesOf(appliedTypes) }) };
+    notifyDone(loadedStatusKey(backedUp, applied.storageSkipped, Boolean(appliedTypes)), vars, reloaded);
+  } catch (e) {
+    reportError('error_load_failed', e);
+  }
+  await refresh();
+  focusRow(entry);
+}
+
+export async function handleLoadPartial(entry) {
+  if (entry.host !== state.scope.host || loadableTypes(entry).length < 2) return;
+  await exclusive(async () => {
+    await ensureCookiePermission();
+    const picker = buildTypePicker(
+      loadableTypes(entry),
+      state.settings.autoBackup ? null : t('load_partial_no_undo'),
+    );
+    const confirmed = await showFormDialog({
+      title: t('load_partial_title', { name: entry.name }),
+      content: picker.content,
+      confirmLabel: t('btn_load'),
+      validate: () => (picker.read().length ? null : t('error_choose_type')),
+    });
+    if (!confirmed) {
+      focusRow(entry);
+      return;
+    }
+    await loadEntry(entry, picker.read());
   });
 }
 
@@ -311,10 +442,13 @@ export async function handleUndo() {
       const applied = await applyData(state.activeTab.id, scope, backup, types, scope.host);
       await tryBackup(current);
       const ref = activeRef(backup.activeName, scope.host);
-      const restored = ref && snapshotOf(ref) ? { host: ref.host, name: ref.name } : null;
+      const restoredTypes = recordedTypes(ref);
+      const restored = ref && snapshotOf(ref)
+        ? { host: ref.host, name: ref.name, ...(restoredTypes && { types: restoredTypes }) }
+        : null;
       await setActiveSnapshot(scope.key, restored && activeValue(restored));
       state.changes = restored
-        ? findChanges(comparable(restored, snapshotOf(restored)), comparable(restored, backup), types, await getVolatileCookiesFor(scope.key))
+        ? findChanges(comparable(restored, snapshotOf(restored)), comparable(restored, backup), comparedTypes(restored.types), await getVolatileCookiesFor(scope.key))
         : [];
       const reloaded = await reloadAfterApply(scope.host, backup, applied);
       notifyDone('status_restored', {}, reloaded);

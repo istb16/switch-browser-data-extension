@@ -9,7 +9,7 @@ import { state } from './context.js';
 import { renderList, setRowActions } from './list.js';
 import {
   refresh, detectChanges, enabledTypeNames, startRename,
-  handleLoad, handleOverwrite, handleEditDetails, handleDelete, handleIgnoreCookie,
+  handleLoad, handleLoadPartial, handleOverwrite, handleEditDetails, handleDelete, handleIgnoreCookie,
   handleSaveNew, handleUndo, handleClearSite,
 } from './actions.js';
 import { openSaveForm, closeSaveForm } from './save-form.js';
@@ -17,6 +17,7 @@ import { handleShortcut, handleSearchKey } from './shortcuts.js';
 
 setRowActions({
   load: handleLoad,
+  loadPartial: handleLoadPartial,
   overwrite: handleOverwrite,
   rename: startRename,
   editDetails: handleEditDetails,

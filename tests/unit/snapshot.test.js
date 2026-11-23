@@ -8,6 +8,7 @@ import {
   setSnapshotOrder,
   loadSnapshot,
   updateSnapshotDetails,
+  replaceSnapshotFields,
   migrateStorage, SCHEMA_VERSION,
   saveBackup,
   clearAllData,
@@ -44,6 +45,23 @@ describe('lib/snapshot', () => {
     expect(orders['example.com']).toEqual(['first']);
     const snapshots = await snapshotsOf('example.com');
     expect(snapshots.first.cookies).toEqual([{ name: 'a' }]);
+  });
+
+  it('replaceSnapshotFields replaces and removes only the given fields, keeping the memo', async () => {
+    await saveSnapshot('example.com', 'first', { cookies: [{ name: 'old' }], cookieDomain: 'example.com', localStorage: { a: '1' } }, { memo: 'note' });
+    expect(await replaceSnapshotFields('example.com', 'first', { cookies: [{ name: 'new' }] }, ['cookieDomain'])).toBe(true);
+
+    const { first } = await snapshotsOf('example.com');
+    expect(first.cookies).toEqual([{ name: 'new' }]);
+    expect('cookieDomain' in first).toBe(false);
+    expect(first.localStorage).toEqual({ a: '1' });
+    expect(first.memo).toBe('note');
+  });
+
+  it('replaceSnapshotFields writes nothing when the snapshot is gone', async () => {
+    await saveSnapshot('example.com', 'other', { cookies: [] });
+    expect(await replaceSnapshotFields('example.com', 'first', { cookies: [] }, [])).toBe(false);
+    expect(Object.keys(await snapshotsOf('example.com'))).toEqual(['other']);
   });
 
   it('orderedNames drops stale names and appends the unordered ones sorted', () => {
@@ -268,6 +286,36 @@ describe('lib/snapshot — active snapshot and backup', () => {
     expect(await getActiveSnapshot('example.com')).toEqual({ host: 'app.example.com', name: 'x' });
     await renameSnapshot('app.example.com', 'x', 'z');
     expect(await getActiveSnapshot('example.com')).toEqual({ host: 'app.example.com', name: 'z' });
+  });
+
+  it('renameSnapshot keeps the applied types of the active record', async () => {
+    const { getActiveSnapshot } = await import('../../lib/snapshot.js');
+    const { setActiveSnapshots } = await import('../../lib/storage.js');
+    await saveSnapshot('a.com', 'x', {});
+    await saveSnapshot('app.example.com', 'x', {});
+    await setActiveSnapshots({
+      'a.com': { host: 'a.com', name: 'x', types: ['cookies'] },
+      'example.com': { host: 'app.example.com', name: 'x', types: ['localStorage'] },
+    });
+
+    await renameSnapshot('a.com', 'x', 'z');
+    await renameSnapshot('app.example.com', 'x', 'w');
+
+    expect(await getActiveSnapshot('a.com')).toEqual({ host: 'a.com', name: 'z', types: ['cookies'] });
+    expect(await getActiveSnapshot('example.com'))
+      .toEqual({ host: 'app.example.com', name: 'w', types: ['localStorage'] });
+  });
+
+  it('deleteSnapshot removes an active record that has types', async () => {
+    const { getActiveSnapshots, setActiveSnapshots } = await import('../../lib/storage.js');
+    await saveSnapshot('a.com', 'x', {});
+    await saveSnapshot('a.com', 'y', {});
+    await setActiveSnapshots({ 'a.com': { host: 'a.com', name: 'x', types: ['cookies'] } });
+
+    await deleteSnapshot('a.com', 'y');
+    expect(await getActiveSnapshots()).toEqual({ 'a.com': { host: 'a.com', name: 'x', types: ['cookies'] } });
+    await deleteSnapshot('a.com', 'x');
+    expect(await getActiveSnapshots()).toEqual({});
   });
 
   it('keeps one backup per domain, apart from the snapshots', async () => {
