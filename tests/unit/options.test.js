@@ -380,6 +380,31 @@ describe('options/options.js', () => {
       expect(orders['a.com']).toEqual(['renamed']);
     });
 
+    it('row view button opens the viewer for the row\'s current name', async () => {
+      const { itemA } = await setUpTwoOpenDomains();
+      const row = itemA.querySelector('.snapshot-row');
+      const view = row.querySelector('.btn-icon--neutral');
+      expect(view.getAttribute('aria-label')).toBe('"first" の中身を見る');
+      expect(row.querySelectorAll('.btn-icon--neutral')).toHaveLength(1);
+      expect(row.querySelector('.btn-icon:last-child').classList.contains('btn-icon--neutral')).toBe(false);
+      expect(view.nextElementSibling.classList.contains('btn-export')).toBe(true);
+
+      row.querySelector('.snapshot-name').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      const input = row.querySelector('.snapshot-name-input');
+      input.value = 'renamed';
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+      await flush();
+      expect(view.getAttribute('aria-label')).toBe('"renamed" の中身を見る');
+      expect(view.title).toBe('"renamed" の中身を見る');
+      view.click();
+      await flush();
+
+      expect(chrome._state.createdTabs).toHaveLength(1);
+      const url = new URL(chrome._state.createdTabs[0].url);
+      expect(url.pathname).toBe('/viewer/viewer.html');
+      expect(Object.fromEntries(url.searchParams)).toEqual({ host: 'a.com', name: 'renamed' });
+    });
+
     it('shows an error and keeps editing when the new name is empty', async () => {
       const { itemA } = await setUpTwoOpenDomains();
       const row = itemA.querySelector('.snapshot-row');
@@ -447,7 +472,7 @@ describe('options/options.js', () => {
       itemB.querySelector('.domain-header').click();
 
       const row = itemA.querySelector('.snapshot-row[data-name="first"]');
-      row.querySelector('.btn-icon').click();
+      row.querySelector('.btn-icon:last-child').click();
       await flush();
       document.querySelector('.tk3-btn-confirm').click();
       await flush();
@@ -463,7 +488,7 @@ describe('options/options.js', () => {
       await setSnapshots({ 'a.com': { only: { savedAt: '2024-01-01T00:00:00.000Z' } } });
       await loadOptions();
 
-      document.querySelector('.btn-icon').click();
+      document.querySelector('.snapshot-row .btn-icon:last-child').click();
       await flush();
       document.querySelector('.tk3-btn-confirm').click();
       await flush();
@@ -483,7 +508,7 @@ describe('options/options.js', () => {
       await loadOptions();
       const get = vi.spyOn(chrome.storage.local, 'get');
 
-      document.querySelector('.snapshot-row[data-name="big"] .btn-icon').click();
+      document.querySelector('.snapshot-row[data-name="big"] .btn-icon:last-child').click();
       await flush();
       document.querySelector('.tk3-btn-confirm').click();
       await flush();
@@ -498,7 +523,7 @@ describe('options/options.js', () => {
       await setSnapshots({ 'a.com': { first: { savedAt: '2024-01-01T00:00:00.000Z' } } });
       await loadOptions();
 
-      document.querySelector('.btn-icon').click();
+      document.querySelector('.snapshot-row .btn-icon:last-child').click();
       await flush();
       document.querySelector('.tk3-btn-cancel').click();
       await flush();
@@ -520,7 +545,7 @@ describe('options/options.js', () => {
     }
 
     async function deleteRow(item, name) {
-      item.querySelector(`.snapshot-row[data-name="${name}"] .btn-icon`).click();
+      item.querySelector(`.snapshot-row[data-name="${name}"] .btn-icon:last-child`).click();
       await flush();
       document.querySelector('.tk3-btn-confirm').click();
       await flush();
@@ -1495,7 +1520,7 @@ describe('options/options.js', () => {
       await setSnapshots({ 'a.com': { first: { savedAt: SAVED }, second: { savedAt: SAVED } } });
       await loadOptions();
       domainItems()[0].querySelector('.domain-header').click();
-      domainItems()[0].querySelector('.snapshot-row[data-name="first"] .btn-icon').click();
+      domainItems()[0].querySelector('.snapshot-row[data-name="first"] .btn-icon:last-child').click();
       await flush();
       document.querySelector('.tk3-btn-confirm').click();
       await flush();

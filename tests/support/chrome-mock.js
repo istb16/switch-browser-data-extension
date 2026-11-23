@@ -34,6 +34,7 @@ export function createChromeMock() {
     messageHandlers: [],
     reloadedTabs: [],
     navigatedTabs: [],
+    createdTabs: [],
     badges: {},
     badgeBackgrounds: {},
     badgeTextColors: {},
@@ -161,6 +162,10 @@ export function createChromeMock() {
         state.navigatedTabs.push({ tabId, url });
         state.reloadedTabs.push(tabId);
       },
+      async create({ url }) {
+        state.createdTabs.push({ url });
+        return { id: 1000 + state.createdTabs.length, url };
+      },
       onUpdated: event(),
       // Overridden per-test with vi.fn() where message round-tripping matters.
       sendMessage: async () => {
@@ -177,6 +182,11 @@ export function createChromeMock() {
       onInstalled: event(),
       onStartup: event(),
       getManifest() { return clone(state.manifest); },
+      getURL(path) { return `chrome-extension://test-extension-id/${path.replace(/^\//, '')}`; },
+    },
+
+    extension: {
+      inIncognitoContext: false,
     },
 
     action: {

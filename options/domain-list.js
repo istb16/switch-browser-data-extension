@@ -7,6 +7,7 @@ import { $, escHtml, notify } from '../lib/ui.js';
 import { measureDomains, formatBytes } from '../lib/snapshot-summary.js';
 import { fillColorChip, memoText, fillGroupChip, searchQuery, matchesQuery } from '../lib/snapshot-view.js';
 import { resolveScope } from '../lib/groups.js';
+import { openViewer } from '../lib/viewer-link.js';
 import { renderMeter } from './meter.js';
 import { buildExportButton, handleExport } from './transfer-ui.js';
 
@@ -198,6 +199,14 @@ export function buildSnapshotRow(name, snapshot, bytes, domain, snapshotList, he
   chip.setAttribute('role', 'img');
   if (fillColorChip(chip, snapshot.color, 'snapshot-chip')) row.appendChild(chip);
   row.appendChild(info);
+  const viewBtn = document.createElement('button');
+  viewBtn.type = 'button';
+  viewBtn.className = 'btn-icon btn-icon--neutral';
+  viewBtn.title = t('btn_view_title', { name });
+  viewBtn.setAttribute('aria-label', viewBtn.title);
+  viewBtn.textContent = '⌕';
+  viewBtn.addEventListener('click', () => openViewer({ host: domain, name: row.dataset.name }));
+  row.appendChild(viewBtn);
   row.appendChild(buildExportButton(t('export_snapshot_title', { name }), btn =>
     handleExport({ domain, name: row.dataset.name }, btn)));
   row.appendChild(deleteBtn);
@@ -255,6 +264,8 @@ export function buildSnapshotRow(name, snapshot, bytes, domain, snapshotList, he
         if (index !== -1) orders[domain][index] = newName;
         row.dataset.name = newName;
         nameSpan.textContent = newName;
+        viewBtn.title = t('btn_view_title', { name: newName });
+        viewBtn.setAttribute('aria-label', viewBtn.title);
         restore();
         notify('status_snapshot_renamed', { old: oldName, new: newName });
       },

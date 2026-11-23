@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../');
-const RUNTIME_DIRS = ['manifest.json', '_locales', 'background', 'content', 'icons', 'lib', 'options', 'popup'];
+const RUNTIME_DIRS = ['manifest.json', '_locales', 'background', 'content', 'icons', 'lib', 'options', 'popup', 'viewer'];
 
 // Reading cookies needs the host permission, which the extension requests at
 // runtime through a native Chrome prompt Playwright can't click. For tests that

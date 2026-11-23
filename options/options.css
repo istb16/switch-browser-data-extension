@@ -507,6 +507,10 @@ h2 {
   line-height: 1;
 }
 
+.btn-icon--neutral {
+  color: var(--tk-muted);
+}
+
 .btn-icon:hover {
   background: var(--tk-surface-2);
 }

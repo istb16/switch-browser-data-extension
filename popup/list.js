@@ -5,6 +5,7 @@ import { setupMenu } from '../lib/menu.js';
 import { formatRelative } from '../lib/time.js';
 import { fillColorChip, memoText } from '../lib/snapshot-view.js';
 import { $ } from '../lib/ui.js';
+import { openViewer } from '../lib/viewer-link.js';
 import { state, entryId, sameEntry, snapshotOf, entryOfRow, loadableTypes, typeNamesOf } from './context.js';
 
 // Below this many snapshots the whole list fits at a glance, so the search box
@@ -83,6 +84,7 @@ function buildRow(entry, index) {
   trigger.setAttribute('aria-label', t('btn_more', { name }));
   trigger.title = t('btn_more', { name });
   menu.querySelector('[focusgroup]').setAttribute('aria-labelledby', trigger.id);
+  menu.querySelector('[data-action="view"]').textContent = t('menu_view');
   menu.querySelector('[data-action="overwrite"]').textContent = t('menu_overwrite');
   menu.querySelector('[data-action="rename"]').textContent = t('menu_rename');
   menu.querySelector('[data-action="edit"]').textContent = t('menu_edit_details');
@@ -95,7 +97,8 @@ function buildRow(entry, index) {
 
   row.querySelector('.snapshot__main').addEventListener('click', () => rowActions.load(entry));
   setupMenu(trigger, menu, action => {
-    if (action === 'overwrite') rowActions.overwrite(entry);
+    if (action === 'view') openViewer({ host: entry.host, name, tabId: state.activeTab.id });
+    else if (action === 'overwrite') rowActions.overwrite(entry);
     else if (action === 'load-partial') rowActions.loadPartial(entry);
     else if (action === 'rename') rowActions.rename(row, entry);
     else if (action === 'edit') rowActions.editDetails(entry);

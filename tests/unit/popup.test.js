@@ -1335,6 +1335,31 @@ describe('popup/popup.js', () => {
       expect(row('base').querySelector('.snapshot__host').textContent).toBe('example.com');
     });
 
+    it('row menu "中身を見る" opens the viewer with host, name and tab id', async () => {
+      await setSnapshots({
+        'www.example.com': { mine: snap('2024-01-01T00:00:00.000Z') },
+        'app.example.com': { theirs: snap('2024-01-01T00:00:00.000Z') },
+      });
+      await loadPopup('https://www.example.com/');
+
+      const view = row('mine').querySelector('.actions-menu [data-action="view"]');
+      expect(view.textContent).toBe('中身を見る');
+      expect(view.nextElementSibling.tagName).toBe('HR');
+      view.click();
+      row('theirs').querySelector('.actions-menu [data-action="view"]').click();
+      await settle();
+
+      const opened = chrome._state.createdTabs.map(({ url }) => {
+        const parsed = new URL(url);
+        expect(parsed.pathname).toBe('/viewer/viewer.html');
+        return Object.fromEntries(parsed.searchParams);
+      });
+      expect(opened).toEqual([
+        { host: 'www.example.com', name: 'mine', tab: '1' },
+        { host: 'app.example.com', name: 'theirs', tab: '1' },
+      ]);
+    });
+
     it('popup in a group saves under the current host with cookieDomain set', async () => {
       chrome._state.cookies = [cookie('parent', '.example.com', 'p'), cookie('sibling', 'app.example.com', 's')];
       await loadPopup('https://www.example.com/');

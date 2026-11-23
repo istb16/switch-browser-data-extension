@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Snapshot - Switch Browser Data</title>
+  <link rel="icon" href="../icons/icon.svg" type="image/svg+xml">
+  <link rel="icon" href="../icons/icon32.png" type="image/png" sizes="32x32">
+  <link rel="stylesheet" href="../lib/tk-base.css">
+  <link rel="stylesheet" href="viewer.css">
+</head>
+<body>
+  <header class="tk-header">
+    <span class="tk-header__home">
+      <img class="tk-header__icon" src="../icons/icon.svg" alt="">
+      <span class="tk-header__name">SWITCH BROWSER DATA</span>
+    </span>
+  </header>
+
+  <main class="container">
+    <p id="notFound" class="not-found hidden" data-i18n="viewer_not_found">スナップショットが見つかりません</p>
+
+    <div id="viewer" class="hidden">
+      <div class="snapshot-head">
+        <p class="eyebrow" data-i18n="viewer_title">スナップショットの中身</p>
+        <h1 class="snapshot-title">
+          <span id="snapshotChip" class="snapshot-chip hidden" role="img"></span>
+          <span id="snapshotName"></span>
+        </h1>
+        <p class="snapshot-meta">
+          <span id="snapshotHost" class="snapshot-host"></span>
+          <span id="snapshotDate"></span>
+          <span id="snapshotSize" class="snapshot-size"></span>
+        </p>
+        <p id="snapshotMemo" class="snapshot-memo hidden"></p>
+      </div>
+
+      <div class="controls">
+        <label class="control">
+          <span data-i18n="viewer_compare_label">比べる相手</span>
+          <select id="compareSelect" class="compare-select">
+            <option value="none" data-i18n="viewer_compare_none">なし</option>
+            <option value="current" data-i18n="viewer_compare_current">現在の状態</option>
+          </select>
+        </label>
+        <label class="control control--toggle">
+          <input type="checkbox" id="revealToggle">
+          <span data-i18n="viewer_reveal_all">値を表示</span>
+        </label>
+        <label id="diffOnlyControl" class="control control--toggle hidden">
+          <input type="checkbox" id="diffOnlyToggle" checked>
+          <span data-i18n="viewer_diff_only">違いだけ</span>
+        </label>
+      </div>
+
+      <div id="compareNote" class="note hidden" role="status"></div>
+
+      <div id="types" class="types"></div>
+    </div>
+  </main>
+
+  <footer class="tk-footer">
+    <p id="versionFooter"></p>
+    <p><a href="https://tk3.biz/" target="_blank" rel="noopener">tk3.biz</a></p>
+  </footer>
+  <script type="module" src="viewer.js"></script>
+</body>
+</html>
