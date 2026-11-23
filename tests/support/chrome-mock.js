@@ -35,6 +35,10 @@ export function createChromeMock() {
     reloadedTabs: [],
     navigatedTabs: [],
     badges: {},
+    badgeBackgrounds: {},
+    badgeTextColors: {},
+    badgeDefaultBackground: undefined,
+    badgeDefaultTextColor: undefined,
     grantedOrigins: new Set(),
     uiLanguage: 'ja',
     manifest: { version: '1.0.1' },
@@ -177,8 +181,15 @@ export function createChromeMock() {
 
     action: {
       async setBadgeText({ tabId, text }) { state.badges[tabId] = text; },
-      async setBadgeBackgroundColor() {},
-      async setBadgeTextColor() {},
+      // A call without a tabId sets the default every tab not given its own colour shows.
+      async setBadgeBackgroundColor({ tabId, color }) {
+        if (tabId != null) state.badgeBackgrounds[tabId] = color;
+        else state.badgeDefaultBackground = color;
+      },
+      async setBadgeTextColor({ tabId, color }) {
+        if (tabId != null) state.badgeTextColors[tabId] = color;
+        else state.badgeDefaultTextColor = color;
+      },
     },
 
     i18n: {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { fillColorChip, memoText, fillGroupChip } from '../../lib/snapshot-view.js';
+import { fillColorChip, memoText, fillGroupChip, searchQuery, matchesQuery } from '../../lib/snapshot-view.js';
 import { MESSAGES } from '../../lib/i18n.js';
 
 describe('lib/snapshot-view', () => {
@@ -25,6 +25,15 @@ describe('lib/snapshot-view', () => {
     expect(memoText({ memo: 'admin' })).toBe('admin');
     expect(memoText({})).toBe('');
     expect(memoText({ memo: 123 })).toBe('');
+  });
+
+  it('matchesQuery trims, ignores case and skips non-strings', () => {
+    const query = searchQuery('  WoRk ');
+    expect(query).toBe('work');
+    expect(matchesQuery(query, 'Admin', 'My Work account')).toBe(true);
+    expect(matchesQuery(query, 'Admin', 'home')).toBe(false);
+    expect(matchesQuery(query, undefined, null, 42, { memo: 'work' })).toBe(false);
+    expect(matchesQuery(searchQuery(''), 'anything')).toBe(true);
   });
 
   it('fillGroupChip sets the text and title', () => {

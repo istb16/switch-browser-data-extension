@@ -5,7 +5,7 @@ import { bindInlineRename } from '../lib/inline-rename.js';
 import { showConfirm } from '../lib/dialog.js';
 import { $, escHtml, notify } from '../lib/ui.js';
 import { measureDomains, formatBytes } from '../lib/snapshot-summary.js';
-import { fillColorChip, memoText, fillGroupChip } from '../lib/snapshot-view.js';
+import { fillColorChip, memoText, fillGroupChip, searchQuery, matchesQuery } from '../lib/snapshot-view.js';
 import { resolveScope } from '../lib/groups.js';
 import { renderMeter } from './meter.js';
 import { buildExportButton, handleExport } from './transfer-ui.js';
@@ -63,15 +63,20 @@ export function getState() {
   return loaded;
 }
 
-export async function renderDomainList(groups) {
+export async function renderDomainList(groups, { meter = true } = {}) {
   const sort = $('sortSelect').value;
   const { snapshots: allSnapshots, orders: allOrders } = await getState();
   const sizes = measureDomains(allSnapshots);
-  await renderMeter(sizes);
+  if (meter) await renderMeter(sizes);
+  // Read after the awaits: a full render parked in the meter must draw the
+  // query typed meanwhile, not the one from when it started.
+  const query = searchQuery($('snapshotSearch').value);
   const container = $('domainList');
   container.replaceChildren();
 
   const bySize = sort === 'size';
+  // Dragging a filtered or size-sorted view would save an order the user never saw.
+  const canDrag = !bySize && !query;
   const domains = Object.keys(allSnapshots).sort();
   if (bySize) domains.sort((a, b) => sizes[b].bytes - sizes[a].bytes);
 
@@ -85,12 +90,16 @@ export async function renderDomainList(groups) {
 
   for (const domain of domains) {
     const domainSnapshots = allSnapshots[domain];
-    const names     = orderedNames(domainSnapshots, allOrders[domain]);
+    let names       = orderedNames(domainSnapshots, allOrders[domain]);
     const rowSizes  = sizes[domain].snapshots;
     if (bySize) names.sort((a, b) => rowSizes[b] - rowSizes[a]);
+    if (query && !matchesQuery(query, domain)) {
+      names = names.filter(name => matchesQuery(query, name, memoText(domainSnapshots[name])));
+      if (names.length === 0) continue;
+    }
 
     const item = document.createElement('div');
-    item.className = 'domain-item';
+    item.className = query ? 'domain-item open' : 'domain-item';
 
     const header = document.createElement('div');
     header.className = 'domain-header';
@@ -119,16 +128,22 @@ export async function renderDomainList(groups) {
     snapshotList.className = 'domain-snapshots';
 
     for (const name of names) {
-      const row = buildSnapshotRow(name, domainSnapshots[name], rowSizes[name], domain, snapshotList, header, !bySize);
+      const row = buildSnapshotRow(name, domainSnapshots[name], rowSizes[name], domain, snapshotList, header, canDrag);
       snapshotList.appendChild(row);
     }
 
-    // Dragging in a size-sorted view would save an order the user never saw.
-    if (!bySize) setupDragDrop(snapshotList, domain);
+    if (canDrag) setupDragDrop(snapshotList, domain);
 
     item.appendChild(header);
     item.appendChild(snapshotList);
     container.appendChild(item);
+  }
+
+  if (!container.firstChild) {
+    const noMatch = document.createElement('div');
+    noMatch.className   = 'empty-state';
+    noMatch.textContent = t('no_match');
+    container.appendChild(noMatch);
   }
 }
 

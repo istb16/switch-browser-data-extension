@@ -507,6 +507,298 @@ describe('options/options.js', () => {
     });
   });
 
+  describe('searching', () => {
+    const SAVED = '2024-01-01T00:00:00.000Z';
+    const itemFor = domain => domainItems().find(item => item.querySelector('.domain-name').textContent === domain);
+    const countOf = item => item.querySelector('.domain-count').textContent;
+
+    async function search(value) {
+      const input = document.getElementById('snapshotSearch');
+      input.value = value;
+      input.dispatchEvent(new Event('input'));
+      await flush();
+    }
+
+    async function deleteRow(item, name) {
+      item.querySelector(`.snapshot-row[data-name="${name}"] .btn-icon`).click();
+      await flush();
+      document.querySelector('.tk3-btn-confirm').click();
+      await flush();
+    }
+
+    it('a failed read while searching shows an error and keeps the list', async () => {
+      await setSnapshots({ 'a.com': { Admin: { savedAt: SAVED } }, 'b.com': { user: { savedAt: SAVED } } });
+      await loadOptions();
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const get = chrome.storage.local.get.bind(chrome.storage.local);
+      vi.spyOn(chrome.storage.local, 'get').mockImplementation(keys =>
+        ([keys].flat().includes('groups') ? Promise.reject(new Error('I/O error')) : get(keys)));
+
+      await search('admin');
+
+      expect(document.getElementById('statusMsg').textContent).toBe('スナップショットを検索できませんでした');
+      expect(error).toHaveBeenCalled();
+      expect(domainNames()).toEqual(['a.com', 'b.com']);
+    });
+
+    it('search by snapshot name shows only matching rows, opened', async () => {
+      await setSnapshots({
+        'a.com': { Admin: { savedAt: SAVED }, guest: { savedAt: SAVED }, 'admin 2': { savedAt: SAVED } },
+        'b.com': { user: { savedAt: SAVED } },
+      });
+      await loadOptions();
+
+      await search('  ADMIN ');
+
+      expect(domainNames()).toEqual(['a.com']);
+      const item = domainItems()[0];
+      expect(item.classList.contains('open')).toBe(true);
+      expect(rowNames(item)).toEqual(['Admin', 'admin 2']);
+      expect(countOf(item)).toBe('2 件');
+    });
+
+    it('search by memo shows the matching row and hides its siblings', async () => {
+      await setSnapshots({
+        'a.com': { one: { savedAt: SAVED, memo: 'Work account' }, two: { savedAt: SAVED, memo: 'home' } },
+        'b.com': { three: { savedAt: SAVED } },
+      });
+      await loadOptions();
+
+      await search('work');
+
+      expect(domainNames()).toEqual(['a.com']);
+      expect(rowNames(domainItems()[0])).toEqual(['one']);
+      expect(countOf(domainItems()[0])).toBe('1 件');
+    });
+
+    it('a domain-name match shows all its rows and counts them all', async () => {
+      await setSnapshots({
+        'shop.example': { x: { savedAt: SAVED }, y: { savedAt: SAVED }, z: { savedAt: SAVED } },
+        'b.com': { w: { savedAt: SAVED } },
+      });
+      await setSnapshotOrders({ 'shop.example': ['z', 'x', 'y'] });
+      await loadOptions();
+
+      await search('shop');
+
+      expect(domainNames()).toEqual(['shop.example']);
+      expect(rowNames(domainItems()[0])).toEqual(['z', 'x', 'y']);
+      expect(countOf(domainItems()[0])).toBe('3 件');
+      expect(domainItems()[0].classList.contains('open')).toBe(true);
+    });
+
+    it('a domain-name match keeps the size order', async () => {
+      await setSnapshots({
+        'shop.example': {
+          small: { savedAt: SAVED },
+          big: { savedAt: SAVED, localStorage: { k: 'x'.repeat(800) } },
+          mid: { savedAt: SAVED, localStorage: { k: 'x'.repeat(300) } },
+        },
+      });
+      await setSnapshotOrders({ 'shop.example': ['small', 'mid', 'big'] });
+      await loadOptions();
+      await setSort('size');
+
+      await search('shop');
+
+      expect(rowNames(domainItems()[0])).toEqual(['big', 'mid', 'small']);
+    });
+
+    it('size sort still orders the filtered list', async () => {
+      await setSnapshots({
+        'a.com': { 'team-a': { savedAt: SAVED }, solo: { savedAt: SAVED, localStorage: { k: 'x'.repeat(2000) } } },
+        'b.com': { 'team-b': { savedAt: SAVED, localStorage: { k: 'x'.repeat(500) } } },
+        'c.com': {
+          'team-c1': { savedAt: SAVED },
+          'team-c2': { savedAt: SAVED, localStorage: { k: 'x'.repeat(100) } },
+        },
+      });
+      await loadOptions();
+      await setSort('size');
+
+      await search('team');
+
+      expect(domainNames()).toEqual(['a.com', 'b.com', 'c.com']);
+      expect(rowNames(itemFor('a.com'))).toEqual(['team-a']);
+      expect(rowNames(itemFor('c.com'))).toEqual(['team-c2', 'team-c1']);
+    });
+
+    it('no match shows the no-match message, clearing restores the list collapsed', async () => {
+      await setSnapshots({ 'a.com': { x: { savedAt: SAVED } }, 'b.com': { y: { savedAt: SAVED } } });
+      await loadOptions();
+
+      await search('nothing-here');
+      expect(domainItems()).toHaveLength(0);
+      expect(document.querySelector('#domainList .empty-state').textContent).toBe(MESSAGES.ja.no_match);
+
+      await search('');
+      expect(domainNames()).toEqual(['a.com', 'b.com']);
+      expect(domainItems().some(item => item.classList.contains('open'))).toBe(false);
+      expect(document.querySelector('#domainList .empty-state')).toBeNull();
+    });
+
+    it('a query of only spaces filters nothing: every domain, collapsed, with draggable rows', async () => {
+      await setSnapshots({ 'a.com': { x: { savedAt: SAVED }, y: { savedAt: SAVED } }, 'b.com': { z: { savedAt: SAVED } } });
+      await loadOptions();
+
+      await search('   ');
+
+      expect(domainNames()).toEqual(['a.com', 'b.com']);
+      expect(domainItems().some(item => item.classList.contains('open'))).toBe(false);
+      expect(rowNames(itemFor('a.com'))).toEqual(['x', 'y']);
+      const rows = [...document.querySelectorAll('.snapshot-row')];
+      expect(rows.every(r => r.draggable && r.querySelector('.drag-handle'))).toBe(true);
+    });
+
+    it('changing the sort while a query is set keeps the filter', async () => {
+      await setSnapshots({
+        'a.com': { 'team-a': { savedAt: SAVED }, solo: { savedAt: SAVED, localStorage: { k: 'x'.repeat(500) } } },
+        'b.com': { 'team-b': { savedAt: SAVED, localStorage: { k: 'x'.repeat(2000) } } },
+        'c.com': { other: { savedAt: SAVED } },
+      });
+      await loadOptions();
+      await search('team');
+      expect(domainNames()).toEqual(['a.com', 'b.com']);
+
+      await setSort('size');
+
+      expect(domainNames()).toEqual(['b.com', 'a.com']);
+      expect(rowNames(itemFor('a.com'))).toEqual(['team-a']);
+      expect(rowNames(itemFor('b.com'))).toEqual(['team-b']);
+      expect(domainItems().every(item => item.classList.contains('open'))).toBe(true);
+      expect([...document.querySelectorAll('.snapshot-row')].some(r => r.draggable)).toBe(false);
+
+      await setSort('name');
+      expect(domainNames()).toEqual(['a.com', 'b.com']);
+      expect(rowNames(itemFor('a.com'))).toEqual(['team-a']);
+    });
+
+    it('a grouped domain matches by its own host and keeps its group chip', async () => {
+      await chrome.storage.local.set({ groups: ['example.com'] });
+      await setSnapshots({
+        'app.example.com': { x: { savedAt: SAVED }, y: { savedAt: SAVED } },
+        'www.example.com': { z: { savedAt: SAVED } },
+      });
+      await loadOptions();
+
+      await search('APP.example');
+
+      expect(domainNames()).toEqual(['app.example.com']);
+      expect(rowNames(domainItems()[0])).toEqual(['x', 'y']);
+      expect(domainItems()[0].querySelector('.group-chip')?.textContent).toBe('グループ: example.com');
+    });
+
+    it('an empty store shows the normal empty state, not no_match', async () => {
+      await loadOptions();
+      expect(document.querySelector('#domainList .empty-state').textContent).toBe(MESSAGES.ja.empty_snapshots);
+
+      await search('anything');
+      expect(document.querySelector('#domainList .empty-state').textContent).toBe(MESSAGES.ja.empty_snapshots);
+    });
+
+    it('rows are not draggable while filtered and a drop saves no order', async () => {
+      await setSnapshots({ 'shop.example': { first: { savedAt: SAVED }, second: { savedAt: SAVED } } });
+      await setSnapshotOrders({ 'shop.example': ['first', 'second'] });
+      await loadOptions();
+
+      await search('shop');
+
+      const list = document.querySelector('.domain-snapshots');
+      const rows = [...list.querySelectorAll('.snapshot-row')];
+      expect(rows.every(r => !r.draggable && !r.querySelector('.drag-handle'))).toBe(true);
+      list.insertBefore(rows[1], rows[0]);
+      list.dispatchEvent(new Event('drop', { bubbles: true }));
+      await flush();
+      expect((await getSnapshotOrders())['shop.example']).toEqual(['first', 'second']);
+    });
+
+    it('typing reads no snapshot keys and does not measure the store', async () => {
+      await setSnapshots({ 'a.com': { x: { savedAt: SAVED } }, 'b.com': { y: { savedAt: SAVED } } });
+      await loadOptions();
+      const get = vi.spyOn(chrome.storage.local, 'get');
+      chrome.storage.local.getBytesInUse.mockClear();
+
+      await search('x');
+      await search('');
+
+      expect(snapshotReads(get)).toEqual([]);
+      expect(chrome.storage.local.getBytesInUse).not.toHaveBeenCalled();
+      expect(domainNames()).toEqual(['a.com', 'b.com']);
+    });
+
+    it('a full render parked in the meter draws the query typed meanwhile', async () => {
+      await setSnapshots({ 'a.com': { alpha: { savedAt: SAVED } }, 'b.com': { beta: { savedAt: SAVED } } });
+      await loadOptions();
+
+      const held = chrome._holdGet(keys => keys.includes('backupHosts'));
+      const select = document.getElementById('sortSelect');
+      select.value = 'size';
+      select.dispatchEvent(new Event('change'));
+      await flush();
+      await search('beta');
+      expect(domainNames()).toEqual(['b.com']);
+
+      held.release();
+      await flush();
+      await flush();
+
+      expect(domainNames()).toEqual(['b.com']);
+      expect(rowNames(domainItems()[0])).toEqual(['beta']);
+    });
+
+    it('deleting a filtered row keeps the count and size right', async () => {
+      const keep = { savedAt: SAVED, localStorage: { k: 'x'.repeat(300) } };
+      const other = { savedAt: SAVED, localStorage: { k: 'y'.repeat(100) } };
+      await setSnapshots({ 'a.com': { 'team-1': { savedAt: SAVED }, 'team-2': keep, other } });
+      await loadOptions();
+      await search('team');
+      const item = domainItems()[0];
+
+      await deleteRow(item, 'team-1');
+
+      expect(countOf(item)).toBe('1 件');
+      expect(item.querySelector('.domain-size').textContent).toBe(formatBytes(byteSize(keep) + byteSize(other)));
+      expect(item.querySelector('.snapshot-row[data-name="other"]')).toBeNull();
+      expect(Object.keys((await getSnapshots())['a.com']).sort()).toEqual(['other', 'team-2']);
+    });
+
+    it('deleting the last shown row leaves the header until the next render', async () => {
+      const other = { savedAt: SAVED, localStorage: { k: 'y'.repeat(100) } };
+      await setSnapshots({ 'a.com': { 'team-1': { savedAt: SAVED }, other }, 'b.com': { 'team-b': { savedAt: SAVED } } });
+      await loadOptions();
+      await search('team');
+
+      await deleteRow(itemFor('a.com'), 'team-1');
+
+      expect(countOf(itemFor('a.com'))).toBe('0 件');
+      expect(itemFor('a.com').querySelector('.domain-size').textContent).toBe(formatBytes(byteSize(other)));
+
+      await search('team');
+      expect(domainNames()).toEqual(['b.com']);
+    });
+
+    it('rename works on a filtered row', async () => {
+      await setSnapshots({ 'a.com': { 'team-1': { savedAt: SAVED }, other: { savedAt: SAVED } } });
+      await setSnapshotOrders({ 'a.com': ['team-1', 'other'] });
+      await loadOptions();
+      await search('team');
+
+      const row = document.querySelector('.snapshot-row[data-name="team-1"]');
+      row.querySelector('.snapshot-name').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      const input = row.querySelector('.snapshot-name-input');
+      input.value = 'renamed';
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+      await flush();
+
+      expect(Object.keys((await getSnapshots())['a.com']).sort()).toEqual(['other', 'renamed']);
+      expect((await getSnapshotOrders())['a.com']).toEqual(['renamed', 'other']);
+      const get = vi.spyOn(chrome.storage.local, 'get');
+      await search('');
+      expect(snapshotReads(get)).toEqual([]);
+      expect(rowNames(domainItems()[0])).toEqual(['renamed', 'other']);
+    });
+  });
+
   it('reordering via drag-and-drop persists the new snapshotOrder', async () => {
     await setSnapshots({ 'a.com': { first: {}, second: {} } });
     await setSnapshotOrders({ 'a.com': ['first', 'second'] });
