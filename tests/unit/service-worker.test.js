@@ -300,6 +300,14 @@ describe('background/service-worker', () => {
     await vi.waitFor(() => expect(chrome._state.badges[1]).toBe('Ad'));
   });
 
+  it('badges a tab whose active record is an object with types under a plain host key', async () => {
+    await setActiveSnapshots({ 'a.com': { host: 'a.com', name: 'Admin', types: ['cookies'] } });
+    await loadServiceWorker();
+
+    chrome.tabs.onUpdated.dispatch(1, { status: 'complete' }, tab);
+    await vi.waitFor(() => expect(chrome._state.badges[1]).toBe('Ad'));
+  });
+
   it('badges a tab with the active snapshot of its domain, unless the badge is turned off', async () => {
     await setActiveSnapshots({ 'a.com': 'Admin' });
     await loadServiceWorker();

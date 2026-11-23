@@ -270,6 +270,36 @@ describe('lib/snapshot — active snapshot and backup', () => {
     expect(await getActiveSnapshot('example.com')).toEqual({ host: 'app.example.com', name: 'z' });
   });
 
+  it('renameSnapshot keeps the applied types of the active record', async () => {
+    const { getActiveSnapshot } = await import('../../lib/snapshot.js');
+    const { setActiveSnapshots } = await import('../../lib/storage.js');
+    await saveSnapshot('a.com', 'x', {});
+    await saveSnapshot('app.example.com', 'x', {});
+    await setActiveSnapshots({
+      'a.com': { host: 'a.com', name: 'x', types: ['cookies'] },
+      'example.com': { host: 'app.example.com', name: 'x', types: ['localStorage'] },
+    });
+
+    await renameSnapshot('a.com', 'x', 'z');
+    await renameSnapshot('app.example.com', 'x', 'w');
+
+    expect(await getActiveSnapshot('a.com')).toEqual({ host: 'a.com', name: 'z', types: ['cookies'] });
+    expect(await getActiveSnapshot('example.com'))
+      .toEqual({ host: 'app.example.com', name: 'w', types: ['localStorage'] });
+  });
+
+  it('deleteSnapshot removes an active record that has types', async () => {
+    const { getActiveSnapshots, setActiveSnapshots } = await import('../../lib/storage.js');
+    await saveSnapshot('a.com', 'x', {});
+    await saveSnapshot('a.com', 'y', {});
+    await setActiveSnapshots({ 'a.com': { host: 'a.com', name: 'x', types: ['cookies'] } });
+
+    await deleteSnapshot('a.com', 'y');
+    expect(await getActiveSnapshots()).toEqual({ 'a.com': { host: 'a.com', name: 'x', types: ['cookies'] } });
+    await deleteSnapshot('a.com', 'x');
+    expect(await getActiveSnapshots()).toEqual({});
+  });
+
   it('keeps one backup per domain, apart from the snapshots', async () => {
     const { saveBackup, getBackup } = await import('../../lib/snapshot.js');
     expect(await getBackup('a.com')).toBeNull();

@@ -5,7 +5,7 @@ import { setupMenu } from '../lib/menu.js';
 import { formatRelative } from '../lib/time.js';
 import { fillColorChip, memoText } from '../lib/snapshot-view.js';
 import { $ } from '../lib/ui.js';
-import { state, entryId, sameEntry, snapshotOf, entryOfRow } from './context.js';
+import { state, entryId, sameEntry, snapshotOf, entryOfRow, loadableTypes, typeNamesOf } from './context.js';
 
 // Below this many snapshots the whole list fits at a glance, so the search box
 // would only add noise.
@@ -62,7 +62,9 @@ function buildRow(entry, index) {
   renderDetails(row, snapshot, state.summaries.get(entryId(entry)));
 
   const activeBadge = row.querySelector('.badge--active');
-  activeBadge.textContent = t('badge_active');
+  const partialTypes = isActive ? state.activeEntry.types : undefined;
+  activeBadge.textContent = t(partialTypes ? 'badge_active_partial' : 'badge_active');
+  if (partialTypes) activeBadge.title = t('active_partial_title', { types: typeNamesOf(partialTypes) });
   activeBadge.classList.toggle('hidden', !isActive);
   const modifiedBadge = row.querySelector('.badge--modified');
   const changesMenu = row.querySelector('.changes-menu');
@@ -84,13 +86,17 @@ function buildRow(entry, index) {
   menu.querySelector('[data-action="overwrite"]').textContent = t('menu_overwrite');
   menu.querySelector('[data-action="rename"]').textContent = t('menu_rename');
   menu.querySelector('[data-action="edit"]').textContent = t('menu_edit_details');
+  menu.querySelector('[data-action="load-partial"]').textContent = t('menu_load_partial');
   menu.querySelector('[data-action="delete"]').textContent = t('menu_delete');
   // Overwriting would store this page's data under the other host's key.
   if (isForeign) menu.querySelector('[data-action="overwrite"]').remove();
+  // Another host's row already loads only its cookies, and one type leaves nothing to choose.
+  if (isForeign || loadableTypes(entry).length < 2) menu.querySelector('[data-action="load-partial"]').remove();
 
   row.querySelector('.snapshot__main').addEventListener('click', () => rowActions.load(entry));
   setupMenu(trigger, menu, action => {
     if (action === 'overwrite') rowActions.overwrite(entry);
+    else if (action === 'load-partial') rowActions.loadPartial(entry);
     else if (action === 'rename') rowActions.rename(row, entry);
     else if (action === 'edit') rowActions.editDetails(entry);
     else if (action === 'delete') rowActions.delete(entry);

@@ -1710,4 +1710,891 @@ describe('popup/popup.js', () => {
       expect(row('first').querySelector('.snapshot__rename')).toBeNull();
     });
   });
+
+  describe('overwriting from the changed menu', () => {
+    beforeEach(async () => {
+      await setSnapshots({ 'example.com': { first: snap('2024-01-01T00:00:00.000Z', { localStorage: { old: '1' } }) } });
+      await setActiveSnapshots({ 'example.com': 'first' });
+    });
+
+    it('overwrites the active snapshot from the changed menu and clears the badge', async () => {
+      await loadPopup('https://example.com/');
+      expect(row('first').querySelector('.badge--modified').classList.contains('hidden')).toBe(false);
+
+      row('first').querySelector('.changes-menu [data-action="overwrite"]').click();
+      await settle();
+      document.querySelector('.tk3-btn-confirm').click();
+      await settle();
+
+      expect((await getSnapshots())['example.com'].first.localStorage).toEqual({ current: '1' });
+      expect(row('first').querySelector('.badge--modified').classList.contains('hidden')).toBe(true);
+      await loadPopup('https://example.com/');
+      expect(row('first').querySelector('.badge--modified').classList.contains('hidden')).toBe(true);
+    });
+
+    it('keeps the snapshot when the overwrite from the changed menu is cancelled', async () => {
+      await loadPopup('https://example.com/');
+
+      row('first').querySelector('.changes-menu [data-action="overwrite"]').click();
+      await settle();
+      document.querySelector('.tk3-btn-cancel').click();
+      await settle();
+
+      expect((await getSnapshots())['example.com'].first.localStorage).toEqual({ old: '1' });
+      expect(row('first').querySelector('.badge--modified').classList.contains('hidden')).toBe(false);
+    });
+  });
+
+  describe('loading only some types', () => {
+    const sid = (value, domain = 'example.com') => ({ name: 'sid', value, domain, path: '/', secure: true, httpOnly: true, sameSite: 'lax' });
+    const isHidden = el => el.classList.contains('hidden');
+    const SAVED_AT = '2024-01-01T00:00:00.000Z';
+    const full = (value, more = {}) => snap(SAVED_AT, {
+      cookies: [sid(value)], localStorage: { ls: value }, sessionStorage: { ss: value }, ...more,
+    });
+    const ALL_ON = { cookies: true, localStorage: true, sessionStorage: true, indexedDB: true };
+    const partial = (name, types, host = 'example.com') => ({ host, name, types });
+    const active = async (key = 'example.com') => (await getActiveSnapshots())[key];
+    const activeBadge = name => row(name).querySelector('.badge--active');
+    const modifiedBadge = name => row(name).querySelector('.badge--modified');
+    const storageWrites = () => chrome.tabs.sendMessage.mock.calls.filter(([, message]) => message.type === 'setStorageData');
+    const pending = () => ({ cookieChecks: { 1: { domain: 'example.com', cookies: [sid('a')], origins: ['*://example.com/*'], cookieDomain: 'example.com', until: Date.now() + 60_000 } } });
+
+    async function enable(types) {
+      await setSettings({ ...(await getSettings()), enabledTypes: { ...ALL_ON, ...types } });
+    }
+
+    async function openPicker(name) {
+      row(name).querySelector('.actions-menu [data-action="load-partial"]').click();
+      await settle();
+      return document.querySelector('dialog');
+    }
+
+    const boxes = dialog => [...dialog.querySelectorAll('.type-picker input[type="checkbox"]')];
+
+    async function confirmDialog() {
+      document.querySelector('dialog .tk3-btn-confirm').click();
+      await settle();
+    }
+
+    async function loadPartly(name, types) {
+      const dialog = await openPicker(name);
+      for (const box of boxes(dialog)) box.checked = types.includes(box.value);
+      await confirmDialog();
+    }
+
+    async function loadPopupWithTabs(active, others) {
+      document.body.innerHTML = bodyHtml;
+      chrome._state.tabs = [active, ...others];
+      chrome.tabs.query = vi.fn(async (info = {}) => (info.active ? [active] : [active, ...others]));
+      vi.resetModules();
+      await import('../../popup/popup.js');
+      await settle();
+    }
+
+    const tab = (id, url) => ({ id, url, status: 'complete' });
+
+    beforeEach(async () => {
+      pageData = { localStorage: { ls: 'page' }, sessionStorage: { ss: 'page' } };
+      chrome._state.cookies = [sid('page')];
+      await setSnapshots({ 'example.com': { first: full('a'), second: full('b') } });
+    });
+
+    describe('overwrite with a partial record', () => {
+      const STORED = () => full('a', { indexedDB: { app: { stored: true } }, indexedDBDigest: 'stored-digest' });
+
+      beforeEach(async () => {
+        pageData = { ...pageData, indexedDB: { app: { page: true } } };
+        await setSnapshots({ 'example.com': { first: STORED(), second: full('b') } });
+        await setActiveSnapshots({ 'example.com': partial('first', ['cookies']) });
+      });
+
+      const withoutTimes = ({ savedAt, bytes, ...rest }) => rest;
+
+      it('overwriting a partly active snapshot from the changed menu replaces only the recorded types', async () => {
+        await loadPopup('https://example.com/');
+        expect(isHidden(modifiedBadge('first'))).toBe(false);
+
+        row('first').querySelector('.changes-menu [data-action="overwrite"]').click();
+        await settle();
+        await confirmDialog();
+
+        const stored = (await getSnapshots())['example.com'].first;
+        expect(stored.cookies.map(c => c.value)).toEqual(['page']);
+        expect(stored.localStorage).toEqual({ ls: 'a' });
+        expect(stored.sessionStorage).toEqual({ ss: 'a' });
+        expect(stored.indexedDB).toEqual({ app: { stored: true } });
+        expect(stored.indexedDBDigest).toBe('stored-digest');
+        expect(await active()).toEqual(partial('first', ['cookies']));
+
+        await loadPopup('https://example.com/');
+        expect(isHidden(modifiedBadge('first'))).toBe(true);
+        expect(activeBadge('first').textContent).toBe('一部適用中');
+      });
+
+      it('the row-menu overwrite and the save form with the same name do the same', async () => {
+        await loadPopup('https://example.com/');
+        row('first').querySelector('.actions-menu [data-action="overwrite"]').click();
+        await settle();
+        await confirmDialog();
+        const fromMenu = withoutTimes((await getSnapshots())['example.com'].first);
+        const menuRecord = await active();
+
+        await setSnapshots({ 'example.com': { first: STORED(), second: full('b') } });
+        await setActiveSnapshots({ 'example.com': partial('first', ['cookies']) });
+        await loadPopup('https://example.com/');
+        $('saveBtn').click();
+        $('newSnapshotName').value = 'first';
+        $('confirmSaveBtn').click();
+        await settle();
+        await confirmDialog();
+
+        expect(withoutTimes((await getSnapshots())['example.com'].first)).toEqual(fromMenu);
+        expect(await active()).toEqual(menuRecord);
+        expect(menuRecord).toEqual(partial('first', ['cookies']));
+      });
+
+      it('the overwrite confirmation names the types that will be replaced', async () => {
+        await loadPopup('https://example.com/');
+        row('first').querySelector('.actions-menu [data-action="overwrite"]').click();
+        await settle();
+
+        const message = document.querySelector('.tk3-dialog-msg').textContent;
+        expect(message).toContain('Cookie');
+        for (const other of ['localStorage', 'sessionStorage', 'IndexedDB']) expect(message).not.toContain(other);
+        document.querySelector('.tk3-btn-cancel').click();
+        await settle();
+        expect((await getSnapshots())['example.com'].first.cookies.map(c => c.value)).toEqual(['a']);
+      });
+
+      it('a partial overwrite in a group stores the collected cookieDomain', async () => {
+        await setGroups(['example.com']);
+        chrome._state.grantedOrigins.add('*://*.example.com/*');
+        chrome._state.cookies = [sid('page', '.example.com')];
+        await setSnapshots({ 'www.example.com': { mine: full('a') } });
+        await setActiveSnapshots({ 'example.com': partial('mine', ['cookies'], 'www.example.com') });
+        await loadPopup('https://www.example.com/');
+
+        row('mine').querySelector('.actions-menu [data-action="overwrite"]').click();
+        await settle();
+        await confirmDialog();
+
+        const stored = (await getSnapshots())['www.example.com'].mine;
+        expect(stored.cookieDomain).toBe('example.com');
+        expect(stored.cookies.map(c => c.value)).toEqual(['page']);
+        expect(stored.localStorage).toEqual({ ls: 'a' });
+        expect(await active()).toEqual(partial('mine', ['cookies'], 'www.example.com'));
+      });
+
+      it('a partial overwrite without cookies keeps the stored cookies and cookieDomain', async () => {
+        await setSnapshots({ 'example.com': { first: { ...STORED(), cookieDomain: 'example.com' } } });
+        await setActiveSnapshots({ 'example.com': partial('first', ['localStorage']) });
+        await loadPopup('https://example.com/');
+
+        row('first').querySelector('.actions-menu [data-action="overwrite"]').click();
+        await settle();
+        await confirmDialog();
+
+        const stored = (await getSnapshots())['example.com'].first;
+        expect(stored.cookies.map(c => c.value)).toEqual(['a']);
+        expect(stored.cookieDomain).toBe('example.com');
+        expect(stored.localStorage).toEqual({ ls: 'page' });
+        expect(stored.sessionStorage).toEqual({ ss: 'a' });
+        expect(stored.indexedDBDigest).toBe('stored-digest');
+        expect(await active()).toEqual(partial('first', ['localStorage']));
+      });
+
+      it('refuses the overwrite when no recorded type is enabled', async () => {
+        await enable({ cookies: false });
+        await loadPopup('https://example.com/');
+
+        row('first').querySelector('.actions-menu [data-action="overwrite"]').click();
+        await settle();
+
+        expect(document.querySelector('dialog')).toBeNull();
+        expect($('statusMsg').className).toContain('error');
+        expect($('statusMsg').textContent).toBe('読み込んだ種類がどれも設定でオフになっているため、上書きできません');
+        expect(withoutTimes((await getSnapshots())['example.com'].first)).toEqual(withoutTimes(STORED()));
+      });
+
+      it('replaces only the enabled recorded types, names only those, and keeps the disabled one in the record', async () => {
+        await setActiveSnapshots({ 'example.com': partial('first', ['cookies', 'localStorage']) });
+        await enable({ cookies: false });
+        await loadPopup('https://example.com/');
+
+        row('first').querySelector('.actions-menu [data-action="overwrite"]').click();
+        await settle();
+        const message = document.querySelector('.tk3-dialog-msg').textContent;
+        expect(message).toContain('localStorage');
+        expect(message).not.toContain('Cookie');
+        await confirmDialog();
+
+        const stored = (await getSnapshots())['example.com'].first;
+        expect(stored.cookies.map(c => c.value)).toEqual(['a']);
+        expect(stored.localStorage).toEqual({ ls: 'page' });
+        expect(stored.sessionStorage).toEqual({ ss: 'a' });
+        expect(await active()).toEqual(partial('first', ['cookies', 'localStorage']));
+      });
+
+      it('saves nothing and keeps the changes when no recorded type can be read', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        await loadPopup('https://example.com/');
+        expect(isHidden(modifiedBadge('first'))).toBe(false);
+        vi.spyOn(chrome.permissions, 'contains').mockResolvedValue(false);
+        vi.spyOn(chrome.permissions, 'request').mockResolvedValue(false);
+
+        row('first').querySelector('.actions-menu [data-action="overwrite"]').click();
+        await settle();
+        await confirmDialog();
+
+        expect($('statusMsg').className).toContain('error');
+        expect($('statusMsg').textContent).toBe('保存に失敗しました');
+        expect(withoutTimes((await getSnapshots())['example.com'].first)).toEqual(withoutTimes(STORED()));
+        expect(await active()).toEqual(partial('first', ['cookies']));
+        expect(isHidden(modifiedBadge('first'))).toBe(false);
+      });
+
+      it('saves nothing when a storage-only record cannot reach the page', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        await setActiveSnapshots({ 'example.com': partial('first', ['localStorage']) });
+        await loadPopup('https://example.com/');
+        chrome.tabs.sendMessage = vi.fn(async () => {
+          throw new Error('Receiving end does not exist.');
+        });
+
+        row('first').querySelector('.actions-menu [data-action="overwrite"]').click();
+        await settle();
+        await confirmDialog();
+
+        expect($('statusMsg').className).toContain('error');
+        expect(withoutTimes((await getSnapshots())['example.com'].first)).toEqual(withoutTimes(STORED()));
+        expect(await active()).toEqual(partial('first', ['localStorage']));
+      });
+
+      it('keeps a recorded type the page does not have, and drops a cookieDomain the collected cookies lack', async () => {
+        await setSnapshots({ 'example.com': { first: { ...STORED(), cookieDomain: 'example.com' } } });
+        await setActiveSnapshots({ 'example.com': partial('first', ['cookies', 'sessionStorage', 'indexedDB']) });
+        pageData = { localStorage: { ls: 'page' } };
+        await loadPopup('https://example.com/');
+
+        row('first').querySelector('.actions-menu [data-action="overwrite"]').click();
+        await settle();
+        await confirmDialog();
+
+        const stored = (await getSnapshots())['example.com'].first;
+        expect(stored.cookies.map(c => c.value)).toEqual(['page']);
+        expect('cookieDomain' in stored).toBe(false);
+        expect(stored.sessionStorage).toEqual({ ss: 'a' });
+        expect(stored.indexedDB).toEqual({ app: { stored: true } });
+        expect(stored.indexedDBDigest).toBe('stored-digest');
+        expect(stored.localStorage).toEqual({ ls: 'a' });
+        expect(await active()).toEqual(partial('first', ['cookies', 'sessionStorage', 'indexedDB']));
+      });
+
+      it('replaces the indexedDB digest together with the indexedDB it collects', async () => {
+        await setActiveSnapshots({ 'example.com': partial('first', ['indexedDB']) });
+        await loadPopup('https://example.com/');
+
+        row('first').querySelector('.actions-menu [data-action="overwrite"]').click();
+        await settle();
+        await confirmDialog();
+
+        const stored = (await getSnapshots())['example.com'].first;
+        expect(stored.indexedDB).toEqual({ app: { page: true } });
+        expect(stored.indexedDBDigest).toBe(globalThis.storageDigest.digest({ app: { page: true } }));
+        expect(stored.cookies.map(c => c.value)).toEqual(['a']);
+      });
+
+      it('saves every type when the snapshot was deleted after the confirmation', async () => {
+        await loadPopup('https://example.com/');
+        row('first').querySelector('.actions-menu [data-action="overwrite"]').click();
+        await settle();
+        await setSnapshots({ 'example.com': { second: full('b') } });
+        await confirmDialog();
+
+        const stored = (await getSnapshots())['example.com'].first;
+        expect(stored.cookies.map(c => c.value)).toEqual(['page']);
+        expect(stored.localStorage).toEqual({ ls: 'page' });
+        expect(stored.sessionStorage).toEqual({ ss: 'page' });
+        expect(stored.indexedDB).toEqual({ app: { page: true } });
+        expect(await active()).toBe('first');
+        expect($('statusMsg').textContent).toBe('"first" を保存しました');
+      });
+
+      it('overwriting another row while a partial record is active saves every type', async () => {
+        await loadPopup('https://example.com/');
+
+        row('second').querySelector('.actions-menu [data-action="overwrite"]').click();
+        await settle();
+        expect(document.querySelector('.tk3-dialog-msg').textContent).toBe('"second" を現在の状態で上書きしますか？');
+        await confirmDialog();
+
+        const stored = (await getSnapshots())['example.com'].second;
+        expect(stored.cookies.map(c => c.value)).toEqual(['page']);
+        expect(stored.localStorage).toEqual({ ls: 'page' });
+        expect(stored.sessionStorage).toEqual({ ss: 'page' });
+        expect(stored.indexedDB).toEqual({ app: { page: true } });
+        expect(await active()).toBe('second');
+      });
+    });
+
+    describe('menu and picker', () => {
+      it('offers the partial load only when the snapshot has two or more loadable types', async () => {
+        await setSnapshots({ 'example.com': { first: full('a'), lsOnly: snap(SAVED_AT, { localStorage: { ls: 'x' } }) } });
+        await loadPopup('https://example.com/');
+        expect(row('first').querySelector('[data-action="load-partial"]').textContent).toBe('一部だけ読み込む…');
+        expect(row('lsOnly').querySelector('[data-action="load-partial"]')).toBeNull();
+
+        await enable({ cookies: false, sessionStorage: false });
+        await loadPopup('https://example.com/');
+        expect(row('first').querySelector('[data-action="load-partial"]')).toBeNull();
+
+        await setGroups(['example.com']);
+        chrome._state.grantedOrigins.add('*://*.example.com/*');
+        await enable({});
+        await setSnapshots({ 'example.com': { first: full('a') }, 'app.example.com': { theirs: full('t') } });
+        await loadPopup('https://example.com/');
+        expect(row('first').querySelector('[data-action="load-partial"]')).not.toBeNull();
+        expect(row('theirs').querySelector('[data-action="load-partial"]')).toBeNull();
+      });
+
+      it('loadPartial called on a foreign row or a one-type snapshot opens no dialog and writes nothing', async () => {
+        await setSnapshots({ 'example.com': { first: full('a'), lsOnly: snap(SAVED_AT, { localStorage: { ls: 'x' } }) } });
+        await setActiveSnapshots({ 'example.com': 'first' });
+        await loadPopup('https://example.com/');
+        const { handleLoadPartial } = await import('../../popup/actions.js');
+
+        await handleLoadPartial({ host: 'www.example.com', name: 'first' });
+        await handleLoadPartial({ host: 'example.com', name: 'lsOnly' });
+        await settle();
+
+        expect(document.querySelector('dialog')).toBeNull();
+        expect(await getBackups()).toEqual({});
+        expect(await active()).toBe('first');
+        expect(storageWrites()).toEqual([]);
+      });
+
+      it('lists only the enabled types the snapshot has in the picker, with Cookie checked', async () => {
+        await enable({ sessionStorage: false });
+        await loadPopup('https://example.com/');
+
+        const dialog = await openPicker('first');
+        expect(dialog.querySelector('.tk3-dialog-title').textContent).toBe('"first" から読み込むもの');
+        expect(boxes(dialog).map(box => box.value)).toEqual(['cookies', 'localStorage']);
+        expect(boxes(dialog).map(box => box.checked)).toEqual([true, false]);
+        expect([...dialog.querySelectorAll('.type-picker label')].map(label => label.textContent)).toEqual(['Cookie', 'localStorage']);
+        expect(dialog.querySelector('.tk3-btn-confirm').textContent).toBe('読み込む');
+      });
+
+      it('picker has no box checked when Cookie is disabled or absent from the snapshot', async () => {
+        await setSnapshots({ 'example.com': { noCookies: snap(SAVED_AT, { localStorage: { ls: 'x' }, sessionStorage: { ss: 'x' } }), first: full('a') } });
+        await loadPopup('https://example.com/');
+        let dialog = await openPicker('noCookies');
+        expect(boxes(dialog).map(box => box.value)).toEqual(['localStorage', 'sessionStorage']);
+        expect(boxes(dialog).some(box => box.checked)).toBe(false);
+        await confirmDialog();
+        expect(document.querySelector('dialog')).not.toBeNull();
+        expect(document.querySelector('.tk3-dialog-error').hidden).toBe(false);
+        document.querySelector('dialog .tk3-btn-cancel').click();
+        await settle();
+
+        await enable({ cookies: false });
+        await loadPopup('https://example.com/');
+        dialog = await openPicker('first');
+        expect(boxes(dialog).map(box => box.value)).toEqual(['localStorage', 'sessionStorage']);
+        expect(boxes(dialog).some(box => box.checked)).toBe(false);
+        await confirmDialog();
+        expect(document.querySelector('.tk3-dialog-error').hidden).toBe(false);
+        expect(storageWrites()).toEqual([]);
+      });
+
+      it('asks for at least one type', async () => {
+        await loadPopup('https://example.com/');
+        const dialog = await openPicker('first');
+        boxes(dialog)[0].checked = false;
+        await confirmDialog();
+
+        expect(document.querySelector('dialog')).toBe(dialog);
+        expect(dialog.querySelector('.tk3-dialog-error').textContent).toBe('読み込む種類を1つ以上選んでください');
+        expect(dialog.querySelector('.tk3-dialog-error').hidden).toBe(false);
+      });
+
+      it('warns in the picker that the load cannot be undone when the automatic backup is off', async () => {
+        await setSettings({ ...(await getSettings()), autoBackup: false });
+        await loadPopup('https://example.com/');
+
+        const dialog = await openPicker('first');
+        expect(dialog.querySelector('.type-picker__note').textContent).toBe('選んだ種類の今のデータは上書きされ、元に戻せません。');
+        for (const box of boxes(dialog)) box.checked = box.value === 'localStorage';
+        await confirmDialog();
+
+        expect(document.querySelector('dialog')).toBeNull();
+        expect(pageData.localStorage).toEqual({ ls: 'a' });
+        expect($('statusMsg').textContent).toBe('"first" の localStorage を適用しました');
+      });
+
+      it('shows no warning in the picker when the automatic backup is on', async () => {
+        await loadPopup('https://example.com/');
+        const dialog = await openPicker('first');
+        expect(dialog.querySelector('.type-picker__note')).toBeNull();
+      });
+
+      it('says the previous state could not be kept when the backup fails', async () => {
+        await loadPopup('https://example.com/');
+        const set = chrome.storage.local.set;
+        chrome.storage.local.set = async items => {
+          if ('backups/example.com' in items) throw new Error('QUOTA_BYTES quota exceeded');
+          return set(items);
+        };
+
+        await loadPartly('first', ['cookies']);
+
+        expect($('statusMsg').className).toContain('success');
+        expect($('statusMsg').textContent).toBe('"first" の Cookie を適用しました（保存容量が足りず、切り替え前の状態は残せませんでした）');
+      });
+
+      it('cancelling the picker changes nothing', async () => {
+        await setActiveSnapshots({ 'example.com': 'second' });
+        await loadPopup('https://example.com/');
+        await openPicker('first');
+        document.querySelector('dialog .tk3-btn-cancel').click();
+        await settle();
+
+        expect(document.querySelector('dialog')).toBeNull();
+        expect(await getBackups()).toEqual({});
+        expect(chrome._state.cookies).toEqual([sid('page')]);
+        expect(storageWrites()).toEqual([]);
+        expect(await active()).toBe('second');
+        expect(document.activeElement).toBe(row('first').querySelector('.snapshot__main'));
+      });
+
+      it('checking every type in the picker writes a record without types', async () => {
+        await loadPopup('https://example.com/');
+        await loadPartly('first', ['cookies', 'localStorage', 'sessionStorage']);
+        expect(await active()).toBe('first');
+        expect(activeBadge('first').textContent).toBe('適用中');
+        expect($('statusMsg').textContent).toBe('"first" を適用しました');
+
+        await setGroups(['example.com']);
+        chrome._state.grantedOrigins.add('*://*.example.com/*');
+        await setSnapshots({ 'www.example.com': { mine: full('m') } });
+        await loadPopup('https://www.example.com/');
+        await loadPartly('mine', ['cookies', 'localStorage', 'sessionStorage']);
+        expect(await active()).toEqual({ host: 'www.example.com', name: 'mine' });
+      });
+    });
+
+    describe('what a partial load writes', () => {
+      it('a localStorage-only load writes only localStorage', async () => {
+        await loadPopup('https://example.com/');
+        await loadPartly('first', ['localStorage']);
+
+        expect(storageWrites().map(([, message]) => message.data)).toEqual([{ localStorage: { ls: 'a' } }]);
+        expect(pageData.sessionStorage).toEqual({ ss: 'page' });
+        expect(chrome._state.cookies).toEqual([sid('page')]);
+        expect($('statusMsg').textContent).toBe('"first" の localStorage を適用しました');
+      });
+
+      it('a localStorage-only load starts no cookie check', async () => {
+        await loadPopup('https://example.com/');
+        await loadPartly('first', ['localStorage']);
+
+        expect((await chrome.storage.local.get('cookieChecks')).cookieChecks ?? {}).toEqual({});
+      });
+
+      it('a localStorage-only load reloads a same-origin tab and none that shares only the cookie domain', async () => {
+        await setSettings({ ...(await getSettings()), reloadOtherTabs: true });
+        await loadPopupWithTabs(tab(1, 'https://example.com/'), [tab(2, 'https://example.com/other'), tab(3, 'http://example.com:8080/')]);
+        await loadPartly('first', ['localStorage']);
+
+        expect(chrome._state.reloadedTabs).toEqual([1, 2]);
+      });
+
+      it('a sessionStorage-only load reloads no other tab', async () => {
+        await setSettings({ ...(await getSettings()), reloadOtherTabs: true });
+        await loadPopupWithTabs(tab(1, 'https://example.com/'), [tab(2, 'https://example.com/other'), tab(3, 'http://example.com:8080/')]);
+        await loadPartly('first', ['sessionStorage']);
+
+        expect(pageData.sessionStorage).toEqual({ ss: 'a' });
+        expect(chrome._state.reloadedTabs).toEqual([1]);
+      });
+
+      it('a cookies-only load sends no setStorageData', async () => {
+        await loadPopup('https://example.com/');
+        await loadPartly('first', ['cookies']);
+
+        expect(chrome._state.cookies.map(c => c.value)).toEqual(['a']);
+        expect(storageWrites()).toEqual([]);
+        expect(pageData.localStorage).toEqual({ ls: 'page' });
+        expect($('statusMsg').textContent).toBe('"first" の Cookie を適用しました');
+      });
+
+      it('a cookies-only load starts a cookie check for the snapshot\'s cookies and reloads tabs sharing the cookie domain', async () => {
+        await setSettings({ ...(await getSettings()), reloadOtherTabs: true });
+        await loadPopupWithTabs(tab(1, 'https://example.com/'), [tab(3, 'http://example.com:8080/'), tab(4, 'https://other.com/')]);
+        await loadPartly('first', ['cookies']);
+
+        const check = (await chrome.storage.local.get('cookieChecks')).cookieChecks[1];
+        expect(check.cookies).toEqual([sid('a')]);
+        expect(check.reloadTabs.map(entry => entry.id)).toEqual([3]);
+        expect(chrome._state.reloadedTabs).toEqual([1]);
+      });
+
+      it('a cookies-only load reloads no tab that shares only the origin\'s storage', async () => {
+        await setGroups(['example.com']);
+        chrome._state.grantedOrigins.add('*://*.example.com/*');
+        await setSnapshots({ 'app.example.com': { narrow: snap(SAVED_AT, {
+          cookieDomain: 'auth.example.com', cookies: [sid('n', 'auth.example.com')], localStorage: { ls: 'n' },
+        }) } });
+        await setSettings({ ...(await getSettings()), reloadOtherTabs: true });
+        await loadPopupWithTabs(tab(1, 'https://app.example.com/'), [tab(2, 'https://app.example.com/x'), tab(3, 'https://auth.example.com/')]);
+        await loadPartly('narrow', ['cookies']);
+
+        const check = (await chrome.storage.local.get('cookieChecks')).cookieChecks[1];
+        expect(check.reloadTabs.map(entry => entry.id)).toEqual([3]);
+        expect(chrome._state.reloadedTabs).toEqual([1]);
+      });
+
+      it('a cookies-only load on an unreachable page succeeds and sends no ping', async () => {
+        chrome.tabs.sendMessage = vi.fn(async () => {
+          throw new Error('Receiving end does not exist.');
+        });
+        await loadPopup('https://example.com/');
+        await loadPartly('first', ['cookies']);
+
+        expect($('statusMsg').className).toContain('success');
+        expect(await active()).toEqual(partial('first', ['cookies']));
+        expect(chrome.tabs.sendMessage).not.toHaveBeenCalledWith(1, { type: 'ping' });
+      });
+
+      it('a partial load backs up every enabled type', async () => {
+        await loadPopup('https://example.com/');
+        await loadPartly('first', ['localStorage']);
+
+        const backup = (await getBackups())['example.com'];
+        expect(backup.cookies.map(c => c.value)).toEqual(['page']);
+        expect(backup.localStorage).toEqual({ ls: 'page' });
+        expect(backup.sessionStorage).toEqual({ ss: 'page' });
+      });
+
+      it('a storage-only partial load on an unreachable page fails', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        const earlier = { savedAt: SAVED_AT, activeName: null, localStorage: { earlier: '1' } };
+        await setBackups({ 'example.com': earlier });
+        await setActiveSnapshots({ 'example.com': 'second' });
+        chrome.tabs.sendMessage = vi.fn(async () => {
+          throw new Error('Receiving end does not exist.');
+        });
+        await loadPopup('https://example.com/');
+        await loadPartly('first', ['localStorage']);
+
+        expect($('statusMsg').className).toContain('error');
+        expect((await getBackups())['example.com']).toEqual(earlier);
+        expect(await active()).toBe('second');
+      });
+
+      it('every loadable type chosen without Cookie loads like a full load on an unreachable page', async () => {
+        await enable({ cookies: false });
+        chrome.tabs.sendMessage = vi.fn(async () => {
+          throw new Error('Receiving end does not exist.');
+        });
+        await loadPopup('https://example.com/');
+        await loadPartly('first', ['localStorage', 'sessionStorage']);
+
+        expect(chrome.tabs.sendMessage).not.toHaveBeenCalledWith(1, { type: 'ping' });
+        expect($('statusMsg').className).toContain('success');
+        expect($('statusMsg').textContent).toBe('"first" を適用しました');
+        expect(await active()).toBe('first');
+      });
+
+      it('fails and keeps the record when the page answers but does not confirm the write', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        await setActiveSnapshots({ 'example.com': 'second' });
+        for (const reply of [{}, undefined, { success: false }]) {
+          chrome.tabs.sendMessage = vi.fn(async (_tabId, message) => {
+            if (message.type === 'ping') return { ok: true };
+            if (message.type === 'getStorageData') return structuredClone(pageData);
+            return reply;
+          });
+          await loadPopup('https://example.com/');
+          await loadPartly('first', ['localStorage']);
+
+          expect(storageWrites()).toHaveLength(1);
+          expect($('statusMsg').className).toContain('error');
+          expect($('statusMsg').textContent).toBe('読み込みに失敗しました');
+          expect(await active()).toBe('second');
+        }
+      });
+
+      it('cookies and storage chosen on an unreachable page records only cookies', async () => {
+        chrome.tabs.sendMessage = vi.fn(async () => {
+          throw new Error('Receiving end does not exist.');
+        });
+        await loadPopup('https://example.com/');
+        await loadPartly('first', ['cookies', 'localStorage']);
+
+        expect(await active()).toEqual(partial('first', ['cookies']));
+        expect($('statusMsg').textContent).toBe('"first" の Cookie を適用しました');
+      });
+
+      it('a cookies-only load without the host permission fails', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        await setActiveSnapshots({ 'example.com': 'second' });
+        await loadPopup('https://example.com/');
+        vi.spyOn(chrome.permissions, 'contains').mockResolvedValue(false);
+        vi.spyOn(chrome.permissions, 'request').mockResolvedValue(false);
+        await loadPartly('first', ['cookies']);
+
+        expect($('statusMsg').className).toContain('error');
+        expect(chrome._state.cookies).toEqual([sid('page')]);
+        expect(await active()).toBe('second');
+      });
+
+      it('ignores a chosen type the snapshot does not hold', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {});
+        await setSnapshots({ 'example.com': { first: snap(SAVED_AT, { cookies: [sid('a')], localStorage: { ls: 'a' } }) } });
+        await loadPopup('https://example.com/');
+        const { loadEntry } = await import('../../popup/actions.js');
+
+        await loadEntry({ host: 'example.com', name: 'first' }, ['localStorage', 'sessionStorage']);
+        expect(storageWrites().map(([, message]) => message.data)).toEqual([{ localStorage: { ls: 'a' } }]);
+        expect(await active()).toEqual(partial('first', ['localStorage']));
+
+        await loadEntry({ host: 'example.com', name: 'first' }, ['sessionStorage', 'bogus']);
+        expect($('statusMsg').className).toContain('error');
+        expect(storageWrites()).toHaveLength(1);
+        expect(await active()).toEqual(partial('first', ['localStorage']));
+      });
+    });
+
+    describe('the active record', () => {
+      it('records the applied types and shows the partial badge', async () => {
+        await loadPopup('https://example.com/');
+        await loadPartly('first', ['localStorage']);
+
+        expect(await active()).toEqual(partial('first', ['localStorage']));
+        expect(activeBadge('first').textContent).toBe('一部適用中');
+        expect(activeBadge('first').title).toContain('localStorage');
+        expect(isHidden(activeBadge('second'))).toBe(true);
+      });
+
+      it('partial load on a fully active row with a changed localStorage records only the loaded types', async () => {
+        await setActiveSnapshots({ 'example.com': 'first' });
+        await loadPopup('https://example.com/');
+        expect(isHidden(modifiedBadge('first'))).toBe(false);
+
+        await loadPartly('first', ['cookies']);
+        expect(await active()).toEqual(partial('first', ['cookies']));
+
+        await chrome.storage.local.set({ cookieChecks: {} });
+        await loadPopup('https://example.com/');
+        expect(isHidden(modifiedBadge('first'))).toBe(true);
+
+        await setActiveSnapshots({ 'example.com': 'first' });
+        await loadPopup('https://example.com/');
+        expect(isHidden(modifiedBadge('first'))).toBe(false);
+      });
+
+      it('partial load of a different snapshot replaces the record, no union', async () => {
+        await setActiveSnapshots({ 'example.com': partial('first', ['cookies']) });
+        await loadPopup('https://example.com/');
+        await loadPartly('second', ['localStorage']);
+
+        expect(await active()).toEqual(partial('second', ['localStorage']));
+      });
+
+      it('adds to the applied types when more of a partly active snapshot is loaded', async () => {
+        await loadPopup('https://example.com/');
+        await loadPartly('first', ['cookies']);
+        expect(await active()).toEqual(partial('first', ['cookies']));
+
+        await loadPartly('first', ['localStorage']);
+        expect(await active()).toEqual(partial('first', ['cookies', 'localStorage']));
+
+        await loadPartly('first', ['sessionStorage']);
+        expect(await active()).toBe('first');
+      });
+
+      it('keeps the changes of a recorded type that a further partial load leaves alone', async () => {
+        await setActiveSnapshots({ 'example.com': partial('first', ['localStorage', 'sessionStorage']) });
+        pageData.localStorage = { ls: 'x' };
+        pageData.sessionStorage = { ss: 'x' };
+        await loadPopup('https://example.com/');
+        expect(modifiedBadge('first').title).toContain('localStorage');
+        expect(modifiedBadge('first').title).toContain('sessionStorage');
+
+        await loadPartly('first', ['sessionStorage']);
+
+        expect(await active()).toEqual(partial('first', ['localStorage', 'sessionStorage']));
+        expect(isHidden(modifiedBadge('first'))).toBe(false);
+        expect(modifiedBadge('first').title).toContain('localStorage');
+        expect(modifiedBadge('first').title).not.toContain('sessionStorage');
+      });
+
+      it('drops the changes of another snapshot after a partial load', async () => {
+        await setActiveSnapshots({ 'example.com': partial('second', ['localStorage']) });
+        await loadPopup('https://example.com/');
+        expect(isHidden(modifiedBadge('second'))).toBe(false);
+
+        await loadPartly('first', ['sessionStorage']);
+
+        expect(await active()).toEqual(partial('first', ['sessionStorage']));
+        expect(isHidden(modifiedBadge('first'))).toBe(true);
+        expect(isHidden(modifiedBadge('second'))).toBe(true);
+      });
+
+      it('union keeps a type that has since been disabled', async () => {
+        await setActiveSnapshots({ 'example.com': partial('first', ['cookies']) });
+        await enable({ cookies: false });
+        await loadPopup('https://example.com/');
+        await loadPartly('first', ['localStorage']);
+        expect(await active()).toEqual(partial('first', ['cookies', 'localStorage']));
+
+        await loadPopup('https://example.com/');
+        expect(isHidden(modifiedBadge('first'))).toBe(true);
+
+        pageData.localStorage = { ls: 'x' };
+        await loadPopup('https://example.com/');
+        expect(isHidden(modifiedBadge('first'))).toBe(false);
+        expect(modifiedBadge('first').title).not.toContain('Cookie');
+      });
+
+      it('a full load after a partial load compares every type again', async () => {
+        await setActiveSnapshots({ 'example.com': partial('first', ['cookies']) });
+        await loadPopup('https://example.com/');
+        row('first').querySelector('.snapshot__main').click();
+        await settle();
+        expect(await active()).toBe('first');
+        expect(activeBadge('first').textContent).toBe('適用中');
+
+        pageData.localStorage = { ls: 'x' };
+        await loadPopup('https://example.com/');
+        expect(isHidden(modifiedBadge('first'))).toBe(false);
+      });
+
+      it('partial record in a group marks only its own row "一部適用中"', async () => {
+        await setGroups(['example.com']);
+        chrome._state.grantedOrigins.add('*://*.example.com/*');
+        await setSnapshots({ 'www.example.com': { mine: full('m') }, 'app.example.com': { theirs: full('t') } });
+        await loadPopup('https://www.example.com/');
+        await loadPartly('mine', ['localStorage']);
+
+        expect(await active()).toEqual(partial('mine', ['localStorage'], 'www.example.com'));
+        expect(await active('www.example.com')).toBeUndefined();
+        expect(activeBadge('mine').textContent).toBe('一部適用中');
+        expect(isHidden(activeBadge('theirs'))).toBe(true);
+      });
+    });
+
+    describe('the change check', () => {
+      it('does not flag differences in types that were not loaded', async () => {
+        chrome._state.cookies = [sid('a')];
+        await setActiveSnapshots({ 'example.com': partial('first', ['cookies']) });
+        await loadPopup('https://example.com/');
+
+        expect(isHidden(modifiedBadge('first'))).toBe(true);
+      });
+
+      it('flags a change in a type that was loaded', async () => {
+        await setActiveSnapshots({ 'example.com': partial('first', ['cookies']) });
+        await loadPopup('https://example.com/');
+
+        expect(isHidden(modifiedBadge('first'))).toBe(false);
+        expect(modifiedBadge('first').title).toContain('Cookie: sid');
+      });
+
+      it('no changes while the cookie check is pending after a cookies-only load', async () => {
+        await chrome.storage.local.set(pending());
+        await setActiveSnapshots({ 'example.com': partial('first', ['cookies']) });
+        await loadPopup('https://example.com/');
+
+        expect(isHidden(modifiedBadge('first'))).toBe(true);
+      });
+
+      it('localStorage-only record still compares localStorage while learning', async () => {
+        await chrome.storage.local.set(pending());
+        await setActiveSnapshots({ 'example.com': partial('first', ['localStorage']) });
+        await loadPopup('https://example.com/');
+
+        expect(isHidden(modifiedBadge('first'))).toBe(false);
+        expect(modifiedBadge('first').title).toContain('localStorage');
+      });
+
+      it('compares nothing when the only recorded type is disabled', async () => {
+        await enable({ cookies: false });
+        await setActiveSnapshots({ 'example.com': partial('first', ['cookies']) });
+        await loadPopup('https://example.com/');
+
+        expect(isHidden(modifiedBadge('first'))).toBe(true);
+        expect(activeBadge('first').textContent).toBe('一部適用中');
+      });
+
+      it('reads a types value that is not an array as a full record', async () => {
+        chrome._state.cookies = [sid('a')];
+        await setActiveSnapshots({ 'example.com': { host: 'example.com', name: 'first', types: 'cookies' } });
+        await loadPopup('https://example.com/');
+
+        expect(activeBadge('first').textContent).toBe('適用中');
+        expect(isHidden(modifiedBadge('first'))).toBe(false);
+      });
+
+      it('reads an empty or all-unknown types array as a full record', async () => {
+        chrome._state.cookies = [sid('a')];
+        for (const types of [[], ['bogus']]) {
+          await setActiveSnapshots({ 'example.com': partial('first', types) });
+          await loadPopup('https://example.com/');
+
+          expect(activeBadge('first').textContent).toBe('適用中');
+          expect(isHidden(modifiedBadge('first'))).toBe(false);
+        }
+      });
+
+      it('drops unknown names from the recorded types', async () => {
+        chrome._state.cookies = [sid('a')];
+        await setActiveSnapshots({ 'example.com': partial('first', ['cookies', 'bogus']) });
+        await loadPopup('https://example.com/');
+        expect(isHidden(modifiedBadge('first'))).toBe(true);
+        expect(activeBadge('first').textContent).toBe('一部適用中');
+        expect(activeBadge('first').title).not.toContain('bogus');
+
+        chrome._state.cookies = [sid('changed')];
+        await loadPopup('https://example.com/');
+        expect(isHidden(modifiedBadge('first'))).toBe(false);
+      });
+    });
+
+    describe('undo', () => {
+      it('undo after a partial load restores the previous partial record', async () => {
+        chrome._state.cookies = [sid('a')];
+        await setActiveSnapshots({ 'example.com': partial('first', ['cookies']) });
+        await loadPopup('https://example.com/');
+        await loadPartly('second', ['localStorage']);
+        expect((await getBackups())['example.com'].activeName).toEqual(partial('first', ['cookies']));
+
+        $('undoBtn').click();
+        await settle();
+
+        expect(await active()).toEqual(partial('first', ['cookies']));
+        expect(activeBadge('first').textContent).toBe('一部適用中');
+        expect(isHidden(modifiedBadge('first'))).toBe(true);
+      });
+
+      it('undo of a partial load over a full or no active record restores a string or null', async () => {
+        await setActiveSnapshots({ 'example.com': 'first' });
+        await loadPopup('https://example.com/');
+        await loadPartly('second', ['localStorage']);
+        $('undoBtn').click();
+        await settle();
+        expect(await active()).toBe('first');
+
+        await setActiveSnapshots({});
+        await loadPopup('https://example.com/');
+        await loadPartly('second', ['localStorage']);
+        expect(await active()).toEqual(partial('second', ['localStorage']));
+        $('undoBtn').click();
+        await settle();
+        expect(await active()).toBeUndefined();
+      });
+    });
+  });
 });

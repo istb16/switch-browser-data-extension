@@ -630,6 +630,31 @@ kbd {
   outline-offset: 4px;
 }
 
+.type-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+/* Outranks the column layout the dialog gives its labels. */
+.tk3-dialog-fields .type-picker label {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.type-picker__note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--tk-muted);
+}
+
 .save-form__actions {
   display: flex;
   justify-content: flex-end;

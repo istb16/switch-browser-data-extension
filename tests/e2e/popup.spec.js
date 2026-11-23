@@ -174,6 +174,46 @@ test.describe('reloading the other tabs of the site', () => {
   });
 });
 
+test('loads only localStorage from the row menu and leaves sessionStorage alone', async ({ context, extensionId }) => {
+  await disableCookieCollection(context, extensionId);
+
+  const targetPage = await context.newPage();
+  await targetPage.goto(TEST_PAGE_URL);
+  await expect.poll(() => targetPage.evaluate(() => localStorage.getItem('greeting')).catch(() => null)).toBe('hello');
+
+  const savePopup = await openPopupFor(context, extensionId, targetPage);
+  await saveAs(savePopup, 'partial');
+  await savePopup.close();
+
+  await targetPage.evaluate(() => {
+    localStorage.setItem('greeting', 'changed');
+    sessionStorage.setItem('counter', '99');
+  });
+
+  const popup = await openPopupFor(context, extensionId, targetPage);
+  await row(popup, 'partial').locator('.snapshot__more').click();
+  await row(popup, 'partial').locator('.actions-menu [data-action="load-partial"]').click();
+  const dialog = popup.locator('dialog');
+  await expect(dialog.locator('.type-picker')).toBeVisible();
+  await dialog.locator('.type-picker input[value="localStorage"]').check();
+  await dialog.locator('.tk3-btn-confirm').click();
+  await expect(popup.locator('#statusMsg')).toHaveClass(/success/);
+
+  await expect.poll(() => targetPage.evaluate(() => localStorage.getItem('greeting')).catch(() => null)).toBe('hello');
+  await expect.poll(() => targetPage.evaluate(() => sessionStorage.getItem('counter')).catch(() => null)).toBe('99');
+  await expect(row(popup, 'partial').locator('.badge--active')).toHaveText(/一部適用中|Partly active/);
+
+  // A change to the loaded type makes the check finish visibly, so the missing
+  // sessionStorage in its result is not just a check that has not run yet.
+  await targetPage.evaluate(() => localStorage.setItem('greeting', 'changed again'));
+  const reopened = await openPopupFor(context, extensionId, targetPage);
+  await expect(row(reopened, 'partial').locator('.badge--active')).toHaveText(/一部適用中|Partly active/);
+  const modified = row(reopened, 'partial').locator('.badge--modified');
+  await expect(modified).toBeVisible();
+  await expect(modified).toHaveAttribute('title', /localStorage/);
+  await expect(modified).not.toHaveAttribute('title', /sessionStorage/);
+});
+
 // Puts one record in a real IndexedDB store of the test page, replacing the store's contents.
 async function putRecord(page, record) {
   await page.evaluate(rec => new Promise((resolve, reject) => {
