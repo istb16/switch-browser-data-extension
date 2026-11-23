@@ -38,7 +38,9 @@ function mockContentScript() {
 
 async function loadPopup(tabUrl) {
   document.body.innerHTML = bodyHtml;
-  chrome.tabs.query = vi.fn().mockResolvedValue(tabUrl == null ? [] : [{ id: 1, url: tabUrl }]);
+  // chrome.tabs.get reads the active tab from here when it is loaded again.
+  chrome._state.tabs = tabUrl == null ? [] : [{ id: 1, url: tabUrl }];
+  chrome.tabs.query = vi.fn().mockResolvedValue(structuredClone(chrome._state.tabs));
   vi.resetModules();
   await import('../../popup/popup.js');
   await settle();
@@ -421,6 +423,28 @@ describe('popup/popup.js', () => {
       expect(row('first').classList.contains('is-active')).toBe(true);
       expect($('undoBar').classList.contains('hidden')).toBe(false);
       expect($('statusMsg').className).toContain('success');
+    });
+
+    it('loads the tab again by navigating to its current URL, so a form POST is not sent again', async () => {
+      await loadPopup('https://example.com/');
+      chrome._state.tabs[0].url = 'https://example.com/post/submit';
+      const reload = vi.spyOn(chrome.tabs, 'reload');
+
+      row('first').querySelector('.snapshot__main').click();
+      await settle();
+
+      expect(chrome._state.navigatedTabs).toEqual([{ tabId: 1, url: 'https://example.com/post/submit' }]);
+      expect(reload).not.toHaveBeenCalled();
+    });
+
+    it('reloads the tab when its URL has a fragment, since navigating there would only scroll', async () => {
+      await loadPopup('https://example.com/#top');
+
+      row('first').querySelector('.snapshot__main').click();
+      await settle();
+
+      expect(chrome._state.navigatedTabs).toEqual([]);
+      expect(chrome._state.reloadedTabs).toEqual([1]);
     });
 
     it('still loads, and says so, when there is no room left to keep the backup', async () => {
