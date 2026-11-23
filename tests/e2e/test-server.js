@@ -50,8 +50,40 @@ function serveGroupPages(req, res, url) {
   res.end(`<!doctype html><title>tk3 e2e group page</title><h1>group user: ${user || '(none)'}</h1>`);
 }
 
+// /post/: a form whose POST result page counts its hits at /post/count, to see
+// whether reloading a tab that shows it sends the form again.
+let postHits = 0;
+function servePostPages(req, res, url) {
+  if (url.pathname === '/post/submit' && req.method === 'POST') {
+    postHits++;
+    req.resume();
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(`<!doctype html><title>tk3 e2e post result</title><h1>posted ${postHits}</h1>
+<script>localStorage.setItem('greeting', localStorage.getItem('greeting') || 'hello');</script>`);
+    return;
+  }
+  if (url.pathname === '/post/count') {
+    res.writeHead(200, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' });
+    res.end(String(postHits));
+    return;
+  }
+  if (url.pathname === '/post/reset') {
+    postHits = 0;
+    res.writeHead(200, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' });
+    res.end('0');
+    return;
+  }
+  res.writeHead(200, { 'Content-Type': 'text/html' });
+  res.end(`<!doctype html><title>tk3 e2e post form</title>
+<form method="post" action="/post/submit"><input name="v" value="1"><button>send</button></form>`);
+}
+
 createServer((req, res) => {
   const url = new URL(req.url, `http://localhost:${TEST_PAGE_PORT}`);
+  if (url.pathname.startsWith('/post/')) {
+    servePostPages(req, res, url);
+    return;
+  }
   if (url.pathname.startsWith('/cookies/')) {
     serveCookiePages(req, res, url);
     return;

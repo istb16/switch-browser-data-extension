@@ -279,6 +279,23 @@ h2 {
   cursor: pointer;
 }
 
+.toggle-item:has(input:disabled) {
+  color: var(--tk-muted);
+  cursor: default;
+}
+
+.toggle-item:has(input:disabled):hover {
+  background: var(--tk-surface);
+}
+
+.toggle-item input[type='checkbox']:disabled {
+  cursor: default;
+}
+
+.toggle-hint {
+  margin: 8px 0 0;
+}
+
 .domain-list {
   display: flex;
   flex-direction: column;

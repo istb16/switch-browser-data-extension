@@ -30,6 +30,128 @@ describe('background/service-worker', () => {
     expect(await getVolatileCookiesFor('a.com')).toEqual({ 'a.com|/|sid': 'value' });
   });
 
+  describe('reloading the other tabs of a check', () => {
+    const csrf = value => ({ name: 'csrf', value, domain: 'a.com', path: '/' });
+    const withReload = reloadTabs => ({ ...A_SCOPE, reloadTabs });
+
+    beforeEach(() => {
+      chrome._state.tabs = [tab, { id: 2, url: 'https://a.com/other' }, { id: 3, url: 'https://a.com/third' }];
+    });
+
+    it('a load in another tab takes nothing, and the check\'s own tab still learns and reloads them', async () => {
+      chrome._state.grantedOrigins.add('*://a.com/*');
+      await loadServiceWorker();
+      await startCookieCheck(1, 'a.com', [sid('applied')], withReload([2]));
+      chrome._state.cookies = [sid('rotated')];
+
+      chrome.tabs.onUpdated.dispatch(2, { status: 'complete' }, { id: 2, url: 'https://a.com/other' });
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(Object.keys((await chrome.storage.local.get('cookieChecks')).cookieChecks)).toEqual(['1']);
+      expect(await getVolatileCookiesFor('a.com')).toEqual({});
+      expect(chrome._state.reloadedTabs).toEqual([]);
+
+      chrome.tabs.onUpdated.dispatch(1, { status: 'complete' }, tab);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(await getVolatileCookiesFor('a.com')).toEqual({ 'a.com|/|sid': 'value' });
+      expect(chrome._state.reloadedTabs).toEqual([2]);
+    });
+
+    it('reloads the listed tabs only after the learned cookies are written', async () => {
+      chrome._state.grantedOrigins.add('*://a.com/*');
+      await loadServiceWorker();
+      await startCookieCheck(1, 'a.com', [sid('applied')], withReload([2, 3]));
+      chrome._state.cookies = [sid('rotated')];
+      const events = [];
+      const set = chrome.storage.local.set;
+      vi.spyOn(chrome.storage.local, 'set').mockImplementation(async items => {
+        if ('volatileCookies' in items) events.push('volatileCookies');
+        return set(items);
+      });
+      const update = chrome.tabs.update;
+      vi.spyOn(chrome.tabs, 'update').mockImplementation(async (id, details) => {
+        events.push(`reload ${id}`);
+        return update(id, details);
+      });
+
+      chrome.tabs.onUpdated.dispatch(1, { status: 'complete' }, tab);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(events).toEqual(['volatileCookies', 'reload 2', 'reload 3']);
+    });
+
+    it('a cookie a reloaded tab writes back is not learned', async () => {
+      chrome._state.grantedOrigins.add('*://a.com/*');
+      await loadServiceWorker();
+      await startCookieCheck(1, 'a.com', [sid('applied'), csrf('a')], withReload([2]));
+      chrome._state.cookies = [sid('applied'), csrf('b')];
+      vi.spyOn(chrome.tabs, 'update').mockImplementation(async () => {
+        chrome._state.cookies = [sid('previous account'), csrf('c')];
+      });
+
+      chrome.tabs.onUpdated.dispatch(1, { status: 'complete' }, tab);
+      await vi.advanceTimersByTimeAsync(3000);
+      chrome.tabs.onUpdated.dispatch(2, { status: 'complete' }, { id: 2, url: 'https://a.com/other' });
+      await vi.advanceTimersByTimeAsync(3000);
+
+      expect(chrome.tabs.update).toHaveBeenCalledWith(2, { url: 'https://a.com/other' });
+      expect(await getVolatileCookiesFor('a.com')).toEqual({ 'a.com|/|csrf': 'value' });
+    });
+
+    it('an expired check still reloads its tabs and learns nothing', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'Date'], now: 0 });
+      chrome._state.grantedOrigins.add('*://a.com/*');
+      await loadServiceWorker();
+      await startCookieCheck(1, 'a.com', [sid('applied')], withReload([2]));
+      chrome._state.cookies = [sid('rotated')];
+      vi.setSystemTime(61_000);
+
+      chrome.tabs.onUpdated.dispatch(1, { status: 'complete' }, tab);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(await getVolatileCookiesFor('a.com')).toEqual({});
+      expect(chrome._state.reloadedTabs).toEqual([2]);
+    });
+
+    it('a check without the permission still reloads its tabs and learns nothing', async () => {
+      await loadServiceWorker();
+      await startCookieCheck(1, 'a.com', [sid('applied')], withReload([2]));
+      chrome._state.cookies = [sid('rotated')];
+
+      chrome.tabs.onUpdated.dispatch(1, { status: 'complete' }, tab);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(await getVolatileCookiesFor('a.com')).toEqual({});
+      expect(chrome._state.reloadedTabs).toEqual([2]);
+    });
+
+    it('still reloads its tabs when learning fails, and reports the failure', async () => {
+      chrome._state.grantedOrigins.add('*://a.com/*');
+      await loadServiceWorker();
+      await startCookieCheck(1, 'a.com', [sid('applied')], withReload([2]));
+      const failure = new Error('cookies unavailable');
+      vi.spyOn(chrome.cookies, 'getAll').mockRejectedValue(failure);
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      chrome.tabs.onUpdated.dispatch(1, { status: 'complete' }, tab);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(chrome._state.reloadedTabs).toEqual([2]);
+      expect(error).toHaveBeenCalledWith(failure);
+      expect(await getVolatileCookiesFor('a.com')).toEqual({});
+    });
+
+    it('a tab that fails to reload does not stop the others', async () => {
+      chrome._state.grantedOrigins.add('*://a.com/*');
+      await loadServiceWorker();
+      await startCookieCheck(1, 'a.com', [sid('applied')], withReload([2, 3]));
+      const update = chrome.tabs.update;
+      vi.spyOn(chrome.tabs, 'update').mockImplementation(async (id, details) => {
+        if (id === 2) throw new Error('No tab with id: 2');
+        return update(id, details);
+      });
+
+      chrome.tabs.onUpdated.dispatch(1, { status: 'complete' }, tab);
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(chrome._state.reloadedTabs).toEqual([3]);
+    });
+  });
+
   describe('in a subdomain group', () => {
     const ORIGINS = ['*://example.com/*', '*://*.example.com/*'];
     const cookie = (name, domain, value) => ({ name, value, domain, path: '/' });

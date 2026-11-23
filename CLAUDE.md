@@ -28,13 +28,21 @@ Chrome / Edge 向けブラウザ拡張機能。ドメインごとに Cookie・lo
 - **読み込み**: 一覧の行をクリック（または数字キー・`Enter`）→ 現在のデータをそのスナップショットに丸ごと置き換え
   - 自動バックアップが有効なら、読み込む直前の状態をドメインごとに1件だけ残し、確認なしで読み込む（「戻す」で復元。戻すと置き換えた状態が新しいバックアップになるので、もう一度押すと元に戻る）。無効なら読み込み前に確認する
   - 自動リロードが有効なら、読み込み後にタブを再読み込みする
+  - **ほかのタブの再読み込み**（`settings.reloadOtherTabs`、既定はオフ。自動リロードがオンのときだけ効く）: 読み込み・「戻す」・サイトのデータの消去のあと、書き換えたデータを見ているほかのタブも再読み込みする（`otherSiteTabs`、`lib/site-tabs.js`）。対象は同じプロファイル・同じシークレットモードの `http(s)` のタブで、次のどちらかに当たるもの
+    - Cookie を実際に書いたとき、そのタブのホストが書いた範囲に入る（`isWithin(ホスト, 範囲の domain)`。`exact` の範囲でも `.host` の Cookie はサブドメインに届くのでサブドメインを含む。スキームとポートは問わない）。書いたかは `applyData` の `cookiesApplied`、消去では `clearData` の `beforeCookies` に渡る範囲で決める
+    - ページの保存領域を実際に書いたとき、今のタブと同じオリジン（`applyData` の `storageApplied`。消去ではページの保存領域の種類が1つでも有効なとき）
+    - 破棄されたタブ（`discarded`・`status: 'unloaded'`）は選ばない（開いたときに新しいデータで読み込むため）
+  - 読み込み・「戻す」で Cookie の確認待ちを始めたときは、ほかのタブの ID を確認待ちに `reloadTabs` として残し、ポップアップは今のタブだけを再読み込みする。Service Worker が今のタブの確認待ちを受け取って学習してから `reloadTabs` を再読み込みする（同時に読み込むと、ほかのタブが sessionStorage に残る前のアカウントの Cookie を書き戻し、それを「サイトが自分で書き換えた」と覚えてしまうため）。確認待ちが期限切れ・権限なしで学習できなくても `reloadTabs` は再読み込みする。確認待ちのない場合（消去、Cookie を書かなかった読み込み・「戻す」）はポップアップが今のタブ、ほかのタブの順に再読み込みする
+  - ステータスには、再読み込みしたほかのタブの数を「（ほかの 2 タブも再読み込み）」と添える（Service Worker に任せたときは任せた数）。0 なら何も添えない
+  - 再読み込みしても切り替わらないもの: ほかのタブの sessionStorage（タブごとで再読み込みでも残るので、そこにログイン情報を置くサイトではほかのタブは前のアカウントのまま。設定画面のトグルの下に注意書きを出す）、グループのほかのホストのページの保存領域、Service Worker や Cache API の中身、選ばなかった破棄済みのタブ（次に読み込むまで）。今のタブが閉じられた・読み込みが終わらない・範囲の重なる読み込みで確認待ちが置き換わった・全データ削除で `cookieChecks` が空になった、のときは後からの再読み込みは起きない
+  - ほかのタブは、そのタブの URL に `chrome.tabs.update` で移って読み直す（`reloadTabs`）。`chrome.tabs.reload` は、フォームの POST の結果を出しているタブでは確認なしにフォームを送り直し、切り替えたあとのアカウントで送ってしまうため。URL に `#` があるタブだけは、同じ URL に移ってもページ内の移動になって読み直されないので `chrome.tabs.reload` を使う（`#` 付きの URL が POST の結果であることはまれ）。POST を送り直さないことは E2E で、ポップアップが再読み込みする場合（`tests/e2e/popup.spec.js`）と Service Worker が確認待ちのあとで再読み込みする場合（`tests/e2e/cookies.spec.js`）の両方を確かめる。今のタブの自動リロードは今も `chrome.tabs.reload` で、POST の結果のページでは送り直す
 - **適用中の表示**: 最後に読み込み・保存したスナップショットをドメインごとに記録し、一覧に「適用中」、拡張機能アイコンのバッジに名前の先頭2文字を表示する。ポップアップを開いたときに今のデータと比べ、違えば「変更あり」を表示し、何が変わったかをツールチップに出す
   - Cookie は値まで比べる。ただしサイトが自分で書き換える Cookie は除く。読み込み後の最初のページ読み込み（60秒以内）で、Service Worker が適用した Cookie と比べて値が変わったものを「値は比べない」、増減したものを「比べない」としてドメインごとに覚える（`volatileCookies`）
   - スナップショットに保存した Cookie がすでに有効期限切れなら、その Cookie は比べない（発行し直されるか消えているのが当然のため）
   - 「変更あり」のバッジはメニューを開くボタンで、変わった Cookie ごとに「変化を無視」を選べる。値の変化なら「値は比べない」、増減なら「比べない」として `volatileCookies` に記録する
   - IndexedDB はページ側（コンテンツスクリプト）で中身のハッシュ（`lib/storage-digest.js`）だけを計算して受け渡す。スナップショット側のハッシュは保存時に `indexedDBDigest` として一緒に残す
 - **名前の変更・削除**: 各行のメニューから行う（削除は確認あり）
-- **サイトのデータの消去**: ポップアップの「このサイトのデータを消去」で、設定のデータ種別トグルで有効な種類（Cookie / localStorage / sessionStorage / IndexedDB）を確認後に消す。自動バックアップが有効なら消す前の状態を残し（「戻す」で復元）、適用中の記録を外し、自動リロードの設定に従って再読み込みする。IndexedDB はデータベースごと削除する（ページが接続を開いたままなら削除は予約され、再読み込みで完了する。自動リロードがオフならその旨を表示する）
+- **サイトのデータの消去**: ポップアップの「このサイトのデータを消去」で、設定のデータ種別トグルで有効な種類（Cookie / localStorage / sessionStorage / IndexedDB）を確認後に消す。自動バックアップが有効なら消す前の状態を残し（「戻す」で復元）、適用中の記録を外し、自動リロードの設定に従って再読み込みする。IndexedDB はデータベースごと削除する（ページが接続を開いたままなら削除は予約され、再読み込みで完了する。自動リロードがオフならその旨を表示する）。ほかのタブの再読み込みがオンなら、同じサイトのほかのタブも再読み込みする（「読み込み」の「ほかのタブの再読み込み」を参照。ほかの同じオリジンのタブが開いたままの IndexedDB の削除もそこで終わる）
   - 消す前にコンテンツスクリプトに届くか確かめ（`ping`）、届かなければ何も消さず、バックアップも上書きしない。消す順番はページの保存領域が先で Cookie が後（途中で失敗しても Cookie だけ消えた状態にしない）
   - 読み込み直後の Cookie の確認待ち（`cookieChecks`）は消去時に、同じ Cookie の範囲を見ているすべてのタブの分を取り消す（空になった Cookie を「サイトが自分で消した」と覚えないため）。読み込みで新しく確認待ちを始めるときも、範囲の重なるほかのタブの確認待ちは捨てる。重なりは各確認待ちの `cookieDomain` と `cookieExact` で決める（`exact` の範囲はそのホストの Cookie だけなので、兄弟のホストやサブドメインとは重ならない）。取り消すのは Cookie を消す直前（`clearData` の `beforeCookies`）なので、Cookie を消さない設定や、その前に失敗したときは確認待ちを残す
   - グループに入るサイトでは、グループの Cookie（`.example.com` と各サブドメインのもの）をまとめて消し、ページの保存領域は今のページの分だけ消す。グループに入らないサイトでは親ドメイン（例: `app.example.com` に対する `.example.com`）の Cookie は消えない（そのサイトのホスト権限ではその Cookie を読めないため。まとめて扱いたいときは設定画面でグループにする）
@@ -87,7 +95,7 @@ graph TD
   popup --> settings_btn["設定ボタン"]
   settings_btn --> options["設定画面 options.html｜左に項目、右にその内容"]
 
-  options --> general["全般｜言語 / 動作トグル（自動バックアップ / 自動リロード / アイコンのバッジ）"]
+  options --> general["全般｜言語 / 動作トグル（自動バックアップ / 自動リロード / ほかのタブも再読み込み / アイコンのバッジ）"]
   options --> toggles["データ種別｜Cookie / localStorage / sessionStorage / IndexedDB"]
   options --> snapshots_pane["スナップショット"]
   snapshots_pane --> meter["使用量のメーター"]
@@ -127,7 +135,7 @@ graph TD
   options --> options_transfer["transfer-ui.js｜エクスポート・パスフレーズ・インポート"]
 
   root --> background["background/"]
-  background --> sw["service-worker.js｜アイコンのバッジ更新"]
+  background --> sw["service-worker.js｜アイコンのバッジ更新・読み込み後の Cookie の学習とほかのタブの再読み込み"]
 
   root --> content["content/"]
   content --> cs["content-script.js｜localStorage / sessionStorage / IndexedDB 操作"]
@@ -147,6 +155,7 @@ graph TD
   lib --> volatile_js["volatile-cookies.js｜サイトが自分で書き換える Cookie の記録"]
   lib --> summary_js["snapshot-summary.js｜件数の集計、大きさ（bytes の記録と sizeOf）、メモと色の整形"]
   lib --> groups_js["groups.js｜サブドメインのグループと Cookie の範囲"]
+  lib --> site_tabs_js["site-tabs.js｜書き換えたデータを見ているほかのタブの選択と再読み込み"]
   lib --> transfer_js["transfer.js｜エクスポート・インポートの組み立てと検証"]
   lib --> crypto_js["crypto.js｜エクスポートファイルの暗号化（Web Crypto）"]
   lib --> etc_js["badge.js / time.js / dialog.js / i18n.js / ui.js"]
@@ -231,17 +240,20 @@ graph TD
   "volatileCookies": { "example.com": { "example.com|/|名前": "value" } },
   // 読み込み直後の Cookie の確認待ち（タブ ID ごと、60秒で期限切れ）。origins は確認に要る権限、
   // cookieDomain は今の Cookie を読む範囲（cookieExact: true ならそのホストの Cookie だけ）。origins と cookieDomain は
-  // 必須（startCookieCheck は両方を受け取る）。どちらかがない記録（グループ機能より前の形）は読むときに捨て、学習しない
-  "cookieChecks": { "123": { "domain": "example.com", "cookies": [], "origins": ["*://example.com/*", "*://*.example.com/*"], "cookieDomain": "example.com", "cookieExact": false, "until": 0 } },
+  // 必須（startCookieCheck は両方を受け取る）。どちらかがない記録（グループ機能より前の形）は読むときに捨て、学習しない。
+  // reloadTabs は学習のあとで Service Worker が再読み込みするほかのタブの ID（ないときは空。確認待ちが使えなくても再読み込みする）
+  "cookieChecks": { "123": { "domain": "example.com", "cookies": [], "origins": ["*://example.com/*", "*://*.example.com/*"], "cookieDomain": "example.com", "cookieExact": false, "reloadTabs": [124], "until": 0 } },
   // 読み込み直前の状態。ホストごとのキー（"backups/" + ホスト）に1件。スナップショット一覧・エクスポートには含めない
   "backups/example.com": { "savedAt": "...", "activeName": "スナップショット名 | null", "cookies": [], ... },
   // バックアップのキーのあるホストの一覧（snapshotHosts と同じ扱い）
   "backupHosts": ["example.com"],
-  // 保存されていないキーは既定値（encryptExports だけ false、ほかは true）で補う。トグルを変えたらその場で保存する
+  // 保存されていないキーは既定値（`encryptExports` と `reloadOtherTabs` は false、ほかは true）で補う。トグルを変えたらその場で保存する
+  // reloadOtherTabs のトグルは autoReload がオフの間は無効にするが、値はそのまま残す
   "settings": {
     "enabledTypes": { "cookies": true, "localStorage": true, "sessionStorage": true, "indexedDB": true },
     "autoBackup": true,
     "autoReload": true,
+    "reloadOtherTabs": false,
     "showBadge": true,
     "encryptExports": false
   }
@@ -299,7 +311,7 @@ graph TD
   - `var` グローバルとして書かれた非モジュールスクリプト（`lib/web-storage-handlers.js` `lib/indexeddb-handler.js` `lib/storage-digest.js` `content/content-script.js`）は `import` できないため、`tests/support/load-script.js` でソースを読み込み `Function` コンストラクタでスコープを分離しつつ実行し、生成されたハンドラを取り出してテストする
 - **E2Eテスト**: [Playwright](https://playwright.dev/)。`launchPersistentContext` に `--load-extension` を渡して本拡張機能を実際の Chromium に読み込み、ポップアップ・設定画面の操作を検証する。テストページのポートは `tests/e2e/test-page.js` に集約されており、`TK3_E2E_PORT` で上書きできる
   - 保存データを用意するときは `seedSnapshots(page, data, orders)`（`tests/e2e/fixtures.js`）で、拡張機能のページからホストごとのキーと索引を書く（キーの先頭は `lib/storage.js` の `SNAPSHOT_PREFIX` を使う）。ユニットテストで全体を用意・確認するときは `tests/support/storage-seed.js` の `setSnapshots` `setBackups` `getBackups`（今の形で書き、`schemaVersion` も記録する。拡張機能本体は全体を一度に書かないので、本体には置かない）。読むときは `readStorage(page, 関数名, ...引数)`。古い形の `snapshots` `backups` を `chrome.storage.local.set` で直に書くのは、移し替えを確かめるテストだけ
-  - Cookie の読み取りに要るホスト権限は実行時に Chrome のダイアログで求めるが、Playwright はこれを操作できない。Cookie を扱うテスト（`tests/e2e/cookies.spec.js`）は `test.use({ grantHostPermissions: true })` で、manifest にホスト権限を足した拡張機能のコピーを一時フォルダに作って読み込む。テストページの `/cookies/` は毎回値の変わる `csrf` と、`/cookies/login?user=名前` でだけ変わる `sid` を返す
+  - Cookie の読み取りに要るホスト権限は実行時に Chrome のダイアログで求めるが、Playwright はこれを操作できない。Cookie を扱うテスト（`tests/e2e/cookies.spec.js`）は `test.use({ grantHostPermissions: true })` で、manifest にホスト権限を足した拡張機能のコピーを一時フォルダに作って読み込む。テストページの `/cookies/` は毎回値の変わる `csrf` と、`/cookies/login?user=名前` でだけ変わる `sid` を返す。`/post/` はフォームで、送った回数を `/post/count` で返す（`/post/reset` で 0 に戻す）
   - グループのテスト（`tests/e2e/groups.spec.js`）は `--host-resolver-rules` で `example.test` と `*.example.test` をテストサーバーに向ける（`localhost` ではドメイン Cookie が当てにならないため）。`/group/login?user=名前` は `Domain=example.test` の `gsid` を返す
 - **実装中に手元で流すテストは、変更に関係するものだけにする**（例: `npx vitest run tests/unit/popup.test.js`、`npx playwright test tests/e2e/popup.spec.js`）。全テストは CI（GitHub Actions）で流すので、手元で `npm test` や `npm run test:e2e` を丸ごと流さなくてよい
 - テスト用の依存関係（Vitest, Playwright, jsdom, fake-indexeddb など）は devDependencies としてのみ追加可。拡張機能本体のランタイムコードに外部ライブラリを追加することは引き続き禁止

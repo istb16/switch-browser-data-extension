@@ -18,6 +18,7 @@ describe('lib/storage', () => {
       autoReload: true,
       showBadge:  false,
       encryptExports: true,
+      reloadOtherTabs: true,
     };
     await setSettings(settings);
     expect(await getSettings()).toEqual(settings);
@@ -47,6 +48,7 @@ describe('lib/storage', () => {
       enabledTypes: { cookies: true, localStorage: true, sessionStorage: true, indexedDB: true },
       autoBackup: true,
       autoReload: true,
+      reloadOtherTabs: false,
       showBadge:  true,
       encryptExports: false,
     });

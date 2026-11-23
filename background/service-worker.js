@@ -4,6 +4,7 @@ import { resolveScope, activeRef } from '../lib/groups.js';
 import { getCookiesForDomain, cookiesWithin } from '../lib/cookie-handler.js';
 import { hasHostPermission } from '../lib/data-bridge.js';
 import { takeCookieCheck, learnVolatileCookies } from '../lib/volatile-cookies.js';
+import { reloadTabs } from '../lib/site-tabs.js';
 
 // Scripts on the page may still set cookies just after the load completes.
 const SETTLE_MS = 3000;
@@ -72,8 +73,7 @@ chrome.runtime.onStartup.addListener(setupBadges);
 
 // The first page load after a snapshot is applied shows which cookies the site
 // rewrites by itself; those are then left out of the popup's change check.
-async function checkCookiesAfterLoad(tabId) {
-  const check = await takeCookieCheck(tabId);
+async function learnFromCheck(check) {
   // Without the host permission getAll() returns nothing, which would look like
   // every cookie had disappeared.
   if (!check?.origins || !check.cookieDomain || !await hasHostPermission({ origins: check.origins })) return;
@@ -84,9 +84,20 @@ async function checkCookiesAfterLoad(tabId) {
   await learnVolatileCookies(check.domain, check.cookies, compared);
 }
 
+// The site's other tabs are reloaded only after learning: on load they may write
+// the previous account's cookies back, which must not be learned as the site's own.
+async function checkCookiesAfterLoad(tabId) {
+  const { check, reloadTabs: others } = await takeCookieCheck(tabId);
+  try {
+    await learnFromCheck(check);
+  } finally {
+    await reloadTabs(others);
+  }
+}
+
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.url || changeInfo.status === 'complete') updateTabs([tab]).catch(console.error);
-  if (changeInfo.status === 'complete') setTimeout(() => checkCookiesAfterLoad(tabId), SETTLE_MS);
+  if (changeInfo.status === 'complete') setTimeout(() => checkCookiesAfterLoad(tabId).catch(console.error), SETTLE_MS);
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {

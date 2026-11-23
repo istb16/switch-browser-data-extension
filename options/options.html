@@ -52,10 +52,15 @@
                 <input type="checkbox" id="toggleAutoReload">
               </label>
               <label class="toggle-item">
+                <span data-i18n="toggle_reload_other_tabs">同じサイトのほかのタブも再読み込みする</span>
+                <input type="checkbox" id="toggleReloadOtherTabs" aria-describedby="reloadOtherTabsHint">
+              </label>
+              <label class="toggle-item">
                 <span data-i18n="toggle_show_badge">アイコンに適用中のスナップショットを表示する</span>
                 <input type="checkbox" id="toggleShowBadge">
               </label>
             </div>
+            <p id="reloadOtherTabsHint" class="hint toggle-hint" data-i18n="hint_reload_other_tabs">ほかのタブで入力中の内容は失われます。タブごとの sessionStorage は切り替わらないので、そこにログイン情報を置くサイトでは、ほかのタブは元のアカウントのままです</p>
           </section>
         </div>
 
