@@ -1,5 +1,5 @@
 import { readKeys, getSnapshotsFor, SNAPSHOT_PREFIX } from '../lib/storage.js';
-import { badgeText, badgeColors, labelColorsOf } from '../lib/badge.js';
+import { badgeText, badgeColors, drawBadge, labelColorsOf } from '../lib/badge.js';
 import { resolveScope, activeRef } from '../lib/groups.js';
 import { getCookiesForDomain, cookiesWithin } from '../lib/cookie-handler.js';
 import { hasHostPermission } from '../lib/data-bridge.js';
@@ -101,36 +101,42 @@ function applyColorChanges(changes) {
 let drawCount = 0;
 const latestDraws = new Map();
 
+async function badgeOf(tab, { settings, activeSnapshots: active, groups }) {
+  const host = hostnameOf(tab.url);
+  const key = host && resolveScope(host, groups).key;
+  const ref = settings.showBadge && host ? activeRef(active[key], key) : null;
+  return { tabId: tab.id, text: badgeText(ref?.name), colors: ref ? await colorFor(ref) : badgeColors() };
+}
+
+function takeNewest(draws) {
+  const newest = new Set();
+  for (const [tabId, draw] of draws) {
+    if (latestDraws.get(tabId) !== draw) continue;
+    newest.add(tabId);
+    latestDraws.delete(tabId);
+  }
+  return newest;
+}
+
 async function updateTabs(tabs) {
   const generation = badgeGeneration;
   const draws = new Map(tabs.map(tab => [tab.id, ++drawCount]));
   for (const [tabId, draw] of draws) latestDraws.set(tabId, draw);
-  const newest = new Set();
+  let newest;
   let badges;
   try {
-    const { settings, activeSnapshots: active, groups } = await badgeState();
-    badges = await Promise.all(tabs.map(async tab => {
-      const host = hostnameOf(tab.url);
-      const key = host && resolveScope(host, groups).key;
-      const ref = settings.showBadge && host ? activeRef(active[key], key) : null;
-      return { tabId: tab.id, text: badgeText(ref?.name), colors: ref ? await colorFor(ref) : badgeColors() };
-    }));
+    const state = await badgeState();
+    badges = await Promise.all(tabs.map(tab => badgeOf(tab, state)));
   } finally {
-    for (const [tabId, draw] of draws) {
-      if (latestDraws.get(tabId) !== draw) continue;
-      newest.add(tabId);
-      latestDraws.delete(tabId);
-    }
+    newest = takeNewest(draws);
   }
   // A badge key or a label changed while this draw was reading; the update started
   // by that change draws every tab, and this older state must not overwrite it.
   if (generation !== badgeGeneration) return;
   // A flash from the shortcut keeps its tab until its own timer redraws it.
-  await Promise.all(badges.filter(({ tabId }) => newest.has(tabId) && !isFlashing(tabId)).map(({ tabId, text, colors }) => Promise.all([
-    chrome.action.setBadgeText({ tabId, text }).catch(() => {}),
-    chrome.action.setBadgeBackgroundColor({ tabId, color: colors.background }).catch(() => {}),
-    chrome.action.setBadgeTextColor({ tabId, color: colors.text }).catch(() => {}),
-  ])));
+  await Promise.all(badges
+    .filter(({ tabId }) => newest.has(tabId) && !isFlashing(tabId))
+    .map(({ tabId, text, colors }) => drawBadge(tabId, text, colors)));
 }
 
 async function updateAllTabs() {

@@ -1,8 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { IDBFactory } from 'fake-indexeddb';
 import { loadGlobalScript } from '../support/load-script.js';
-import { rowsOf, recordKey, previewOf, diffSnapshots, narrowerScope, VIEW_TYPES } from '../../lib/snapshot-diff.js';
+import { rowsOf, recordKey, previewOf, diffSnapshots, narrowerScope } from '../../lib/snapshot-diff.js';
 import { parseImport } from '../../lib/transfer.js';
+import { cookieDomainFor } from '../../lib/data-bridge.js';
+import { resolveScope } from '../../lib/groups.js';
 
 const HOST = 'example.com';
 const EXACT = { domain: HOST, exact: true };
@@ -21,7 +23,6 @@ function diff(base, other, scopes = { loadScope: EXACT, compareScope: EXACT }) {
 
 describe('lib/snapshot-diff rows', () => {
   it('rowsOf lists each type and null for absent types', () => {
-    expect(VIEW_TYPES).toEqual(['cookies', 'localStorage', 'sessionStorage', 'indexedDB']);
     const rows = rowsOf({ cookies: [], localStorage: {}, savedAt: '2024-01-01T00:00:00Z' });
     expect(rows).toEqual({ cookies: [], localStorage: [], sessionStorage: null, indexedDB: null });
 
@@ -279,6 +280,28 @@ describe('lib/snapshot-diff cookies', () => {
     expect(narrowerScope(EXACT, { domain: 'example.org', exact: true })).toBeNull();
     expect(narrowerScope({ domain: 'a.com', exact: false }, { domain: 'b.com', exact: false })).toBeNull();
     expect(narrowerScope({ domain: 'example.org', exact: true }, { domain: HOST, exact: false })).toBeNull();
+  });
+
+  it('narrowerScope picks the scope cookieDomainFor narrows to', () => {
+    const app = resolveScope(`app.${HOST}`, [HOST]);
+    const groupScope = cookieDomainFor({ cookieDomain: HOST }, `app.${HOST}`, app);
+    const hostScope = cookieDomainFor({}, `app.${HOST}`, app);
+    expect(groupScope).toEqual({ domain: HOST, exact: false });
+    expect(hostScope).toEqual({ domain: `app.${HOST}`, exact: true });
+    expect(narrowerScope(hostScope, groupScope)).toBe(hostScope);
+    expect(narrowerScope(groupScope, hostScope)).toBe(hostScope);
+  });
+
+  it('a cookie with a non-string domain is notCompared and notLoaded, and does not throw', () => {
+    const odd = { name: 'odd', value: '1', domain: 5, path: '/' };
+    const missing = { name: 'none', value: '1', path: '/' };
+    const result = diff({ cookies: [cookie('a', '1'), odd, missing] }, { cookies: [cookie('a', '1'), { ...odd }] });
+    const rowOf = c => result.cookies.rows.find(row => row.base?.cookie === c);
+    for (const c of [odd, missing]) {
+      expect(rowOf(c).status).toBe('notCompared');
+      expect(rowOf(c).notLoaded).toBe(true);
+    }
+    expect(result.cookies.skipped).toEqual({ base: 2, other: 1 });
   });
 
   it('cookies are not comparable when the compare scope is null', () => {

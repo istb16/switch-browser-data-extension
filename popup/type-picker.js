@@ -1,4 +1,4 @@
-import { TYPE_LABELS } from '../lib/data-compare.js';
+import { TYPE_LABELS } from '../lib/data-types.js';
 
 export function buildTypePicker(types, note) {
   const content = document.createDocumentFragment();

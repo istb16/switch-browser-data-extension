@@ -44,7 +44,7 @@ export function markStale() {
 
 // The flag is cleared before the read starts, so a change that lands during
 // the read marks the state stale again and the next render reloads it.
-export function getState() {
+function readListData() {
   if (stale) {
     stale = false;
     loading = true;
@@ -66,7 +66,7 @@ export function getState() {
 
 export async function renderDomainList(groups, { meter = true } = {}) {
   const sort = $('sortSelect').value;
-  const { snapshots: allSnapshots, orders: allOrders } = await getState();
+  const { snapshots: allSnapshots, orders: allOrders } = await readListData();
   const sizes = measureDomains(allSnapshots);
   if (meter) await renderMeter(sizes);
   // Read after the awaits: a full render parked in the meter must draw the
@@ -78,77 +78,103 @@ export async function renderDomainList(groups, { meter = true } = {}) {
   const bySize = sort === 'size';
   // Dragging a filtered or size-sorted view would save an order the user never saw.
   const canDrag = !bySize && !query;
-  const domains = Object.keys(allSnapshots).sort();
-  if (bySize) domains.sort((a, b) => sizes[b].bytes - sizes[a].bytes);
+  const domains = sortedDomains(allSnapshots, sizes, bySize);
 
   if (domains.length === 0) {
-    const empty = document.createElement('div');
-    empty.className   = 'empty-state';
-    empty.textContent = t('empty_snapshots');
-    container.appendChild(empty);
+    container.appendChild(buildEmptyState('empty_snapshots'));
     return;
   }
 
   for (const domain of domains) {
     const domainSnapshots = allSnapshots[domain];
-    let names       = orderedNames(domainSnapshots, allOrders[domain]);
-    const rowSizes  = sizes[domain].snapshots;
-    if (bySize) names.sort((a, b) => rowSizes[b] - rowSizes[a]);
-    if (query && !matchesQuery(query, domain)) {
-      names = names.filter(name => matchesQuery(query, name, memoText(domainSnapshots[name])));
-      if (names.length === 0) continue;
-    }
-
-    const item = document.createElement('div');
-    item.className = query ? 'domain-item open' : 'domain-item';
-
-    const header = document.createElement('div');
-    header.className = 'domain-header';
-    header.innerHTML = `
-      <div class="domain-header-left">
-        <span class="domain-name">${escHtml(domain)}</span>
-        <span class="domain-count">${t('count_format', { n: names.length })}</span>
-      </div>
-      <div class="domain-header-right">
-        <span class="domain-size">${formatBytes(sizes[domain].bytes)}</span>
-        <span class="chevron">▾</span>
-      </div>
-    `;
-    const { group } = resolveScope(domain, groups);
-    if (group) {
-      const chip = document.createElement('span');
-      chip.className = 'group-chip';
-      fillGroupChip(chip, group);
-      header.querySelector('.domain-header-left').appendChild(chip);
-    }
-    header.addEventListener('click', () => item.classList.toggle('open'));
-    const domainExportBtn = buildExportButton(t('export_domain_title', { domain }), btn => handleExport({ domain }, btn));
-    header.querySelector('.domain-header-right').prepend(domainExportBtn);
-
-    const snapshotList = document.createElement('div');
-    snapshotList.className = 'domain-snapshots';
-
-    for (const name of names) {
-      const row = buildSnapshotRow(name, domainSnapshots[name], rowSizes[name], domain, snapshotList, header, canDrag);
-      snapshotList.appendChild(row);
-    }
-
-    if (canDrag) setupDragDrop(snapshotList, domain);
-
-    item.appendChild(header);
-    item.appendChild(snapshotList);
-    container.appendChild(item);
+    const rowSizes = sizes[domain].snapshots;
+    const names = visibleNames(domain, domainSnapshots, allOrders[domain], rowSizes, bySize, query);
+    if (!names) continue;
+    container.appendChild(buildDomainItem(domain, names, {
+      snapshots: domainSnapshots,
+      rowSizes,
+      bytes: sizes[domain].bytes,
+      groups,
+      query,
+      canDrag,
+    }));
   }
 
-  if (!container.firstChild) {
-    const noMatch = document.createElement('div');
-    noMatch.className   = 'empty-state';
-    noMatch.textContent = t('no_match');
-    container.appendChild(noMatch);
-  }
+  if (!container.firstChild) container.appendChild(buildEmptyState('no_match'));
 }
 
-export function buildSnapshotRow(name, snapshot, bytes, domain, snapshotList, header, draggable) {
+function sortedDomains(snapshots, sizes, bySize) {
+  const domains = Object.keys(snapshots).sort();
+  if (bySize) domains.sort((a, b) => sizes[b].bytes - sizes[a].bytes);
+  return domains;
+}
+
+// null when the query hides the whole domain.
+function visibleNames(domain, snapshots, order, rowSizes, bySize, query) {
+  const names = orderedNames(snapshots, order);
+  if (bySize) names.sort((a, b) => rowSizes[b] - rowSizes[a]);
+  if (!query || matchesQuery(query, domain)) return names;
+  const matched = names.filter(name => matchesQuery(query, name, memoText(snapshots[name])));
+  return matched.length ? matched : null;
+}
+
+function buildEmptyState(key) {
+  const empty = document.createElement('div');
+  empty.className   = 'empty-state';
+  empty.textContent = t(key);
+  return empty;
+}
+
+function buildDomainItem(domain, names, { snapshots, rowSizes, bytes, groups, query, canDrag }) {
+  const item = document.createElement('div');
+  item.className = query ? 'domain-item open' : 'domain-item';
+
+  const header = document.createElement('div');
+  header.className = 'domain-header';
+  header.innerHTML = `
+    <div class="domain-header-left">
+      <span class="domain-name">${escHtml(domain)}</span>
+      <span class="domain-count">${t('count_format', { n: names.length })}</span>
+    </div>
+    <div class="domain-header-right">
+      <span class="domain-size">${formatBytes(bytes)}</span>
+      <span class="chevron">▾</span>
+    </div>
+  `;
+  const { group } = resolveScope(domain, groups);
+  if (group) {
+    const chip = document.createElement('span');
+    chip.className = 'group-chip';
+    fillGroupChip(chip, group);
+    header.querySelector('.domain-header-left').appendChild(chip);
+  }
+  header.addEventListener('click', () => item.classList.toggle('open'));
+  const domainExportBtn = buildExportButton(t('export_domain_title', { domain }), btn => handleExport({ domain }, btn));
+  header.querySelector('.domain-header-right').prepend(domainExportBtn);
+
+  const snapshotList = document.createElement('div');
+  snapshotList.className = 'domain-snapshots';
+
+  for (const name of names) {
+    snapshotList.appendChild(buildSnapshotRow({
+      name,
+      snapshot: snapshots[name],
+      bytes: rowSizes[name],
+      domain,
+      snapshotList,
+      header,
+      draggable: canDrag,
+    }));
+  }
+
+  if (canDrag) setupDragDrop(snapshotList, domain);
+
+  item.appendChild(header);
+  item.appendChild(snapshotList);
+  return item;
+}
+
+function buildSnapshotRow({ name, snapshot, bytes, domain, snapshotList, header, draggable }) {
   const row = document.createElement('div');
   row.className = 'snapshot-row';
   row.draggable = draggable;
@@ -158,6 +184,33 @@ export function buildSnapshotRow(name, snapshot, bytes, domain, snapshotList, he
   handle.className = 'drag-handle';
   handle.textContent = '⠿';
 
+  const { info, nameSpan } = buildRowInfo(name, snapshot, bytes);
+
+  const deleteBtn = document.createElement('button');
+  deleteBtn.className = 'btn-icon';
+  deleteBtn.title = t('btn_delete_title');
+  deleteBtn.textContent = '✕';
+
+  if (draggable) row.appendChild(handle);
+  const chip = document.createElement('span');
+  chip.className = 'snapshot-chip';
+  chip.setAttribute('role', 'img');
+  if (fillColorChip(chip, snapshot.color, 'snapshot-chip')) row.appendChild(chip);
+  row.appendChild(info);
+  const viewBtn = buildViewButton(domain, row);
+  row.appendChild(viewBtn);
+  row.appendChild(buildExportButton(t('export_snapshot_title', { name }), btn =>
+    handleExport({ domain, name: row.dataset.name }, btn)));
+  row.appendChild(deleteBtn);
+
+  const ctx = { row, info, nameSpan, viewBtn, domain, snapshotList, header, draggable };
+  nameSpan.addEventListener('dblclick', () => startRowRename(ctx));
+  deleteBtn.addEventListener('click', () => deleteRow(ctx));
+
+  return row;
+}
+
+function buildRowInfo(name, snapshot, bytes) {
   const info = document.createElement('div');
   info.className = 'snapshot-info';
 
@@ -187,111 +240,110 @@ export function buildSnapshotRow(name, snapshot, bytes, domain, snapshotList, he
     info.appendChild(memoSpan);
   }
   info.appendChild(meta);
+  return { info, nameSpan };
+}
 
-  const deleteBtn = document.createElement('button');
-  deleteBtn.className = 'btn-icon';
-  deleteBtn.title = t('btn_delete_title');
-  deleteBtn.textContent = '✕';
-
-  if (draggable) row.appendChild(handle);
-  const chip = document.createElement('span');
-  chip.className = 'snapshot-chip';
-  chip.setAttribute('role', 'img');
-  if (fillColorChip(chip, snapshot.color, 'snapshot-chip')) row.appendChild(chip);
-  row.appendChild(info);
+function buildViewButton(domain, row) {
   const viewBtn = document.createElement('button');
   viewBtn.type = 'button';
   viewBtn.className = 'btn-icon btn-icon--neutral';
-  viewBtn.title = t('btn_view_title', { name });
-  viewBtn.setAttribute('aria-label', viewBtn.title);
+  setViewTitle(viewBtn, row.dataset.name);
   viewBtn.textContent = '⌕';
   viewBtn.addEventListener('click', () => openViewer({ host: domain, name: row.dataset.name }));
-  row.appendChild(viewBtn);
-  row.appendChild(buildExportButton(t('export_snapshot_title', { name }), btn =>
-    handleExport({ domain, name: row.dataset.name }, btn)));
-  row.appendChild(deleteBtn);
-
-  nameSpan.addEventListener('dblclick', startRename);
-  deleteBtn.addEventListener('click', async () => {
-    const currentName = row.dataset.name;
-    if (!await showConfirm(t('confirm_delete_snapshot', { name: currentName }))) return;
-    await deleteSnapshot(domain, currentName);
-    row.remove();
-    const countEl = header.querySelector('.domain-count');
-    if (countEl) countEl.textContent = t('count_format', { n: snapshotList.querySelectorAll('.snapshot-row').length });
-    const { snapshots, orders } = await getState();
-    if (snapshots[domain]) {
-      delete snapshots[domain][currentName];
-      if (Object.keys(snapshots[domain]).length === 0) delete snapshots[domain];
-    }
-    if (orders[domain]) {
-      orders[domain] = orders[domain].filter(n => n !== currentName);
-      if (orders[domain].length === 0) delete orders[domain];
-    }
-    const sizes = measureDomains(snapshots);
-    header.querySelector('.domain-size').textContent = formatBytes(sizes[domain]?.bytes ?? 0);
-    await renderMeter(sizes);
-    notify('status_snapshot_deleted', { name: currentName });
-  });
-
-  function startRename() {
-    if (info.querySelector('.snapshot-name-input')) return;
-    const oldName = row.dataset.name;
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.className = 'snapshot-name-input';
-    input.value = oldName;
-    info.replaceChild(input, nameSpan);
-    row.draggable = false;
-
-    const restore = () => {
-      info.replaceChild(nameSpan, input);
-      row.draggable = draggable;
-    };
-    bindInlineRename(input, {
-      oldName,
-      exists: async newName => Boolean((await getSnapshotsFor([domain]))[domain]?.[newName]),
-      onError: msg => (msg ? showRenameError(msg) : clearRenameError()),
-      onCancel: restore,
-      onCommit: async newName => {
-        await renameSnapshot(domain, oldName, newName);
-        const { snapshots, orders } = await getState();
-        if (snapshots[domain]?.[oldName]) {
-          snapshots[domain][newName] = snapshots[domain][oldName];
-          delete snapshots[domain][oldName];
-        }
-        const index = orders[domain]?.indexOf(oldName) ?? -1;
-        if (index !== -1) orders[domain][index] = newName;
-        row.dataset.name = newName;
-        nameSpan.textContent = newName;
-        viewBtn.title = t('btn_view_title', { name: newName });
-        viewBtn.setAttribute('aria-label', viewBtn.title);
-        restore();
-        notify('status_snapshot_renamed', { old: oldName, new: newName });
-      },
-    });
-    input.focus();
-    input.select();
-  }
-
-  function showRenameError(msg) {
-    let errorSpan = info.querySelector('.rename-error');
-    if (!errorSpan) {
-      errorSpan = document.createElement('span');
-      errorSpan.className = 'rename-error';
-      info.appendChild(errorSpan);
-    }
-    errorSpan.textContent = msg;
-  }
-
-  function clearRenameError() {
-    info.querySelector('.rename-error')?.remove();
-  }
-
-  return row;
+  return viewBtn;
 }
 
-export function setupDragDrop(snapshotList, domain) {
+function setViewTitle(btn, name) {
+  btn.title = t('btn_view_title', { name });
+  btn.setAttribute('aria-label', btn.title);
+}
+
+// The name is read from the row when the action runs: an inline rename may have
+// changed it since the row was built.
+async function deleteRow({ row, domain, snapshotList, header }) {
+  const currentName = row.dataset.name;
+  if (!await showConfirm(t('confirm_delete_snapshot', { name: currentName }))) return;
+  await deleteSnapshot(domain, currentName);
+  row.remove();
+  const countEl = header.querySelector('.domain-count');
+  if (countEl) countEl.textContent = t('count_format', { n: snapshotList.querySelectorAll('.snapshot-row').length });
+  const { snapshots, orders } = await readListData();
+  forgetInCache(snapshots, orders, domain, currentName);
+  const sizes = measureDomains(snapshots);
+  header.querySelector('.domain-size').textContent = formatBytes(sizes[domain]?.bytes ?? 0);
+  await renderMeter(sizes);
+  notify('status_snapshot_deleted', { name: currentName });
+}
+
+function forgetInCache(snapshots, orders, domain, name) {
+  if (snapshots[domain]) {
+    delete snapshots[domain][name];
+    if (Object.keys(snapshots[domain]).length === 0) delete snapshots[domain];
+  }
+  if (orders[domain]) {
+    orders[domain] = orders[domain].filter(n => n !== name);
+    if (orders[domain].length === 0) delete orders[domain];
+  }
+}
+
+function renameInCache(snapshots, orders, domain, oldName, newName) {
+  if (snapshots[domain]?.[oldName]) {
+    snapshots[domain][newName] = snapshots[domain][oldName];
+    delete snapshots[domain][oldName];
+  }
+  const index = orders[domain]?.indexOf(oldName) ?? -1;
+  if (index !== -1) orders[domain][index] = newName;
+}
+
+function startRowRename({ row, info, nameSpan, viewBtn, domain, draggable }) {
+  if (info.querySelector('.snapshot-name-input')) return;
+  const oldName = row.dataset.name;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'snapshot-name-input';
+  input.value = oldName;
+  info.replaceChild(input, nameSpan);
+  row.draggable = false;
+
+  const restore = () => {
+    info.replaceChild(nameSpan, input);
+    row.draggable = draggable;
+  };
+  bindInlineRename(input, {
+    oldName,
+    exists: async newName => Boolean((await getSnapshotsFor([domain]))[domain]?.[newName]),
+    onError: msg => (msg ? showRenameError(info, msg) : clearRenameError(info)),
+    onCancel: restore,
+    onCommit: async newName => {
+      await renameSnapshot(domain, oldName, newName);
+      const { snapshots, orders } = await readListData();
+      renameInCache(snapshots, orders, domain, oldName, newName);
+      row.dataset.name = newName;
+      nameSpan.textContent = newName;
+      setViewTitle(viewBtn, newName);
+      restore();
+      notify('status_snapshot_renamed', { old: oldName, new: newName });
+    },
+  });
+  input.focus();
+  input.select();
+}
+
+function showRenameError(info, msg) {
+  let errorSpan = info.querySelector('.rename-error');
+  if (!errorSpan) {
+    errorSpan = document.createElement('span');
+    errorSpan.className = 'rename-error';
+    info.appendChild(errorSpan);
+  }
+  errorSpan.textContent = msg;
+}
+
+function clearRenameError(info) {
+  info.querySelector('.rename-error')?.remove();
+}
+
+function setupDragDrop(snapshotList, domain) {
   let dragSrc = null;
 
   snapshotList.addEventListener('dragstart', e => {
@@ -321,6 +373,6 @@ export function setupDragDrop(snapshotList, domain) {
     e.preventDefault();
     const newOrder = [...snapshotList.querySelectorAll('.snapshot-row')].map(el => el.dataset.name);
     await setSnapshotOrder(domain, newOrder);
-    (await getState()).orders[domain] = newOrder;
+    (await readListData()).orders[domain] = newOrder;
   });
 }

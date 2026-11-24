@@ -6,16 +6,17 @@ import { readKeys, getSnapshotsFor } from '../lib/storage.js';
 import { orderedNames } from '../lib/snapshot.js';
 import { resolveScope } from '../lib/groups.js';
 import { collectData, cookieDomainFor, hasHostPermission } from '../lib/data-bridge.js';
-import { isCookieExpired, TYPE_LABELS } from '../lib/data-compare.js';
-import { VIEW_TYPES, diffSnapshots, narrowerScope, previewOf } from '../lib/snapshot-diff.js';
+import { isCookieExpired } from '../lib/data-compare.js';
+import { DATA_TYPES, PAGE_TYPES, TYPE_LABELS, isPlainObject } from '../lib/data-types.js';
+import { diffSnapshots, narrowerScope, previewOf } from '../lib/snapshot-diff.js';
 import { fillColorChip, memoText } from '../lib/snapshot-view.js';
 import { sizeOf, formatBytes } from '../lib/snapshot-summary.js';
-import { $ } from '../lib/ui.js';
+import { $, renderVersionFooter } from '../lib/ui.js';
+import { parseHttpUrl } from '../lib/domain.js';
 
 const ROW_LIMIT = 200;
 const PREVIEW_CHARS = 200;
 const EXPAND_CHARS = 100000;
-const PAGE_TYPES = ['localStorage', 'sessionStorage', 'indexedDB'];
 const SNAPSHOT_CHOICE = 'snapshot:';
 const STATUS_MARKS = { added: '+', removed: '−', changed: '~', notCompared: '' };
 const STATUS_LABELS = {
@@ -48,12 +49,8 @@ const view = {
 // carries nothing of it in text or attributes.
 const cellValues = new WeakMap();
 
-function isObject(value) {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
 function ownObject(owner, key) {
-  return isObject(owner) && Object.hasOwn(owner, key) && isObject(owner[key]) ? owner[key] : null;
+  return isPlainObject(owner) && Object.hasOwn(owner, key) && isPlainObject(owner[key]) ? owner[key] : null;
 }
 
 function readParams() {
@@ -66,20 +63,19 @@ function readParams() {
   };
 }
 
-async function init() {
-  await initI18n();
-  applyI18n();
-  $('versionFooter').textContent = t('footer_version', { version: chrome.runtime.getManifest().version });
-
-  const { host, name, tabId } = readParams();
-  if (host === null || name === null) return showNotFound();
+/**
+ * Reads the snapshot named in `params` into `view` and returns the host's
+ * snapshot order, or null when there is no such snapshot.
+ */
+async function loadView({ host, name, tabId }) {
+  if (host === null || name === null) return null;
   const [{ groups, snapshotOrder, volatileCookies }, stored] = await Promise.all([
     readKeys(['groups', 'snapshotOrder', 'volatileCookies']),
     getSnapshotsFor([host]),
   ]);
   const snapshots = ownObject(stored, host);
   const snapshot = snapshots && ownObject(snapshots, name);
-  if (!snapshot) return showNotFound();
+  if (!snapshot) return null;
 
   const scope = resolveScope(host, groups);
   const loadScope = cookieDomainFor(snapshot, host, scope);
@@ -89,12 +85,12 @@ async function init() {
     result: plain,
     volatile: ownObject(volatileCookies, scope.key) ?? {},
   });
-  const order = isObject(snapshotOrder) && Object.hasOwn(snapshotOrder, host) && Array.isArray(snapshotOrder[host])
+  return isPlainObject(snapshotOrder) && Object.hasOwn(snapshotOrder, host) && Array.isArray(snapshotOrder[host])
     ? snapshotOrder[host]
     : [];
+}
 
-  renderHeader();
-  renderCompareOptions(order);
+function bindControls() {
   // A reload may restore the controls' last state; every open starts masked.
   $('compareSelect').value = 'none';
   $('revealToggle').checked = false;
@@ -102,6 +98,18 @@ async function init() {
   $('compareSelect').addEventListener('change', handleCompareChange);
   $('revealToggle').addEventListener('change', handleRevealToggle);
   $('diffOnlyToggle').addEventListener('change', handleDiffOnlyToggle);
+}
+
+async function init() {
+  await initI18n();
+  applyI18n();
+  renderVersionFooter();
+
+  const order = await loadView(readParams());
+  if (!order) return showNotFound();
+  renderHeader();
+  renderCompareOptions(order);
+  bindControls();
   $('viewer').classList.remove('hidden');
   renderTypes();
 }
@@ -165,14 +173,7 @@ function compareWithSnapshot(otherName) {
 }
 
 function qualifiesAsSiteTab(tab, host) {
-  let url;
-  try {
-    url = new URL(tab.url);
-  } catch {
-    return false;
-  }
-  return (url.protocol === 'http:' || url.protocol === 'https:')
-    && url.hostname === host
+  return parseHttpUrl(tab.url)?.hostname === host
     && !tab.discarded && tab.status !== 'unloaded'
     && Boolean(tab.incognito) === Boolean(chrome.extension.inIncognitoContext);
 }
@@ -195,20 +196,14 @@ async function findSiteTab(host, tabParam) {
 
 async function stillOn(tabId, origin) {
   const tab = await chrome.tabs.get(tabId).catch(() => null);
-  return Boolean(tab) && qualifiesAsSiteTab(tab, view.host) && new URL(tab.url).origin === origin;
+  return Boolean(tab) && qualifiesAsSiteTab(tab, view.host) && parseHttpUrl(tab.url).origin === origin;
 }
 
-async function readCurrent(snapshot) {
-  const found = await findSiteTab(view.host, view.tabId);
-  if (found?.incognito) {
-    return {
-      data: {},
-      reasons: Object.fromEntries(VIEW_TYPES.map(type => [type, t('viewer_reason_incognito')])),
-      notes: [t('viewer_note_incognito')],
-    };
-  }
-  const held = type => (type === 'cookies' ? Array.isArray(snapshot.cookies) : isObject(snapshot[type]));
-  const tab = found?.tab ?? null;
+/**
+ * Why each held type can't be read before any read is tried (no cookie
+ * permission, no tab for the page data), and the notes saying so.
+ */
+async function unreadableReasons(tab, held) {
   const reasons = {};
   const notes = [];
   const pageHeld = PAGE_TYPES.filter(held);
@@ -216,20 +211,22 @@ async function readCurrent(snapshot) {
     reasons.cookies = t('viewer_reason_no_permission');
     notes.push(t('viewer_note_no_permission'));
   }
-  const origin = tab ? new URL(tab.url).origin : null;
-  if (tab) notes.push(t('viewer_note_tab', { origin }));
+  if (tab) notes.push(t('viewer_note_tab', { origin: parseHttpUrl(tab.url).origin }));
   else if (pageHeld.length) {
     // file: pages have no host, so no tab can be told apart as this snapshot's page.
     const local = view.host === '';
     for (const type of pageHeld) reasons[type] = t(local ? 'viewer_reason_file' : 'viewer_reason_no_tab');
     notes.push(local ? t('viewer_note_file') : t('viewer_note_no_tab', { host: view.host }));
   }
+  return { reasons, notes };
+}
 
+async function readTabData(tab, held, reasons) {
   // IndexedDB goes in a call of its own: a reply too large to pass would
   // otherwise lose the web storage read with it.
   const read = types => collectData(tab?.id, view.scope, {
-    cookies: false, localStorage: false, sessionStorage: false, indexedDB: false, ...types,
-  }, { interactive: false, digest: false });
+    ...Object.fromEntries(DATA_TYPES.map(type => [type, false])), ...types,
+  }, { interactive: false });
   const [first, second] = await Promise.all([
     read({
       cookies: held('cookies') && !reasons.cookies,
@@ -241,11 +238,29 @@ async function readCurrent(snapshot) {
   const data = { ...first, ...second };
   // The tab may have moved to another site while it was read; its data would
   // then be another site's under this host's name.
-  if (tab && pageHeld.length && !await stillOn(tab.id, origin)) {
+  if (tab && PAGE_TYPES.some(held) && !await stillOn(tab.id, parseHttpUrl(tab.url).origin)) {
     for (const type of PAGE_TYPES) delete data[type];
   }
+  return data;
+}
+
+async function readCurrent(snapshot) {
+  const found = await findSiteTab(view.host, view.tabId);
+  if (found?.incognito) {
+    return {
+      data: {},
+      reasons: Object.fromEntries(DATA_TYPES.map(type => [type, t('viewer_reason_incognito')])),
+      notes: [t('viewer_note_incognito')],
+    };
+  }
+  const held = type => (type === 'cookies' ? Array.isArray(snapshot.cookies) : isPlainObject(snapshot[type]));
+  const tab = found?.tab ?? null;
+  const { reasons, notes } = await unreadableReasons(tab, held);
+  const data = await readTabData(tab, held, reasons);
   if (tab) {
-    const unreadable = pageHeld.filter(type => !isObject(data[type]));
+    const origin = parseHttpUrl(tab.url).origin;
+    const pageHeld = PAGE_TYPES.filter(held);
+    const unreadable = pageHeld.filter(type => !isPlainObject(data[type]));
     for (const type of unreadable) reasons[type] = t('viewer_reason_unreadable');
     if (unreadable.length) {
       notes.push(t('viewer_note_unreadable', { origin, types: unreadable.map(type => TYPE_LABELS[type]).join(', ') }));
@@ -324,7 +339,7 @@ function countsElement(counts) {
 }
 
 // Opened and closed state survives re-renders; the body is built on first open.
-function section(path, summaryParts, build, openByDefault) {
+function buildSection(path, summaryParts, build, openByDefault) {
   const id = JSON.stringify(path);
   const details = document.createElement('details');
   details.className = 'section';
@@ -357,7 +372,7 @@ function itemCount(type) {
 function renderTypes() {
   const container = $('types');
   container.replaceChildren();
-  for (const type of VIEW_TYPES) {
+  for (const type of DATA_TYPES) {
     if (!view.plain[type]) continue;
     const compared = view.result[type];
     const reason = view.comparing && !compared ? view.reasons[type] ?? t('viewer_reason_missing') : null;
@@ -371,7 +386,7 @@ function renderTypes() {
     const build = type === 'indexedDB'
       ? body => buildDatabases(body, entry.databases)
       : body => buildTable(body, type, entry.rows);
-    const el = section(['type', type], summary, build, true);
+    const el = buildSection(['type', type], summary, build, true);
     el.dataset.type = type;
     container.appendChild(el);
   }
@@ -416,7 +431,7 @@ function buildDatabases(body, databases) {
     const side = sideFlag(db);
     if (side) summary.push(side);
     if (db.counts) summary.push(countsElement(db.counts));
-    const el = section(['db', db.name], summary, dbBody => buildStores(dbBody, db), true);
+    const el = buildSection(['db', db.name], summary, dbBody => buildStores(dbBody, db), true);
     el.dataset.database = db.name;
     body.append(el);
   }
@@ -441,7 +456,7 @@ function buildStores(body, db) {
     const side = db.base && db.other ? sideFlag(store) : null;
     if (side) summary.push(side);
     if (store.counts) summary.push(countsElement(store.counts));
-    const el = section(['store', db.name, store.name], summary, storeBody => buildTable(storeBody, 'record', store.rows), false);
+    const el = buildSection(['store', db.name, store.name], summary, storeBody => buildTable(storeBody, 'record', store.rows), false);
     el.dataset.store = store.name;
     body.append(el);
   }
@@ -451,6 +466,15 @@ const COLUMNS = {
   cookies: ['viewer_col_name', 'viewer_col_domain', 'viewer_col_path', 'viewer_col_value', 'viewer_col_expires', 'viewer_col_flags'],
   storage: ['viewer_col_key', 'viewer_col_value'],
 };
+
+function buildTableHead(kind) {
+  const head = document.createElement('tr');
+  const columns = COLUMNS[kind === 'cookies' ? 'cookies' : 'storage'];
+  for (const key of view.comparing ? ['viewer_col_status', ...columns] : columns) head.append(textElement('th', null, t(key)));
+  const thead = document.createElement('thead');
+  thead.append(head);
+  return thead;
+}
 
 // "違いだけ" filters first, so the row limit counts only the rows it shows.
 function buildTable(body, kind, rows) {
@@ -463,13 +487,8 @@ function buildTable(body, kind, rows) {
   }
   const table = document.createElement('table');
   table.className = 'rows';
-  const head = document.createElement('tr');
-  const columns = COLUMNS[kind === 'cookies' ? 'cookies' : 'storage'];
-  for (const key of view.comparing ? ['viewer_col_status', ...columns] : columns) head.append(textElement('th', null, t(key)));
-  const thead = document.createElement('thead');
-  thead.append(head);
   const tbody = document.createElement('tbody');
-  table.append(thead, tbody);
+  table.append(buildTableHead(kind), tbody);
 
   const more = document.createElement('button');
   more.type = 'button';
@@ -509,12 +528,12 @@ function buildRow(kind, row) {
       textElement('td', 'cell-mono', String(cookie.name)),
       textElement('td', null, String(cookie.domain)),
       textElement('td', null, String(cookie.path)),
-      valuesCell(row),
+      buildValuesCell(row),
       textElement('td', null, expiresText(cookie)),
       flagsCell(row, cookie),
     );
   } else {
-    tr.append(keyCell(row), valuesCell(row));
+    tr.append(keyCell(row), buildValuesCell(row));
   }
   return tr;
 }
@@ -524,7 +543,7 @@ function keyCell(row) {
   if (!(row.base ?? row.other).maskKey) return textElement('td', 'cell-mono', row.key);
   const td = document.createElement('td');
   td.className = 'cell-mono';
-  td.append(valueCell(row.key));
+  td.append(buildValue(row.key));
   return td;
 }
 
@@ -539,7 +558,7 @@ function flagsText(cookie) {
     .filter(Boolean).join(' ');
 }
 
-function tag(textKey, titleKey) {
+function buildTag(textKey, titleKey) {
   const el = textElement('span', 'tag', t(textKey));
   el.title = t(titleKey);
   return el;
@@ -550,30 +569,30 @@ function flagsCell(row, cookie) {
   const flags = flagsText(cookie);
   const otherFlags = row.status === 'changed' ? flagsText(row.other.cookie) : flags;
   td.append(flags === otherFlags ? flags : `${flags} → ${otherFlags}`, ' ');
-  if (isCookieExpired(cookie, Date.now())) td.append(tag('viewer_tag_expired', 'viewer_tag_expired_title'));
-  if (Object.hasOwn(view.volatile, row.key)) td.append(tag('viewer_tag_volatile', 'viewer_tag_volatile_title'));
-  if (row.notLoaded) td.append(tag('viewer_tag_not_loaded', 'viewer_tag_not_loaded_title'));
+  if (isCookieExpired(cookie, Date.now())) td.append(buildTag('viewer_tag_expired', 'viewer_tag_expired_title'));
+  if (Object.hasOwn(view.volatile, row.key)) td.append(buildTag('viewer_tag_volatile', 'viewer_tag_volatile_title'));
+  if (row.notLoaded) td.append(buildTag('viewer_tag_not_loaded', 'viewer_tag_not_loaded_title'));
   return td;
 }
 
-function valuesCell(row) {
+function buildValuesCell(row) {
   const td = document.createElement('td');
   if (row.status !== 'changed') {
-    td.append(valueCell((row.base ?? row.other).value));
+    td.append(buildValue((row.base ?? row.other).value));
     return td;
   }
   const pair = document.createElement('div');
   pair.className = 'value-pair';
   const after = document.createElement('div');
-  after.append(textElement('span', 'value-arrow', '→'), valueCell(row.other.value));
+  after.append(textElement('span', 'value-arrow', '→'), buildValue(row.other.value));
   const before = document.createElement('div');
-  before.append(valueCell(row.base.value));
+  before.append(buildValue(row.base.value));
   pair.append(before, after);
   td.append(pair);
   return td;
 }
 
-function valueCell(value) {
+function buildValue(value) {
   const cell = document.createElement('span');
   cell.className = 'value';
   cellValues.set(cell, value);
@@ -583,16 +602,21 @@ function valueCell(value) {
 
 function fillValue(cell, revealed) {
   const value = cellValues.get(cell);
-  if (!revealed) {
-    const mask = document.createElement('button');
-    mask.type = 'button';
-    mask.className = 'value-mask';
-    mask.textContent = `•••••• ${t('viewer_masked', { n: value.length })}`;
-    mask.title = t('viewer_reveal_title');
-    mask.addEventListener('click', () => fillValue(cell, true));
-    cell.replaceChildren(mask);
-    return;
-  }
+  if (revealed) fillRevealed(cell, value);
+  else fillMasked(cell, value);
+}
+
+function fillMasked(cell, value) {
+  const mask = document.createElement('button');
+  mask.type = 'button';
+  mask.className = 'value-mask';
+  mask.textContent = `•••••• ${t('viewer_masked', { n: value.length })}`;
+  mask.title = t('viewer_reveal_title');
+  mask.addEventListener('click', () => fillRevealed(cell, value));
+  cell.replaceChildren(mask);
+}
+
+function fillRevealed(cell, value) {
   const preview = previewOf(value, PREVIEW_CHARS);
   const text = textElement('span', 'value-text', preview.text);
   cell.replaceChildren(text);

@@ -15,7 +15,7 @@ import {
 } from '../../lib/snapshot.js';
 import {
   getSnapshots, getSnapshotOrders, setSnapshotOrders, getSettings, setSettings, getGroups, setGroups,
-  getSnapshotHosts, getBackupHosts,
+  getSnapshotHosts, getBackupHosts, getActiveSnapshots,
 } from '../../lib/storage.js';
 import { setSnapshots, getBackups } from '../support/storage-seed.js';
 import { byteSize } from '../../lib/snapshot-summary.js';
@@ -271,37 +271,38 @@ describe('lib/snapshot', () => {
 });
 
 describe('lib/snapshot — active snapshot and backup', () => {
+  const activeOf = async domain => (await getActiveSnapshots())[domain] ?? null;
+
   it('records the active snapshot per domain and clears it with null', async () => {
-    const { getActiveSnapshot, setActiveSnapshot } = await import('../../lib/snapshot.js');
-    expect(await getActiveSnapshot('a.com')).toBeNull();
+    const { setActiveSnapshot } = await import('../../lib/snapshot.js');
+    expect(await activeOf('a.com')).toBeNull();
     await setActiveSnapshot('a.com', 'x');
-    expect(await getActiveSnapshot('a.com')).toBe('x');
+    expect(await activeOf('a.com')).toBe('x');
     await setActiveSnapshot('a.com', null);
-    expect(await getActiveSnapshot('a.com')).toBeNull();
+    expect(await activeOf('a.com')).toBeNull();
   });
 
   it('deleting the active snapshot clears it; deleting another one keeps it', async () => {
-    const { setActiveSnapshot, getActiveSnapshot } = await import('../../lib/snapshot.js');
+    const { setActiveSnapshot } = await import('../../lib/snapshot.js');
     await saveSnapshot('a.com', 'x', {});
     await saveSnapshot('a.com', 'y', {});
     await setActiveSnapshot('a.com', 'x');
 
     await deleteSnapshot('a.com', 'y');
-    expect(await getActiveSnapshot('a.com')).toBe('x');
+    expect(await activeOf('a.com')).toBe('x');
     await deleteSnapshot('a.com', 'x');
-    expect(await getActiveSnapshot('a.com')).toBeNull();
+    expect(await activeOf('a.com')).toBeNull();
   });
 
   it('renaming the active snapshot keeps it active under the new name', async () => {
-    const { setActiveSnapshot, getActiveSnapshot } = await import('../../lib/snapshot.js');
+    const { setActiveSnapshot } = await import('../../lib/snapshot.js');
     await saveSnapshot('a.com', 'x', {});
     await setActiveSnapshot('a.com', 'x');
     await renameSnapshot('a.com', 'x', 'z');
-    expect(await getActiveSnapshot('a.com')).toBe('z');
+    expect(await activeOf('a.com')).toBe('z');
   });
 
   it('deleteSnapshot clears a group reference to it', async () => {
-    const { getActiveSnapshot } = await import('../../lib/snapshot.js');
     const { setActiveSnapshots } = await import('../../lib/storage.js');
     await saveSnapshot('app.example.com', 'x', {});
     await saveSnapshot('app.example.com', 'y', {});
@@ -310,27 +311,25 @@ describe('lib/snapshot — active snapshot and backup', () => {
 
     await deleteSnapshot('example.com', 'x');
     await deleteSnapshot('app.example.com', 'y');
-    expect(await getActiveSnapshot('example.com')).toEqual({ host: 'app.example.com', name: 'x' });
+    expect(await activeOf('example.com')).toEqual({ host: 'app.example.com', name: 'x' });
 
     await deleteSnapshot('app.example.com', 'x');
-    expect(await getActiveSnapshot('example.com')).toBeNull();
+    expect(await activeOf('example.com')).toBeNull();
   });
 
   it('renameSnapshot renames a group reference to it', async () => {
-    const { getActiveSnapshot } = await import('../../lib/snapshot.js');
     const { setActiveSnapshots } = await import('../../lib/storage.js');
     await saveSnapshot('app.example.com', 'x', {});
     await saveSnapshot('www.example.com', 'x', {});
     await setActiveSnapshots({ 'example.com': { host: 'app.example.com', name: 'x' } });
 
     await renameSnapshot('www.example.com', 'x', 'w');
-    expect(await getActiveSnapshot('example.com')).toEqual({ host: 'app.example.com', name: 'x' });
+    expect(await activeOf('example.com')).toEqual({ host: 'app.example.com', name: 'x' });
     await renameSnapshot('app.example.com', 'x', 'z');
-    expect(await getActiveSnapshot('example.com')).toEqual({ host: 'app.example.com', name: 'z' });
+    expect(await activeOf('example.com')).toEqual({ host: 'app.example.com', name: 'z' });
   });
 
   it('renameSnapshot keeps the applied types of the active record', async () => {
-    const { getActiveSnapshot } = await import('../../lib/snapshot.js');
     const { setActiveSnapshots } = await import('../../lib/storage.js');
     await saveSnapshot('a.com', 'x', {});
     await saveSnapshot('app.example.com', 'x', {});
@@ -342,8 +341,8 @@ describe('lib/snapshot — active snapshot and backup', () => {
     await renameSnapshot('a.com', 'x', 'z');
     await renameSnapshot('app.example.com', 'x', 'w');
 
-    expect(await getActiveSnapshot('a.com')).toEqual({ host: 'a.com', name: 'z', types: ['cookies'] });
-    expect(await getActiveSnapshot('example.com'))
+    expect(await activeOf('a.com')).toEqual({ host: 'a.com', name: 'z', types: ['cookies'] });
+    expect(await activeOf('example.com'))
       .toEqual({ host: 'app.example.com', name: 'w', types: ['localStorage'] });
   });
 
@@ -472,6 +471,62 @@ describe('lib/snapshot — previous snapshot', () => {
 
     await deleteSnapshot('app.example.com', 'w');
     expect(await getPreviousSnapshots()).toEqual({ 'a.com': { host: 'a.com', name: 'z' } });
+  });
+
+  // a.com/x is referenced by a bare active name, by a group's { host, name } active
+  // record (a.com taken as a group member here) and by a previous record; the
+  // other references point at a.com/y or at x of another host.
+  async function seedRefs() {
+    const { setActiveSnapshots, setPreviousSnapshots } = await setup();
+    await saveSnapshot('a.com', 'x', {});
+    await saveSnapshot('a.com', 'y', {});
+    await saveSnapshot('b.com', 'x', {});
+    await setActiveSnapshots({
+      'a.com': 'x',
+      'group.com': { host: 'a.com', name: 'x' },
+      'b.com': 'x',
+      'other.com': { host: 'a.com', name: 'y' },
+    });
+    await setPreviousSnapshots({
+      'a.com': { host: 'a.com', name: 'x' },
+      'b.com': { host: 'b.com', name: 'x' },
+      'c.com': { host: 'a.com', name: 'y' },
+    });
+  }
+
+  it('renameSnapshot rewrites a bare active name, a { host, name } active ref and the previous ref, and leaves refs to other snapshots alone', async () => {
+    const { getActiveSnapshots, getPreviousSnapshots } = await setup();
+    await seedRefs();
+
+    await renameSnapshot('a.com', 'x', 'z');
+
+    expect(await getActiveSnapshots()).toEqual({
+      'a.com': 'z',
+      'group.com': { host: 'a.com', name: 'z' },
+      'b.com': 'x',
+      'other.com': { host: 'a.com', name: 'y' },
+    });
+    expect(await getPreviousSnapshots()).toEqual({
+      'a.com': { host: 'a.com', name: 'z' },
+      'b.com': { host: 'b.com', name: 'x' },
+      'c.com': { host: 'a.com', name: 'y' },
+    });
+  });
+
+  it('deleteSnapshot removes the same three kinds of ref and leaves refs to other snapshots alone', async () => {
+    const { getActiveSnapshots, getPreviousSnapshots } = await setup();
+    await seedRefs();
+
+    await deleteSnapshot('a.com', 'x');
+
+    expect(await getActiveSnapshots()).toEqual({
+      'b.com': 'x',
+      'other.com': { host: 'a.com', name: 'y' },
+    });
+    expect(await getPreviousSnapshots()).toEqual({
+      'b.com': { host: 'b.com', name: 'x' },
+      'c.com': { host: 'a.com', name: 'y' },
+    });
   });
 });
 

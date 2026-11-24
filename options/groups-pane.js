@@ -60,7 +60,7 @@ export async function handleAddGroup(e, onChange) {
   }
 }
 
-export async function handleRemoveGroup(base, onChange) {
+async function handleRemoveGroup(base, onChange) {
   try {
     if (!await showConfirm(t('confirm_remove_group', { group: base }))) return;
     await removeGroup(base);

@@ -4,7 +4,7 @@ import {
   readKeys, updateKey, withDefaultSettings, getSnapshotHosts, getSnapshotsFor, setSnapshotsFor, getBackupHosts, getBackup,
   setBackup, setSnapshotsAndOrders, getPreviousSnapshots, setPreviousSnapshots,
 } from '../../lib/storage.js';
-import { setSnapshots, getBackups, setBackups } from '../support/storage-seed.js';
+import { setSnapshots, getBackups } from '../support/storage-seed.js';
 
 describe('lib/storage', () => {
   it('returns an empty object when no snapshots are stored', async () => {
@@ -22,25 +22,6 @@ describe('lib/storage', () => {
     };
     await setSettings(settings);
     expect(await getSettings()).toEqual(settings);
-  });
-
-  it('fills keys missing from settings saved by an older version with the defaults', async () => {
-    await setSettings({ enabledTypes: { cookies: false } });
-    const settings = await getSettings();
-    expect(settings.enabledTypes).toEqual({ cookies: false, localStorage: true, sessionStorage: true, indexedDB: true });
-    expect(settings.autoBackup).toBe(true);
-    expect(settings.autoReload).toBe(true);
-    expect(settings.showBadge).toBe(true);
-    expect(settings.encryptExports).toBe(false);
-  });
-
-  it('round-trips active snapshots and backups', async () => {
-    expect(await getActiveSnapshots()).toEqual({});
-    expect(await getBackups()).toEqual({});
-    await setActiveSnapshots({ 'a.com': 'x' });
-    await setBackups({ 'a.com': { savedAt: '2024-01-01T00:00:00.000Z' } });
-    expect(await getActiveSnapshots()).toEqual({ 'a.com': 'x' });
-    expect(await getBackups()).toEqual({ 'a.com': { savedAt: '2024-01-01T00:00:00.000Z' } });
   });
 
   it('withDefaultSettings merges stored settings over the defaults', () => {

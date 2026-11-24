@@ -53,7 +53,7 @@ export async function handleExport(scope, button) {
   }
 }
 
-export function downloadExport(text, scope) {
+function downloadExport(text, scope) {
   const blob = new Blob([text], { type: 'application/json' });
   const url  = URL.createObjectURL(blob);
   const a    = Object.assign(document.createElement('a'), {
@@ -64,7 +64,7 @@ export function downloadExport(text, scope) {
   URL.revokeObjectURL(url);
 }
 
-export function passphraseField(labelKey, autocomplete) {
+function passphraseField(labelKey, autocomplete) {
   const label = document.createElement('label');
   const text = document.createElement('span');
   text.textContent = t(labelKey);
@@ -77,7 +77,7 @@ export function passphraseField(labelKey, autocomplete) {
 }
 
 // Resolves the new passphrase, or null when cancelled.
-export async function askNewPassphrase() {
+async function askNewPassphrase() {
   const first = passphraseField('passphrase_label', 'new-password');
   const second = passphraseField('passphrase_confirm_label', 'new-password');
   const hint = document.createElement('p');
@@ -100,7 +100,7 @@ export async function askNewPassphrase() {
 }
 
 // Resolves the entered passphrase, or null when cancelled.
-export async function askPassphrase() {
+async function askPassphrase() {
   const field = passphraseField('passphrase_label', 'current-password');
   const confirmed = await showFormDialog({
     title: t('passphrase_title'),

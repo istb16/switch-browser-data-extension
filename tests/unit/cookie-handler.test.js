@@ -1,7 +1,21 @@
 import { describe, it, expect, vi } from 'vitest';
-import { cookiesWithin, getCookiesForDomain, setCookiesForDomain } from '../../lib/cookie-handler.js';
+import {
+  cookiesWithin, getCookiesForDomain, setCookiesForDomain, cookieHostOf, hostMatches,
+} from '../../lib/cookie-handler.js';
 
 describe('lib/cookie-handler', () => {
+  it('hostMatches with cookieHostOf', () => {
+    expect(cookieHostOf('.example.com')).toBe('example.com');
+    expect(cookieHostOf('example.com')).toBe('example.com');
+    const exact = { domain: 'example.com', exact: true };
+    const wide = { domain: 'example.com', exact: false };
+    expect(hostMatches(cookieHostOf('.example.com'), exact)).toBe(true);
+    expect(hostMatches(cookieHostOf('app.example.com'), exact)).toBe(false);
+    expect(hostMatches(cookieHostOf('.app.example.com'), wide)).toBe(true);
+    expect(hostMatches(cookieHostOf('notexample.com'), wide)).toBe(false);
+    expect(hostMatches(cookieHostOf('.notexample.com'), exact)).toBe(false);
+  });
+
   it('getCookiesForDomain maps chrome.cookies fields to a plain snapshot shape', async () => {
     chrome._state.cookies.push({
       name: 'session', value: 'abc', domain: 'example.com', path: '/',

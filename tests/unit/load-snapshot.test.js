@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { loadWholeSnapshot, stillOnOrigin, pageTypesOf } from '../../lib/load-snapshot.js';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { loadWholeSnapshot, pageTypesOf } from '../../lib/load-snapshot.js';
 import { resolveScope } from '../../lib/groups.js';
 import { getBackups } from '../support/storage-seed.js';
 
@@ -44,6 +44,10 @@ beforeEach(() => {
   chrome.tabs.sendMessage = vi.fn((_id, message) => pageReplies[message.type]?.(message));
 });
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 describe('lib/load-snapshot loadWholeSnapshot', () => {
   it('backs up, applies, records, starts the cookie check with reloadTabs, and reloads only the tab', async () => {
     const result = await load();
@@ -84,6 +88,21 @@ describe('lib/load-snapshot loadWholeSnapshot', () => {
     expect(chrome._state.storage.activeSnapshots['example.com']).toEqual({ host: 'app.example.com', name: 'carol' });
   });
 
+  it('records no types even when the entry carries them', async () => {
+    await load({ entry: { host: 'example.com', name: 'bob', types: ['cookies'] } });
+    expect(chrome._state.storage.activeSnapshots['example.com']).toBe('bob');
+
+    tab = { id: 1, url: 'https://app.example.com/', incognito: false };
+    chrome._state.tabs[0].url = tab.url;
+    chrome._state.grantedOrigins.add('*://*.example.com/*');
+    await load({
+      scope: resolveScope('app.example.com', ['example.com']),
+      entry: { host: 'app.example.com', name: 'carol', types: ['cookies'] },
+      snapshot: { cookies: [], localStorage: { user: 'carol' } },
+    });
+    expect(chrome._state.storage.activeSnapshots['example.com']).toEqual({ host: 'app.example.com', name: 'carol' });
+  });
+
   it('without cookies applied reloads the tab, then the others', async () => {
     const result = await load({ snapshot: { localStorage: { user: 'bob' } } });
 
@@ -92,11 +111,24 @@ describe('lib/load-snapshot loadWholeSnapshot', () => {
     expect(chrome._state.reloadedTabs).toEqual([1, 2]);
   });
 
-  it('starts no reload with auto reload off, but still the cookie check', async () => {
-    const result = await load({ settings: { ...SETTINGS, autoReload: false } });
-    expect(result.reloaded).toBe(0);
+  it('keeps the record of the switch when the tab is closed before the reload', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const setCookie = vi.spyOn(chrome.cookies, 'set');
+    const realGet = chrome.tabs.get;
+    vi.spyOn(chrome.tabs, 'get').mockImplementation(async id => {
+      if (id === tab.id && setCookie.mock.calls.length > 0) throw new Error(`No tab with id: ${id}.`);
+      return realGet(id);
+    });
+
+    const result = await load();
+
+    expect(setCookie).toHaveBeenCalled();
+    expect(result).toMatchObject({ backedUp: true, reloaded: 1 });
+    expect(chrome._state.storage.activeSnapshots).toEqual({ 'example.com': 'bob' });
+    expect(chrome._state.storage.cookieChecks[tab.id]).toMatchObject({
+      reloadTabs: [{ id: 2, origin: 'https://example.com' }],
+    });
     expect(chrome._state.reloadedTabs).toEqual([]);
-    expect(chrome._state.storage.cookieChecks[1].reloadTabs).toEqual([]);
   });
 
   it('applies nothing when the backup cannot be written', async () => {
@@ -118,6 +150,13 @@ describe('lib/load-snapshot loadWholeSnapshot', () => {
     moveTab('https://evil.example/');
     await expect(load()).rejects.toThrow();
     expect(chrome.tabs.sendMessage).not.toHaveBeenCalled();
+    expect(await getBackups()).toEqual({});
+  });
+
+  it('throws when the tab moves to http on the same host, before the read', async () => {
+    moveTab('http://example.com/app');
+    await expect(load()).rejects.toThrow();
+    expect(messagesOf('getStorageData')).toEqual([]);
     expect(await getBackups()).toEqual({});
   });
 
@@ -291,21 +330,6 @@ describe('lib/load-snapshot loadWholeSnapshot', () => {
     expect((await getBackups())['example.com']).toMatchObject({ localStorage: { user: 'alice' } });
     expect(chrome._state.reloadedTabs).toEqual([]);
   });
-
-  it('does not fail when the tab is closed before the reload', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    const realGet = chrome.tabs.get;
-    let reads = 0;
-    vi.spyOn(chrome.tabs, 'get').mockImplementation(async id => {
-      if (id === 1 && ++reads > 3) throw new Error('No tab with id: 1.');
-      return realGet(id);
-    });
-
-    const result = await load();
-    expect(result).toMatchObject({ backedUp: true, reloaded: 1 });
-    expect(chrome._state.storage.activeSnapshots).toEqual({ 'example.com': 'bob' });
-    expect(console.error).toHaveBeenCalled();
-  });
 });
 
 describe('lib/load-snapshot pageTypesOf', () => {
@@ -324,16 +348,5 @@ describe('lib/load-snapshot pageTypesOf', () => {
   it('marks nothing for another host of the group', () => {
     expect(pageTypesOf(FULL, TYPES, 'www.example.com', scope))
       .toEqual({ localStorage: false, sessionStorage: false, indexedDB: false });
-  });
-});
-
-describe('lib/load-snapshot stillOnOrigin', () => {
-  it('compares the origin only, and rejects for a closed tab', async () => {
-    await expect(stillOnOrigin(tab)).resolves.toBeUndefined();
-    moveTab('https://example.com/other#x');
-    await expect(stillOnOrigin(tab)).resolves.toBeUndefined();
-    moveTab('http://example.com/app');
-    await expect(stillOnOrigin(tab)).rejects.toThrow();
-    await expect(stillOnOrigin({ id: 99, url: tab.url })).rejects.toThrow();
   });
 });
