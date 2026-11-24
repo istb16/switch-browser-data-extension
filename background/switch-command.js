@@ -3,7 +3,7 @@
 // tab's badge and a notice the popup shows when it opens.
 
 import { readKeys, getSnapshotsFor } from '../lib/storage.js';
-import { badgeColors, badgeText } from '../lib/badge.js';
+import { badgeColors, badgeText, drawBadge } from '../lib/badge.js';
 import { resolveScope, activeRef } from '../lib/groups.js';
 import { hasHostPermission, canReachPage } from '../lib/data-bridge.js';
 import { loadWholeSnapshot, pageTypesOf } from '../lib/load-snapshot.js';
@@ -30,10 +30,7 @@ export function isFlashing(tabId) {
 function flash(tab, redraw, label = '!') {
   const token = {};
   flashes.set(tab.id, token);
-  const { background, text } = badgeColors();
-  chrome.action.setBadgeText({ tabId: tab.id, text: label }).catch(() => {});
-  chrome.action.setBadgeBackgroundColor({ tabId: tab.id, color: background }).catch(() => {});
-  chrome.action.setBadgeTextColor({ tabId: tab.id, color: text }).catch(() => {});
+  drawBadge(tab.id, label, badgeColors());
   setTimeout(() => {
     // A later flash on the same tab owns its own timer.
     if (flashes.get(tab.id) !== token) return;
@@ -79,7 +76,7 @@ async function previousEntry(scope, active, previous, groups) {
   return { entry: ref, snapshot: stored[ref.name] };
 }
 
-export async function switchToPrevious(tab, redraw) {
+async function switchToPrevious(tab, redraw) {
   if (await popupIsOpen()) {
     flash(tab, redraw);
     return;

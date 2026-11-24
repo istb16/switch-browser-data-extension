@@ -1,7 +1,8 @@
 import { t, getLang } from '../lib/i18n.js';
 import { cookieDomainFor } from '../lib/data-bridge.js';
 import { cookiesWithin } from '../lib/cookie-handler.js';
-import { TYPE_LABELS } from '../lib/data-compare.js';
+import { DATA_TYPES, PAGE_TYPES, TYPE_LABELS } from '../lib/data-types.js';
+import { activeValueFor } from '../lib/groups.js';
 
 export const state = {
   // See resolveScope() in lib/groups.js: `host` is the tab's host, `key` the group
@@ -35,25 +36,34 @@ export const sameEntry = (a, b) => Boolean(a && b && a.host === b.host && a.name
 export const snapshotOf = entry => state.snapshots[entry.host]?.[entry.name];
 export const entryOfRow = row => ({ host: row.dataset.host, name: row.dataset.name });
 
-// In a group the active snapshot is one reference for every member host, so it
-// has to say which host's snapshot it is.
 export function activeValue(entry) {
-  if (entry.types) return { host: entry.host, name: entry.name, types: entry.types };
-  return state.scope.group ? { host: entry.host, name: entry.name } : entry.name;
+  return activeValueFor(state.scope, entry);
 }
 
 // The types a partial load recorded; undefined stands for every type, which is
 // also how a value an older or damaged record holds is read.
 export function recordedTypes(value) {
   if (!Array.isArray(value?.types)) return undefined;
-  const types = Object.keys(TYPE_LABELS).filter(type => value.types.includes(type));
+  const types = DATA_TYPES.filter(type => value.types.includes(type));
   return types.length ? types : undefined;
+}
+
+// The listed entry a stored ref points to, carrying its recorded types; null
+// when the ref names no listed snapshot.
+export function listedEntry(ref) {
+  if (!ref || !snapshotOf(ref)) return null;
+  const types = recordedTypes(ref);
+  return { host: ref.host, name: ref.name, ...(types && { types }) };
+}
+
+export function enabledOf(types) {
+  return types.filter(type => state.settings.enabledTypes[type]);
 }
 
 export function comparedTypes(types) {
   const { enabledTypes } = state.settings;
   if (!types) return enabledTypes;
-  return Object.fromEntries(Object.keys(TYPE_LABELS).map(type => [type, Boolean(enabledTypes[type]) && types.includes(type)]));
+  return Object.fromEntries(DATA_TYPES.map(type => [type, Boolean(enabledTypes[type]) && types.includes(type)]));
 }
 
 export function typeNamesOf(types) {
@@ -62,7 +72,7 @@ export function typeNamesOf(types) {
 
 export function loadableTypes(entry) {
   const snapshot = snapshotOf(entry);
-  return Object.keys(TYPE_LABELS).filter(type => state.settings.enabledTypes[type] && Boolean(snapshot?.[type]));
+  return DATA_TYPES.filter(type => state.settings.enabledTypes[type] && Boolean(snapshot?.[type]));
 }
 
 export function scopeLabel() {
@@ -77,7 +87,7 @@ export function comparable(entry, data) {
   const result = { ...data };
   if (data.cookies) result.cookies = cookiesWithin(data.cookies, cookieDomainFor(snapshotOf(entry), entry.host, state.scope));
   if (entry.host !== state.scope.host) {
-    for (const type of ['localStorage', 'sessionStorage', 'indexedDB', 'indexedDBDigest']) delete result[type];
+    for (const type of [...PAGE_TYPES, 'indexedDBDigest']) delete result[type];
   }
   return result;
 }

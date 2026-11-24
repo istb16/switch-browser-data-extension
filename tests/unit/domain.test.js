@@ -1,5 +1,50 @@
 import { describe, it, expect } from 'vitest';
-import { isWithin, toCookieScope, httpHostOf } from '../../lib/domain.js';
+import { isWithin, toCookieScope, httpHostOf, parseHttpUrl, isScopeWithin } from '../../lib/domain.js';
+
+describe('lib/domain parseHttpUrl', () => {
+  it('parseHttpUrl returns the URL for http(s) and null otherwise', () => {
+    expect(parseHttpUrl('https://example.com:8443/a?b#c')).toMatchObject({
+      protocol: 'https:', hostname: 'example.com', origin: 'https://example.com:8443',
+    });
+    expect(parseHttpUrl('http://a.com/')?.origin).toBe('http://a.com');
+    for (const url of ['file:///a', 'chrome://extensions/', 'chrome-extension://abc/x.html', 'about:blank', '', undefined, 'not a url']) {
+      expect(parseHttpUrl(url)).toBeNull();
+    }
+  });
+});
+
+describe('lib/domain isScopeWithin', () => {
+  const exact = domain => ({ domain, exact: true });
+  const wide = domain => ({ domain, exact: false });
+
+  it('isScopeWithin: exact scopes', () => {
+    expect(isScopeWithin(exact('a.example.com'), exact('a.example.com'))).toBe(true);
+    expect(isScopeWithin(exact('a.example.com'), exact('b.example.com'))).toBe(false);
+    expect(isScopeWithin(exact('a.example.com'), exact('example.com'))).toBe(false);
+  });
+
+  it('isScopeWithin: wide scopes', () => {
+    expect(isScopeWithin(wide('example.com'), wide('example.com'))).toBe(true);
+    expect(isScopeWithin(wide('app.example.com'), wide('example.com'))).toBe(true);
+    expect(isScopeWithin(wide('example.com'), wide('app.example.com'))).toBe(false);
+    expect(isScopeWithin(wide('example.com'), wide('other.com'))).toBe(false);
+    expect(isScopeWithin(wide('notexample.com'), wide('example.com'))).toBe(false);
+  });
+
+  it('isScopeWithin: mixed', () => {
+    expect(isScopeWithin(exact('app.example.com'), wide('example.com'))).toBe(true);
+    expect(isScopeWithin(exact('example.com'), wide('example.com'))).toBe(true);
+    expect(isScopeWithin(exact('other.com'), wide('example.com'))).toBe(false);
+    expect(isScopeWithin(wide('example.com'), exact('example.com'))).toBe(false);
+    expect(isScopeWithin(wide('app.example.com'), exact('example.com'))).toBe(false);
+  });
+
+  it('isScopeWithin reads a scope without exact as wide and returns a boolean', () => {
+    expect(isScopeWithin({ domain: 'example.com' }, exact('example.com'))).toBe(false);
+    expect(isScopeWithin({ domain: 'example.com' }, wide('example.com'))).toBe(true);
+    expect(isScopeWithin(exact('app.example.com'), { domain: 'example.com' })).toBe(true);
+  });
+});
 
 describe('lib/domain httpHostOf', () => {
   it('returns the lowercase host name of an http(s) URL, without the port', () => {

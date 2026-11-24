@@ -1,9 +1,10 @@
 import { t, getLang } from '../lib/i18n.js';
 import { formatBytes } from '../lib/snapshot-summary.js';
-import { describeChanges, TYPE_LABELS } from '../lib/data-compare.js';
+import { describeChanges } from '../lib/data-compare.js';
+import { TYPE_LABELS } from '../lib/data-types.js';
 import { setupMenu } from '../lib/menu.js';
 import { formatRelative } from '../lib/time.js';
-import { fillColorChip, memoText } from '../lib/snapshot-view.js';
+import { fillColorChip, memoText, searchQuery, matchesQuery } from '../lib/snapshot-view.js';
 import { $ } from '../lib/ui.js';
 import { openViewer } from '../lib/viewer-link.js';
 import { state, entryId, sameEntry, snapshotOf, entryOfRow, loadableTypes, typeNamesOf } from './context.js';
@@ -23,10 +24,10 @@ export function setRowActions(callbacks) {
 
 export function renderList() {
   const { entries } = state;
-  const query = $('searchInput').value.trim().toLowerCase();
-  const matches = entry => entry.name.toLowerCase().includes(query)
-    || Boolean(snapshotOf(entry).memo?.toLowerCase().includes(query));
-  const visible = query ? entries.filter(matches) : entries;
+  const query = searchQuery($('searchInput').value);
+  const visible = query
+    ? entries.filter(entry => matchesQuery(query, entry.name, memoText(snapshotOf(entry))))
+    : entries;
 
   $('searchBox').classList.toggle('hidden', entries.length < SEARCH_MIN && !query);
   $('emptyState').classList.toggle('hidden', entries.length > 0);
@@ -61,7 +62,20 @@ function buildRow(entry, index) {
   meta.textContent = formatRelative(snapshot.savedAt, getLang());
   meta.title = t('saved_at', { date: new Date(snapshot.savedAt).toLocaleString() });
   renderDetails(row, snapshot, state.summaries.get(entryId(entry)));
+  fillActiveBadges(row, entry, index);
 
+  const key = row.querySelector('.snapshot__key');
+  if (index < 9) key.textContent = String(index + 1);
+  else key.remove();
+
+  row.querySelector('.snapshot__main').addEventListener('click', () => rowActions.load(entry));
+  fillRowMenu(row, entry, index, isForeign);
+
+  return row;
+}
+
+function fillActiveBadges(row, entry, index) {
+  const isActive = sameEntry(entry, state.activeEntry);
   const activeBadge = row.querySelector('.badge--active');
   const partialTypes = isActive ? state.activeEntry.types : undefined;
   activeBadge.textContent = t(partialTypes ? 'badge_active_partial' : 'badge_active');
@@ -69,13 +83,12 @@ function buildRow(entry, index) {
   activeBadge.classList.toggle('hidden', !isActive);
   const modifiedBadge = row.querySelector('.badge--modified');
   const changesMenu = row.querySelector('.changes-menu');
-  if (isModified) setupChangesMenu(modifiedBadge, changesMenu, entry, index);
+  if (isActive && state.changes.length > 0) setupChangesMenu(modifiedBadge, changesMenu, entry, index);
   else changesMenu.remove();
+}
 
-  const key = row.querySelector('.snapshot__key');
-  if (index < 9) key.textContent = String(index + 1);
-  else key.remove();
-
+function fillRowMenu(row, entry, index, isForeign) {
+  const { name } = entry;
   const trigger = row.querySelector('.snapshot__more');
   const menu = row.querySelector('.actions-menu');
   trigger.id = `snapshot-more-${index}`;
@@ -95,7 +108,6 @@ function buildRow(entry, index) {
   // Another host's row already loads only its cookies, and one type leaves nothing to choose.
   if (isForeign || loadableTypes(entry).length < 2) menu.querySelector('[data-action="load-partial"]').remove();
 
-  row.querySelector('.snapshot__main').addEventListener('click', () => rowActions.load(entry));
   setupMenu(trigger, menu, action => {
     if (action === 'view') openViewer({ host: entry.host, name, tabId: state.activeTab.id });
     else if (action === 'overwrite') rowActions.overwrite(entry);
@@ -104,8 +116,6 @@ function buildRow(entry, index) {
     else if (action === 'edit') rowActions.editDetails(entry);
     else if (action === 'delete') rowActions.delete(entry);
   });
-
-  return row;
 }
 
 function renderDetails(row, snapshot, summary) {

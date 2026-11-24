@@ -2,7 +2,7 @@ import { initI18n, t, applyI18n, setLanguage, getSavedLangSetting } from '../lib
 import { getSettings, setSettings, getGroups } from '../lib/storage.js';
 import { clearAllData, migrateStorage } from '../lib/snapshot.js';
 import { showConfirm } from '../lib/dialog.js';
-import { $, notify, reportError } from '../lib/ui.js';
+import { $, notify, reportError, renderVersionFooter } from '../lib/ui.js';
 import { renderDomainList, markStale } from './domain-list.js';
 import { renderGroups, handleAddGroup } from './groups-pane.js';
 import { handleExport, handleImport } from './transfer-ui.js';
@@ -97,10 +97,6 @@ async function handleLanguageChange() {
   renderVersionFooter();
   await renderShortcutHint().catch(console.error);
   await renderAll();
-}
-
-function renderVersionFooter() {
-  $('versionFooter').textContent = t('footer_version', { version: chrome.runtime.getManifest().version });
 }
 
 // Other tabs are only reloaded along with the current one. A disabled box keeps

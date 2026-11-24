@@ -4,11 +4,12 @@ import { requestHostPermission, hasHostPermission } from '../lib/data-bridge.js'
 import { resolveScope } from '../lib/groups.js';
 import { migrateStorage } from '../lib/snapshot.js';
 import { fillGroupChip } from '../lib/snapshot-view.js';
+import { DATA_TYPES } from '../lib/data-types.js';
 import { $ } from '../lib/ui.js';
-import { state } from './context.js';
+import { state, enabledOf } from './context.js';
 import { renderList, setRowActions } from './list.js';
 import {
-  refresh, detectChanges, enabledTypeNames, startRename,
+  refresh, detectChanges, startRename,
   handleLoad, handleLoadPartial, handleOverwrite, handleEditDetails, handleDelete, handleIgnoreCookie,
   handleSaveNew, handleUndo, handleClearSite,
 } from './actions.js';
@@ -86,7 +87,7 @@ async function showMain(lists) {
   $('mainContent').classList.remove('hidden');
   await refresh(lists);
   // With every data type turned off there is nothing to clear.
-  $('clearSiteBtn').classList.toggle('hidden', enabledTypeNames().length === 0);
+  $('clearSiteBtn').classList.toggle('hidden', enabledOf(DATA_TYPES).length === 0);
   setupListeners();
   // Not awaited: the check reads the page, and the list is usable without it.
   detectChanges().catch(e => console.error(e));

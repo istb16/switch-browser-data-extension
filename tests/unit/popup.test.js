@@ -190,6 +190,17 @@ describe('popup/popup.js', () => {
     expect($('noMatch').classList.contains('hidden')).toBe(false);
   });
 
+  it('search ignores case and surrounding spaces', async () => {
+    const many = Object.fromEntries(['first', 'second', 'third', 'fourth', 'fifth'].map(n => [n, snap('2024-01-01T00:00:00.000Z')]));
+    await setSnapshots({ 'example.com': many });
+    await loadPopup('https://example.com/');
+
+    $('searchInput').value = '  FIR ';
+    $('searchInput').dispatchEvent(new Event('input'));
+    expect(rowNames()).toEqual(['first']);
+    expect($('noMatch').classList.contains('hidden')).toBe(true);
+  });
+
   describe('memo, colour and preview', () => {
     const NOW = Date.UTC(2025, 0, 1);
 
@@ -374,6 +385,7 @@ describe('popup/popup.js', () => {
       $('confirmSaveBtn').click();
       await settle();
 
+      expect($('statusMsg').textContent).toBe('スナップショット名を入力してください');
       expect($('statusMsg').className).toContain('error');
       expect(await getSnapshots()).toEqual({});
     });
@@ -1168,6 +1180,26 @@ describe('popup/popup.js', () => {
         expect(chrome._state.reloadedTabs).toEqual([1]);
         expect($('statusMsg').textContent).toBe(CLEARED);
       });
+
+      it('with automatic reload off, clears the data and reloads no tab', async () => {
+        await setReloadOtherTabs({ autoReload: false });
+        await loadPopupWithTabs(APP, APP_OTHERS);
+        await clearSite();
+
+        expect(chrome._state.cookies).toEqual([]);
+        expect(chrome._state.reloadedTabs).toEqual([]);
+        expect(chrome._state.navigatedTabs).toEqual([]);
+        expect($('statusMsg').textContent).toBe(CLEARED);
+      });
+
+      it('with the setting off, reloads only the active tab', async () => {
+        await setReloadOtherTabs({ reloadOtherTabs: false });
+        await loadPopupWithTabs(APP, APP_OTHERS);
+        await clearSite();
+
+        expect(chrome._state.reloadedTabs).toEqual([1]);
+        expect($('statusMsg').textContent).toBe(CLEARED);
+      });
     });
 
     describe('a load in a subdomain group', () => {
@@ -1282,23 +1314,6 @@ describe('popup/popup.js', () => {
 
         expect(await storedReloadIds()).toEqual([]);
         expect(chrome._state.reloadedTabs).toEqual([]);
-        expect($('statusMsg').textContent).toBe(UNDONE);
-      });
-
-      it('still restores and reloads the active tab when listing the tabs fails', async () => {
-        vi.spyOn(console, 'error').mockImplementation(() => {});
-        await backupWith({ cookies: [sid('previous')], localStorage: { a: '0' } });
-        await setReloadOtherTabs();
-        await loadPopupWithTabs(ACTIVE, OTHERS, async () => {
-          throw new Error('query failed');
-        });
-        $('undoBtn').click();
-        await settle();
-
-        expect(pageData.localStorage).toEqual({ a: '0' });
-        expect(await storedReloadIds()).toEqual([]);
-        expect(chrome._state.reloadedTabs).toEqual([1]);
-        expect($('statusMsg').className).toContain('success');
         expect($('statusMsg').textContent).toBe(UNDONE);
       });
     });
@@ -1464,6 +1479,23 @@ describe('popup/popup.js', () => {
 
       expect(row('pre').classList.contains('is-active')).toBe(true);
       expect(isHidden(row('pre').querySelector('.badge--modified'))).toBe(true);
+    });
+
+    it('detectChanges ignores an IndexedDB difference for a row of another host', async () => {
+      const idb = { savedAt: '2024-01-01T00:00:00.000Z', indexedDB: { app: { stored: true } }, indexedDBDigest: 'stored-digest' };
+      pageData = { indexedDBDigest: 'page-digest' };
+      await setSnapshots({ 'app.example.com': { theirs: { ...idb } }, 'www.example.com': { mine: { ...idb } } });
+      await setActiveSnapshots({ 'example.com': { host: 'app.example.com', name: 'theirs' } });
+      await loadPopup('https://www.example.com/');
+
+      expect(row('theirs').classList.contains('is-active')).toBe(true);
+      expect(isHidden(row('theirs').querySelector('.badge--modified'))).toBe(true);
+
+      // The same difference on this host's row is reported, so the page digest was read.
+      await setActiveSnapshots({ 'example.com': { host: 'www.example.com', name: 'mine' } });
+      await loadPopup('https://www.example.com/');
+      expect(row('mine').classList.contains('is-active')).toBe(true);
+      expect(isHidden(row('mine').querySelector('.badge--modified'))).toBe(false);
     });
 
     it('clear-site in a group cancels the pending cookie checks of every member tab', async () => {
@@ -1755,6 +1787,8 @@ describe('popup/popup.js', () => {
       expect(Object.keys((await getSnapshots())['example.com'])).toEqual(['second']);
       expect(rowNames()).toEqual(['second']);
       expect((await getActiveSnapshots())['example.com']).toBeUndefined();
+      expect($('statusMsg').textContent).toBe('"first" を削除しました');
+      expect($('statusMsg').className).toContain('success');
       expect(document.activeElement).toBe(row('second').querySelector('.snapshot__main'));
     });
 

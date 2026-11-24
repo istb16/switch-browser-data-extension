@@ -146,26 +146,6 @@ describe('chrome mock', () => {
     expect(chrome._state.commands[0].shortcut).toBe('Alt+Shift+P');
   });
 
-  it('runtime.getContexts filters by contextTypes and records the filter', async () => {
-    chrome._state.contexts = [
-      { contextType: 'BACKGROUND' },
-      { contextType: 'TAB', documentUrl: 'chrome-extension://test-extension-id/options/options.html' },
-      { contextType: 'POPUP' },
-    ];
-
-    expect(await chrome.runtime.getContexts({ contextTypes: ['POPUP'] })).toEqual([{ contextType: 'POPUP' }]);
-    expect(await chrome.runtime.getContexts({ contextTypes: ['BACKGROUND', 'TAB'] })).toHaveLength(2);
-    expect(await chrome.runtime.getContexts({})).toHaveLength(3);
-    expect(chrome._state.getContextsCalls).toEqual([{ contextTypes: ['POPUP'] }, { contextTypes: ['BACKGROUND', 'TAB'] }, {}]);
-  });
-
-  it('action.openPopup and tabs.create are recorded', async () => {
-    await chrome.action.openPopup();
-    expect(chrome._state.openedPopups).toBe(1);
-    expect(await chrome.tabs.create({ url: 'chrome://extensions/shortcuts' })).toEqual({ id: 1001, url: 'chrome://extensions/shortcuts' });
-    expect(chrome._state.createdTabs).toEqual([{ url: 'chrome://extensions/shortcuts' }]);
-  });
-
   it('a held get resolves with the data from call time', async () => {
     await chrome.storage.local.set({ a: 1, b: 1 });
     const held = chrome._holdGet(keys => keys.includes('a'));

@@ -1,8 +1,36 @@
-import { describe, it, expect } from 'vitest';
-import { badgeText, badgeColors, labelColorsOf } from '../../lib/badge.js';
+import { describe, it, expect, vi } from 'vitest';
+import { badgeText, badgeColors, labelColorsOf, drawBadge } from '../../lib/badge.js';
 import { formatRelative } from '../../lib/time.js';
 
 describe('lib/badge', () => {
+  it('drawBadge sets the text and both colours of the tab', async () => {
+    await drawBadge(3, 'Ad', badgeColors('amber'));
+    expect(chrome._state.badges[3]).toBe('Ad');
+    expect(chrome._state.badgeBackgrounds[3]).toBe('#F6B820');
+    expect(chrome._state.badgeTextColors[3]).toBe('#1B1C20');
+  });
+
+  it.each(['setBadgeText', 'setBadgeBackgroundColor', 'setBadgeTextColor'])(
+    'drawBadge still makes the other two calls when %s is refused', async (refused) => {
+      const spy = vi.spyOn(chrome.action, refused).mockRejectedValue(new Error('No tab with id: 4'));
+      try {
+        await expect(drawBadge(4, 'x', badgeColors('red'))).resolves.toEqual([undefined, undefined, undefined]);
+        expect(spy).toHaveBeenCalledTimes(1);
+      } finally {
+        spy.mockRestore();
+      }
+      const drawn = {
+        setBadgeText: chrome._state.badges[4],
+        setBadgeBackgroundColor: chrome._state.badgeBackgrounds[4],
+        setBadgeTextColor: chrome._state.badgeTextColors[4],
+      };
+      const expected = { setBadgeText: 'x', setBadgeBackgroundColor: '#C5221F', setBadgeTextColor: '#FFFFFF' };
+      for (const call of Object.keys(expected)) {
+        expect(drawn[call]).toBe(call === refused ? undefined : expected[call]);
+      }
+    },
+  );
+
   it('takes the first two characters, keeping emoji and combined characters whole', () => {
     expect(badgeText('Admin')).toBe('Ad');
     expect(badgeText('管理者')).toBe('管理');

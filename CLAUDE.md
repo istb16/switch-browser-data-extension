@@ -73,7 +73,7 @@ Chrome / Edge 向けブラウザ拡張機能。ドメインごとに Cookie・lo
 - **ショートカットで前のスナップショットに切り替え**: `commands` の `switch-previous` を押すと、ポップアップを開かずに Service Worker（`background/switch-command.js`）が、今のタブのサイトの「前のスナップショット」（`previousSnapshots`）を丸ごと読み込む。もう一度押すと元のスナップショットに戻るので、2つのアカウントを1つのキーで行き来できる
   - キーは既定で割り当てない（`suggested_key` なし。確認なしでサイトのデータを書き換えるので使う人が選ぶ。ぶつかる提案のキーは Chrome が黙って捨て、どのキーも Chrome・Edge・ほかの拡張機能のどこかと重なるため）。設定画面の「全般」に今の割り当て（`chrome.commands.getAll()`、なければ「未設定」）と、`chrome://extensions/shortcuts` を開くボタンを出し、ウィンドウの `focus` で読み直す（`options/shortcut-hint.js`）
   - 対象のタブは `onCommand` が渡すタブで、渡されないときだけ `chrome.tabs.query({ active: true, lastFocusedWindow: true })` の最初のもの。リスナーは Service Worker の読み込みで待たずに登録する（コマンドで起きた Worker が取りこぼさないため）
-  - 読み込みは `loadWholeSnapshot`（`lib/load-snapshot.js`）で、ポップアップの `state` を使わず、権限のダイアログも出さない（`collectData` `applyData` に `interactive: false`）。バックアップを残し、ページの保存領域、Cookie の順に適用し（サイトのデータの消去と同じく、ページが断ったときに Cookie、つまりログイン中のアカウントを変えないため。ポップアップの読み込みは Cookie が先のまま）、適用中に記録し（グループなら `{ host, name }`）、Cookie の確認待ち・今のタブとほかのタブの再読み込みはポップアップの丸ごとの読み込みと同じ。ポップアップの読み込み（`popup/actions.js`）はこれを使わない（一部だけ読み込む処理と `state` に結びついているため）
+  - 読み込みは `loadWholeSnapshot`（`lib/load-snapshot.js`）で、ポップアップの `state` を使わず、権限のダイアログも出さない（`collectData` `applyData` に `interactive: false`）。バックアップを残し、ページの保存領域、Cookie の順に適用し（サイトのデータの消去と同じく、ページが断ったときに Cookie、つまりログイン中のアカウントを変えないため。ポップアップの読み込みは Cookie が先のまま）、適用中に記録し（グループなら `{ host, name }`）、Cookie の確認待ち・今のタブとほかのタブの再読み込みはポップアップの丸ごとの読み込みと同じ（どちらも `reloadAfterApply`（`lib/tab-reload.js`）を通す）。ポップアップの読み込み（`popup/actions.js`）はこれを使わない（一部だけ読み込む処理と `state` に結びついているため）
   - 失敗はタブのバッジの `!`（ふだんのバッジの色で、4秒後にタブを `chrome.tabs.get` で読み直して、今のサイトのバッジ（文字と色）を描き直す。閉じたタブは描かない。4秒の間は、適用中の記録の変化やタブの読み込みで始まるバッジの描き直しがそのタブを飛ばす（`isFlashing`。切り替えそのものが記録を変えて再読み込みするので、すぐに消えてしまうため））、`commandNotice` に残す知らせ、`chrome.action.openPopup()` で伝える。`openPopup` がない（Chrome 127 より前）・断られる（ウィンドウにフォーカスがない）ときは `!` と知らせだけで、知らせは60秒の間そのタブで同じホストのままポップアップを開いたときに出る。上から順に確かめる
 
     | 場合 | 動き |
@@ -226,12 +226,13 @@ graph TD
   root --> lib["lib/"]
   lib --> storage_js["storage.js｜chrome.storage.local ラッパー（キーと既定値の表、ホストごとのキーと索引）"]
   lib --> snapshot_js["snapshot.js｜スナップショット CRUD・保存データの形の変換（migrateStorage・SCHEMA_VERSION）"]
-  lib --> domain_js["domain.js｜ホストが範囲に入るか（isWithin）・http(s) のホスト名（httpHostOf）・Cookie の範囲の正規化"]
+  lib --> domain_js["domain.js｜ホストが範囲に入るか（isWithin）・http(s) の URL の読み取り（parseHttpUrl）とホスト名（httpHostOf）・Cookie の範囲の正規化と包含（isScopeWithin）"]
+  lib --> data_types_js["data-types.js｜データ種別の一覧（DATA_TYPES・PAGE_TYPES）と表示名・プレーンなオブジェクトの判定"]
   lib --> view_js["snapshot-view.js｜色ラベル・メモ・グループのチップの表示（ポップアップ・設定画面で共通）"]
   lib --> handlers_js["web-storage-handlers.js / indexeddb-handler.js｜ページの保存領域の読み書き（コンテンツスクリプトの非モジュール）"]
   lib --> cookie_js["cookie-handler.js｜Cookie 保存・復元"]
   lib --> bridge_js["data-bridge.js｜データの収集・適用"]
-  lib --> load_js["load-snapshot.js｜ポップアップの状態を使わない丸ごとの読み込み（ショートカット用）"]
+  lib --> load_js["load-snapshot.js｜ポップアップの状態を使わない丸ごとの読み込み（ショートカット用。バックアップとページの保存領域・Cookie の順の適用。再読み込みは tab-reload.js）"]
   lib --> compare_js["data-compare.js｜スナップショットと現在のデータの比較"]
   lib --> diff_js["snapshot-diff.js｜中身の表示の行と項目ごとの突き合わせ（読み込む範囲・比べる範囲）"]
   lib --> viewer_link_js["viewer-link.js｜中身の表示を開く URL の組み立てと新しいタブ"]
@@ -242,6 +243,7 @@ graph TD
   lib --> summary_js["snapshot-summary.js｜件数の集計、大きさ（bytes の記録と sizeOf）、メモと色の整形"]
   lib --> groups_js["groups.js｜サブドメインのグループと Cookie の範囲"]
   lib --> site_tabs_js["site-tabs.js｜書き換えたデータを見ているほかのタブの選択と再読み込み"]
+  lib --> tab_reload_js["tab-reload.js｜書き込みのあとの Cookie の確認待ちと再読み込み（ポップアップ・ショートカットで共通の reloadAfterApply）"]
   lib --> transfer_js["transfer.js｜エクスポート・インポートの組み立てと検証"]
   lib --> crypto_js["crypto.js｜エクスポートファイルの暗号化（Web Crypto）"]
   lib --> etc_js["badge.js / time.js / dialog.js / i18n.js / ui.js"]

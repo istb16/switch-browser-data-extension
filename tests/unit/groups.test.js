@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
-  normalizeGroupDomain, validateNewGroup, resolveScope, memberHosts, activeRef, addGroup, removeGroup,
+  normalizeGroupDomain, validateNewGroup, resolveScope, memberHosts, activeRef, activeValueFor, addGroup, removeGroup,
 } from '../../lib/groups.js';
 import { getGroups, setGroups, getActiveSnapshots, setActiveSnapshots } from '../../lib/storage.js';
 
@@ -63,6 +63,17 @@ describe('lib/groups', () => {
     const ref = { host: 'app.example.com', name: 'second' };
     expect(activeRef(ref, 'example.com')).toBe(ref);
     expect(activeRef(undefined, 'example.com')).toBeNull();
+  });
+
+  it('activeValueFor', () => {
+    const alone = resolveScope('example.com', []);
+    const group = resolveScope('app.example.com', ['example.com']);
+    expect(activeValueFor(alone, { host: 'example.com', name: 'a' })).toBe('a');
+    expect(activeValueFor(group, { host: 'www.example.com', name: 'a' })).toEqual({ host: 'www.example.com', name: 'a' });
+    expect(activeValueFor(alone, { host: 'example.com', name: 'a', types: ['cookies'] }))
+      .toEqual({ host: 'example.com', name: 'a', types: ['cookies'] });
+    expect(activeValueFor(group, { host: 'app.example.com', name: 'a', types: ['localStorage'] }))
+      .toEqual({ host: 'app.example.com', name: 'a', types: ['localStorage'] });
   });
 
   it('addGroup stores the normalized base and refuses an invalid one', async () => {

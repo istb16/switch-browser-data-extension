@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { collectData, applyData, clearData, canReachPage, cookieDomainFor } from '../../lib/data-bridge.js';
+import { collectData, applyData, clearData, canReachPage, cookieDomainFor, hasPageType } from '../../lib/data-bridge.js';
 import { resolveScope } from '../../lib/groups.js';
 
 const HOST = resolveScope('example.com', []);
@@ -72,13 +72,6 @@ describe('lib/data-bridge collectData', () => {
 });
 
 describe('lib/data-bridge applyData', () => {
-  it('restores cookies for the domain when types.cookies is true and permission is granted', async () => {
-    await applyData(1, HOST, { cookies: [{ name: 'a', value: '1', domain: 'example.com', path: '/', secure: false, httpOnly: false, sameSite: 'lax' }] }, {
-      cookies: true, localStorage: false, sessionStorage: false, indexedDB: false,
-    });
-    expect(chrome._state.cookies.some(c => c.name === 'a')).toBe(true);
-  });
-
   it('sends only the enabled + present storage types to the content script', async () => {
     chrome.tabs.sendMessage = vi.fn().mockResolvedValue({ success: true });
 
@@ -149,9 +142,10 @@ describe('lib/data-bridge applyData', () => {
   });
 
   it('reports the cookies as applied only when the permission is granted', async () => {
-    const snapshot = { cookies: [{ name: 'a', value: '1', domain: 'example.com', path: '/' }] };
+    const snapshot = { cookies: [{ name: 'a', value: '1', domain: 'example.com', path: '/', secure: false, httpOnly: false, sameSite: 'lax' }] };
     const types = { cookies: true, localStorage: false, sessionStorage: false, indexedDB: false };
     expect(await applyData(1, HOST, snapshot, types)).toMatchObject({ cookiesApplied: true });
+    expect(chrome._state.cookies.some(c => c.name === 'a' && c.value === '1' && c.domain === 'example.com')).toBe(true);
 
     chrome.permissions.request = vi.fn().mockResolvedValue(false);
     expect(await applyData(1, A_COM, { cookies: [{ name: 'a', value: '1', domain: 'a.com', path: '/' }] }, types))
@@ -173,6 +167,40 @@ describe('lib/data-bridge applyData', () => {
     expect(await applyData(1, A_COM, snapshot, types, 'a.com', { interactive: false })).toMatchObject({ cookiesApplied: true });
     expect(chrome.permissions.request).not.toHaveBeenCalled();
     expect(chrome._state.cookies.some(c => c.domain === 'a.com')).toBe(true);
+  });
+
+  it('interactive applyData without the permission calls permissions.request', async () => {
+    chrome.permissions.request = vi.fn().mockResolvedValue(false);
+    const types = { cookies: true, localStorage: false, sessionStorage: false, indexedDB: false };
+    const snapshot = { cookies: [{ name: 'a', value: '1', domain: 'a.com', path: '/' }] };
+
+    expect(await applyData(1, A_COM, snapshot, types)).toMatchObject({ cookiesApplied: false });
+    expect(chrome.permissions.request).toHaveBeenCalledTimes(1);
+    expect(chrome.permissions.request).toHaveBeenCalledWith({ origins: ['*://a.com/*'] });
+  });
+});
+
+describe('lib/data-bridge permission without a prompt', () => {
+  it('collectData with interactive: false and the permission missing returns no cookies and never calls permissions.request', async () => {
+    chrome.permissions.request = vi.fn().mockResolvedValue(true);
+    chrome._state.cookies.push({ name: 'a', value: '1', domain: 'a.com', path: '/', secure: false, httpOnly: false });
+    const types = { cookies: true, localStorage: false, sessionStorage: false, indexedDB: false };
+
+    const data = await collectData(1, A_COM, types, { interactive: false });
+    expect(data).not.toHaveProperty('cookies');
+    expect(chrome.permissions.request).not.toHaveBeenCalled();
+  });
+});
+
+describe('lib/data-bridge hasPageType', () => {
+  it('hasPageType is true for any one page type and false for cookies only or nothing', () => {
+    const none = { cookies: false, localStorage: false, sessionStorage: false, indexedDB: false };
+    for (const type of ['localStorage', 'sessionStorage', 'indexedDB']) {
+      expect(hasPageType({ ...none, [type]: true })).toBe(true);
+    }
+    expect(hasPageType({ ...none, cookies: true })).toBe(false);
+    expect(hasPageType(none)).toBe(false);
+    expect(hasPageType({})).toBe(false);
   });
 });
 
@@ -341,6 +369,16 @@ describe('lib/data-bridge in a subdomain group', () => {
     expect(cookieDomainFor({ cookieDomain: 'www.example.com' }, 'app.example.com', APP)).toEqual(wide('www.example.com'));
     // An exact capture under another host of the group stays on that host.
     expect(cookieDomainFor({}, 'www.example.com', APP)).toEqual(exact('www.example.com'));
+  });
+
+  it('cookieDomainFor with a narrower captured scope returns it, and with a narrower current scope returns the current one', () => {
+    const WWW = resolveScope('www.example.com', GROUP);
+    // Captured on www.example.com inside the group: narrower than the group's scope.
+    expect(cookieDomainFor({ cookieDomain: 'www.example.com' }, 'www.example.com', WWW))
+      .toEqual({ domain: 'www.example.com', exact: false });
+    // Captured over a wider domain than the group: the group's scope is the narrower one.
+    expect(cookieDomainFor({ cookieDomain: 'com' }, 'www.example.com', WWW))
+      .toEqual({ domain: 'example.com', exact: false });
   });
 
   it('cookieDomainFor outside a group never leaves the current host', () => {

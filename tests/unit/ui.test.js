@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { $, escHtml, showStatus, notify, reportError } from '../../lib/ui.js';
+import { $, escHtml, showStatus, notify, reportError, renderVersionFooter } from '../../lib/ui.js';
 import { MESSAGES } from '../../lib/i18n.js';
 
 describe('lib/ui', () => {
@@ -66,8 +66,8 @@ describe('lib/ui', () => {
       expect(el.textContent).toBe(MESSAGES.ja.status_saved.replace('{name}', 'A'));
       expect(el.className).toBe('status-msg success');
 
-      notify('error_enter_name', {}, 'error');
-      expect(el.textContent).toBe(MESSAGES.ja.error_enter_name);
+      notify('error_empty_name', {}, 'error');
+      expect(el.textContent).toBe(MESSAGES.ja.error_empty_name);
       expect(el.className).toBe('status-msg error');
     });
 
@@ -80,5 +80,12 @@ describe('lib/ui', () => {
       expect(el.className).toBe('status-msg error');
       expect(log).toHaveBeenCalledWith(error);
     });
+  });
+
+  it('renderVersionFooter writes the manifest version', () => {
+    document.body.innerHTML = '<footer><span id="versionFooter"></span></footer>';
+    chrome._state.manifest.version = '9.8.7';
+    renderVersionFooter();
+    expect($('versionFooter').textContent).toBe(MESSAGES.ja.footer_version.replace('{version}', '9.8.7'));
   });
 });
