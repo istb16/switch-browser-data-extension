@@ -168,6 +168,70 @@ describe('lib/load-snapshot loadWholeSnapshot', () => {
     expect(chrome._state.storage.activeSnapshots).toEqual({ 'example.com': 'alice' });
   });
 
+  it('writes the page before the cookies', async () => {
+    const setCookie = vi.spyOn(chrome.cookies, 'set');
+    await load();
+    const { calls, invocationCallOrder } = chrome.tabs.sendMessage.mock;
+    const pageOrder = invocationCallOrder[calls.findIndex(([, message]) => message.type === 'setStorageData')];
+    expect(setCookie).toHaveBeenCalled();
+    expect(pageOrder).toBeLessThan(Math.min(...setCookie.mock.invocationCallOrder));
+  });
+
+  it('leaves the cookies and puts the page back from the backup when the page write fails', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    let writes = 0;
+    pageReplies.setStorageData = async () => (++writes === 1 ? { error: 'IndexedDB is blocked' } : { success: true });
+    await expect(load()).rejects.toThrow('IndexedDB is blocked');
+    expect(chrome._state.cookies.find(c => c.name === 'sid').value).toBe('alice');
+    const sent = messagesOf('setStorageData').map(([, message]) => message);
+    expect(sent).toHaveLength(2);
+    expect(sent[1]).toMatchObject({ data: { localStorage: { user: 'alice' } }, origin: 'https://example.com' });
+    expect(sent[1].types.cookies).toBe(false);
+  });
+
+  it('puts the page back from the backup when a page write is not confirmed', async () => {
+    let writes = 0;
+    pageReplies.setStorageData = async () => (++writes === 1 ? undefined : { success: true });
+    await expect(load()).rejects.toThrow('page storage not written');
+    expect(chrome._state.cookies.find(c => c.name === 'sid').value).toBe('alice');
+    expect(messagesOf('setStorageData').map(([, message]) => message.data)).toEqual([
+      { localStorage: { user: 'bob' } }, { localStorage: { user: 'alice' } },
+    ]);
+    expect(chrome._state.storage.activeSnapshots).toEqual({ 'example.com': 'alice' });
+  });
+
+  it('puts the page back even when the cookie jar keeps failing', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const realGetAll = chrome.cookies.getAll;
+    let reads = 0;
+    vi.spyOn(chrome.cookies, 'getAll').mockImplementation(async filter => {
+      if (++reads >= 2) throw new Error('cookie store unavailable');
+      return realGetAll(filter);
+    });
+    await expect(load()).rejects.toThrow('cookie store unavailable');
+    expect(messagesOf('setStorageData').map(([, message]) => message.data)).toEqual([
+      { localStorage: { user: 'bob' } }, { localStorage: { user: 'alice' } },
+    ]);
+    expect(chrome._state.storage.activeSnapshots).toEqual({ 'example.com': 'alice' });
+  });
+
+  it('puts the page and the cookies back from the backup when the cookie write fails', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const realGetAll = chrome.cookies.getAll;
+    let reads = 0;
+    // The first read is the backup's; the second is the switch's own write.
+    vi.spyOn(chrome.cookies, 'getAll').mockImplementation(async filter => {
+      if (++reads === 2) throw new Error('cookie store unavailable');
+      return realGetAll(filter);
+    });
+    await expect(load()).rejects.toThrow('cookie store unavailable');
+    expect(messagesOf('setStorageData').map(([, message]) => message.data)).toEqual([
+      { localStorage: { user: 'bob' } }, { localStorage: { user: 'alice' } },
+    ]);
+    expect(chrome._state.cookies.find(c => c.name === 'sid').value).toBe('alice');
+    expect(chrome._state.storage.activeSnapshots).toEqual({ 'example.com': 'alice' });
+  });
+
   it.each([
     ['reports an error', async () => ({ error: 'read failed' })],
     ['does not answer', async () => undefined],

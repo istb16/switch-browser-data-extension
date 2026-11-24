@@ -326,9 +326,19 @@ describe('background/switch-command', () => {
     await press();
     expectRefused('error_load_failed');
     expect(page.user).toBe('alice');
+    expect(sid()).toBe('alice');
     expect(stored('activeSnapshots')).toEqual({ 'example.com': 'alice' });
     expect(stored('previousSnapshots')).toEqual({ 'example.com': { host: 'example.com', name: 'bob' } });
     expect((await getBackups())['example.com']).toMatchObject({ localStorage: { user: 'alice' } });
+  });
+
+  it('a page that refuses the write keeps the signed-in account', async () => {
+    page.setStorageData = async () => ({ error: 'origin mismatch' });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await press();
+    expectRefused('error_load_failed');
+    expect(sid()).toBe('alice');
+    expect(stored('activeSnapshots')).toEqual({ 'example.com': 'alice' });
   });
 
   it('with cookies turned off switches the storage without the host permission', async () => {
@@ -413,6 +423,36 @@ describe('background/switch-command', () => {
       await chrome.storage.local.set({ settings: { showBadge: false, autoBackup: false } });
       await vi.advanceTimersByTimeAsync(4000);
       expect(chrome._state.badges[1]).toBe('');
+    });
+
+    it('shows the new name for 4 s after a switch with the badge off', async () => {
+      await chrome.storage.local.set({ settings: { showBadge: false }, previousSnapshots: { 'example.com': { host: 'example.com', name: 'bob' } } });
+      await press();
+      expect(sid()).toBe('bob');
+      expect(chrome._state.badges[1]).toBe('bo');
+
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(chrome._state.badges[1]).toBe('');
+    });
+
+    it('keeps the flash through the redraws the switch itself starts', async () => {
+      await chrome.storage.local.set({ settings: { showBadge: false }, previousSnapshots: { 'example.com': { host: 'example.com', name: 'bob' } } });
+      await press();
+      chrome._deliverStorageEvents();
+      chrome.tabs.onUpdated.dispatch(1, { status: 'complete' }, chrome._state.tabs[0]);
+      await vi.advanceTimersByTimeAsync(3900);
+      expect(chrome._state.badges[1]).toBe('bo');
+
+      await vi.advanceTimersByTimeAsync(100);
+      expect(chrome._state.badges[1]).toBe('');
+    });
+
+    it('does not flash the name after a switch with the badge on', async () => {
+      await chrome.storage.local.set({ previousSnapshots: { 'example.com': { host: 'example.com', name: 'bob' } } });
+      const setBadgeText = vi.spyOn(chrome.action, 'setBadgeText');
+      await press();
+      expect(sid()).toBe('bob');
+      expect(setBadgeText).not.toHaveBeenCalledWith(expect.objectContaining({ text: 'bo' }));
     });
 
     it('draws the new site\'s badge on a tab that navigated within 4 s', async () => {

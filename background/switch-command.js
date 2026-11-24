@@ -3,7 +3,7 @@
 // tab's badge and a notice the popup shows when it opens.
 
 import { readKeys, getSnapshotsFor } from '../lib/storage.js';
-import { badgeColors } from '../lib/badge.js';
+import { badgeColors, badgeText } from '../lib/badge.js';
 import { resolveScope, activeRef } from '../lib/groups.js';
 import { hasHostPermission, canReachPage } from '../lib/data-bridge.js';
 import { loadWholeSnapshot, pageTypesOf } from '../lib/load-snapshot.js';
@@ -16,14 +16,28 @@ const FLASH_MS = 4000;
 // Key repeat fires the command again while a switch is still running.
 let busy = false;
 
+// Tab id → the flash now shown on it. The switch itself changes the active record
+// and reloads the tab, and the badge redraws those start would otherwise wipe the
+// flash out at once.
+const flashes = new Map();
+
+export function isFlashing(tabId) {
+  return flashes.has(tabId);
+}
+
 // The tab may have navigated within the delay, so it is read again and drawn as it
 // is now; a closed tab is skipped.
-function flash(tab, redraw) {
+function flash(tab, redraw, label = '!') {
+  const token = {};
+  flashes.set(tab.id, token);
   const { background, text } = badgeColors();
-  chrome.action.setBadgeText({ tabId: tab.id, text: '!' }).catch(() => {});
+  chrome.action.setBadgeText({ tabId: tab.id, text: label }).catch(() => {});
   chrome.action.setBadgeBackgroundColor({ tabId: tab.id, color: background }).catch(() => {});
   chrome.action.setBadgeTextColor({ tabId: tab.id, color: text }).catch(() => {});
   setTimeout(() => {
+    // A later flash on the same tab owns its own timer.
+    if (flashes.get(tab.id) !== token) return;
+    flashes.delete(tab.id);
     chrome.tabs.get(tab.id).then(redraw, () => {}).catch(console.error);
   }, FLASH_MS);
 }
@@ -96,6 +110,9 @@ export async function switchToPrevious(tab, redraw) {
     tab, scope, settings, entry, snapshot, activeBefore: active[scope.key] ?? null,
   });
   if (!result.backedUp) return fail(tab, 'shortcut_backup_failed', redraw);
+  // With the badge off the switch would show nothing at all when auto reload is off
+  // too, so the name is shown for a moment either way.
+  if (!settings.showBadge) flash(tab, redraw, badgeText(entry.name));
 }
 
 async function runCommand(tab, redraw) {

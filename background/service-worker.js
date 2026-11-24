@@ -5,7 +5,7 @@ import { getCookiesForDomain, cookiesWithin } from '../lib/cookie-handler.js';
 import { hasHostPermission } from '../lib/data-bridge.js';
 import { takeCookieCheck, learnVolatileCookies } from '../lib/volatile-cookies.js';
 import { reloadTabsStillOn } from '../lib/site-tabs.js';
-import { registerSwitchCommand } from './switch-command.js';
+import { registerSwitchCommand, isFlashing } from './switch-command.js';
 
 // Scripts on the page may still set cookies just after the load completes.
 const SETTLE_MS = 3000;
@@ -125,7 +125,8 @@ async function updateTabs(tabs) {
   // A badge key or a label changed while this draw was reading; the update started
   // by that change draws every tab, and this older state must not overwrite it.
   if (generation !== badgeGeneration) return;
-  await Promise.all(badges.filter(({ tabId }) => newest.has(tabId)).map(({ tabId, text, colors }) => Promise.all([
+  // A flash from the shortcut keeps its tab until its own timer redraws it.
+  await Promise.all(badges.filter(({ tabId }) => newest.has(tabId) && !isFlashing(tabId)).map(({ tabId, text, colors }) => Promise.all([
     chrome.action.setBadgeText({ tabId, text }).catch(() => {}),
     chrome.action.setBadgeBackgroundColor({ tabId, color: colors.background }).catch(() => {}),
     chrome.action.setBadgeTextColor({ tabId, color: colors.text }).catch(() => {}),
