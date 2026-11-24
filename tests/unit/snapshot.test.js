@@ -126,6 +126,47 @@ describe('lib/snapshot', () => {
       expect(await getActiveSnapshots()).toEqual({ 'example.com': 'renamed', 'other.com': 'x' });
     });
 
+    for (const order of ['switch first', 'rename first']) {
+      it(`concurrent setActiveSnapshot and renameSnapshot leave previous consistent (${order})`, async () => {
+        const { setActiveSnapshot } = await import('../../lib/snapshot.js');
+        const { setActiveSnapshots, getActiveSnapshots, getPreviousSnapshots } = await import('../../lib/storage.js');
+        await saveSnapshot('example.com', 'a', {});
+        await saveSnapshot('example.com', 'b', {});
+        await setActiveSnapshots({ 'example.com': 'a' });
+
+        const tasks = [
+          () => setActiveSnapshot('example.com', 'b'),
+          () => renameSnapshot('example.com', 'a', 'renamed'),
+        ];
+        if (order === 'rename first') tasks.reverse();
+        await Promise.all(tasks.map(task => task()));
+
+        expect(await getActiveSnapshots()).toEqual({ 'example.com': 'b' });
+        expect(await getPreviousSnapshots()).toEqual({ 'example.com': { host: 'example.com', name: 'renamed' } });
+      });
+    }
+
+    for (const order of ['switch first', 'delete first']) {
+      it(`concurrent setActiveSnapshot and deleteSnapshot of the previous leave no previous (${order})`, async () => {
+        const { setActiveSnapshot } = await import('../../lib/snapshot.js');
+        const { setActiveSnapshots, getActiveSnapshots, getPreviousSnapshots, getSnapshotsFor } = await import('../../lib/storage.js');
+        await saveSnapshot('example.com', 'a', {});
+        await saveSnapshot('example.com', 'b', {});
+        await setActiveSnapshots({ 'example.com': 'a' });
+
+        const tasks = [
+          () => setActiveSnapshot('example.com', 'b'),
+          () => deleteSnapshot('example.com', 'a'),
+        ];
+        if (order === 'delete first') tasks.reverse();
+        await Promise.all(tasks.map(task => task()));
+
+        expect(await getActiveSnapshots()).toEqual({ 'example.com': 'b' });
+        expect((await getPreviousSnapshots())['example.com']).toBeUndefined();
+        expect(Object.keys((await getSnapshotsFor(['example.com']))['example.com'])).toEqual(['b']);
+      });
+    }
+
     it('a backup saved while all data is cleared does not bring the old backups back', async () => {
       const { saveBackup, clearAllData } = await import('../../lib/snapshot.js');
       const { getBackups } = await import('../support/storage-seed.js');
@@ -331,6 +372,109 @@ describe('lib/snapshot — active snapshot and backup', () => {
   });
 });
 
+describe('lib/snapshot — previous snapshot', () => {
+  async function setup() {
+    const { setActiveSnapshot } = await import('../../lib/snapshot.js');
+    const storage = await import('../../lib/storage.js');
+    return { setActiveSnapshot, ...storage };
+  }
+
+  it('records the previous snapshot on a change to another one', async () => {
+    const { setActiveSnapshot, setActiveSnapshots, getPreviousSnapshots } = await setup();
+    await setActiveSnapshot('a.com', 'x');
+    await setActiveSnapshot('a.com', 'y');
+    expect(await getPreviousSnapshots()).toEqual({ 'a.com': { host: 'a.com', name: 'x' } });
+
+    await setActiveSnapshots({ 'example.com': { host: 'app.example.com', name: 'x' } });
+    await setActiveSnapshot('example.com', { host: 'www.example.com', name: 'x' });
+    expect((await getPreviousSnapshots())['example.com']).toEqual({ host: 'app.example.com', name: 'x' });
+  });
+
+  it('a partial active record becomes previous without its types', async () => {
+    const { setActiveSnapshot, setActiveSnapshots, getPreviousSnapshots } = await setup();
+    await setActiveSnapshots({ 'a.com': { host: 'a.com', name: 'x', types: ['cookies'] } });
+    await setActiveSnapshot('a.com', 'y');
+    expect(await getPreviousSnapshots()).toEqual({ 'a.com': { host: 'a.com', name: 'x' } });
+  });
+
+  it('the same snapshot or a change of types only keeps previous', async () => {
+    const { setActiveSnapshot, setActiveSnapshots, setPreviousSnapshots, getPreviousSnapshots } = await setup();
+    const previous = { 'a.com': { host: 'a.com', name: 'p' } };
+    await setPreviousSnapshots(previous);
+    await setActiveSnapshots({ 'a.com': 'x' });
+
+    await setActiveSnapshot('a.com', 'x');
+    await setActiveSnapshot('a.com', { host: 'a.com', name: 'x', types: ['cookies'] });
+    await setActiveSnapshot('a.com', { host: 'a.com', name: 'x', types: ['cookies', 'localStorage'] });
+    await setActiveSnapshot('a.com', 'x');
+
+    expect(await getPreviousSnapshots()).toEqual(previous);
+  });
+
+  it('clearing the active record keeps previous', async () => {
+    const { setActiveSnapshot, setActiveSnapshots, setPreviousSnapshots, getPreviousSnapshots } = await setup();
+    await setPreviousSnapshots({ 'a.com': { host: 'a.com', name: 'p' } });
+    await setActiveSnapshots({ 'a.com': 'x' });
+    await setActiveSnapshot('a.com', null);
+    expect(await getPreviousSnapshots()).toEqual({ 'a.com': { host: 'a.com', name: 'p' } });
+  });
+
+  it('no active record → a snapshot keeps previous, and writes none when there is none', async () => {
+    const { setActiveSnapshot, setPreviousSnapshots, getPreviousSnapshots } = await setup();
+    await setActiveSnapshot('b.com', 'y');
+    expect('previousSnapshots' in chrome._state.storage).toBe(false);
+
+    await setPreviousSnapshots({ 'a.com': { host: 'a.com', name: 'p' } });
+    await setActiveSnapshot('a.com', 'y');
+    expect(await getPreviousSnapshots()).toEqual({ 'a.com': { host: 'a.com', name: 'p' } });
+  });
+
+  it('a clear then an undo keeps previous', async () => {
+    const { setActiveSnapshot, setActiveSnapshots, setPreviousSnapshots, getPreviousSnapshots, getActiveSnapshots } = await setup();
+    await setPreviousSnapshots({ 'a.com': { host: 'a.com', name: 'p' } });
+    await setActiveSnapshots({ 'a.com': 'x' });
+    await setActiveSnapshot('a.com', null);
+    await setActiveSnapshot('a.com', 'x');
+    expect(await getActiveSnapshots()).toEqual({ 'a.com': 'x' });
+    expect(await getPreviousSnapshots()).toEqual({ 'a.com': { host: 'a.com', name: 'p' } });
+  });
+
+  it('the active and previous records go out in one set', async () => {
+    const { setActiveSnapshot, setActiveSnapshots } = await setup();
+    await setActiveSnapshots({ 'a.com': 'x' });
+    const set = vi.spyOn(chrome.storage.local, 'set');
+
+    await setActiveSnapshot('a.com', 'y');
+
+    expect(set).toHaveBeenCalledTimes(1);
+    expect(set.mock.calls[0][0]).toEqual({
+      activeSnapshots: { 'a.com': 'y' },
+      previousSnapshots: { 'a.com': { host: 'a.com', name: 'x' } },
+    });
+    set.mockRestore();
+  });
+
+  it('rename and delete rewrite previousSnapshots', async () => {
+    const { setPreviousSnapshots, getPreviousSnapshots } = await setup();
+    await saveSnapshot('a.com', 'x', {});
+    await saveSnapshot('app.example.com', 'x', {});
+    await setPreviousSnapshots({
+      'a.com': { host: 'a.com', name: 'x' },
+      'example.com': { host: 'app.example.com', name: 'x' },
+    });
+
+    await renameSnapshot('a.com', 'x', 'z');
+    await renameSnapshot('app.example.com', 'x', 'w');
+    expect(await getPreviousSnapshots()).toEqual({
+      'a.com': { host: 'a.com', name: 'z' },
+      'example.com': { host: 'app.example.com', name: 'w' },
+    });
+
+    await deleteSnapshot('app.example.com', 'w');
+    expect(await getPreviousSnapshots()).toEqual({ 'a.com': { host: 'a.com', name: 'z' } });
+  });
+});
+
 describe('lib/snapshot — clearAllData', () => {
   it('empties snapshots, their order, the active snapshots and the backups', async () => {
     const { clearAllData, setActiveSnapshot, saveBackup } = await import('../../lib/snapshot.js');
@@ -362,8 +506,22 @@ describe('lib/snapshot — clearAllData', () => {
     await clearAllData();
 
     expect(Object.keys(chrome._state.storage).sort()).toEqual([
-      'activeSnapshots', 'cookieChecks', 'groups', 'language', 'settings', 'snapshotOrder', 'volatileCookies',
+      'activeSnapshots', 'cookieChecks', 'groups', 'language', 'previousSnapshots', 'settings', 'snapshotOrder',
+      'volatileCookies',
     ]);
+  });
+
+  it('clearAllData empties previousSnapshots and removes commandNotice', async () => {
+    const { clearAllData } = await import('../../lib/snapshot.js');
+    await chrome.storage.local.set({
+      previousSnapshots: { 'a.com': { host: 'a.com', name: 'x' } },
+      commandNotice: { tabId: 1, key: 'shortcut_no_previous', until: 0 },
+    });
+
+    await clearAllData();
+
+    expect(await chrome.storage.local.get(['previousSnapshots', 'commandNotice']))
+      .toEqual({ previousSnapshots: {} });
   });
 
   it('clearAllData keeps groups and settings', async () => {

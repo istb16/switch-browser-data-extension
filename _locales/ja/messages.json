@@ -4,5 +4,8 @@
   },
   "description": {
     "message": "ログイン状態などCookie, LocalStorageなどのブラウザデータをスナップショット保存し、ワンクリックでドメインごとに切り替えます。"
+  },
+  "command_switch_previous": {
+    "message": "前のスナップショットに切り替える"
   }
 }

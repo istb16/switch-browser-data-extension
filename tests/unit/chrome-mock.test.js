@@ -127,6 +127,45 @@ describe('chrome mock', () => {
     expect(chrome._state.badgeDefaultTextColor).toBe('#111111');
   });
 
+  it('commands.onCommand dispatches to its listeners and reports whether it has any; getAll returns the state', async () => {
+    expect(chrome.commands.onCommand.hasListeners()).toBe(false);
+    const listener = vi.fn(async command => `ran ${command}`);
+    chrome.commands.onCommand.addListener(listener);
+    expect(chrome.commands.onCommand.hasListeners()).toBe(true);
+
+    const results = chrome.commands.onCommand.dispatch('switch-previous', { id: 1 });
+    expect(await Promise.all(results)).toEqual(['ran switch-previous']);
+    expect(listener).toHaveBeenCalledWith('switch-previous', { id: 1 });
+
+    chrome.commands.onCommand.removeListener(listener);
+    expect(chrome.commands.onCommand.hasListeners()).toBe(false);
+
+    chrome._state.commands = [{ name: 'switch-previous', shortcut: 'Alt+Shift+P' }];
+    const all = await chrome.commands.getAll();
+    all[0].shortcut = '';
+    expect(chrome._state.commands[0].shortcut).toBe('Alt+Shift+P');
+  });
+
+  it('runtime.getContexts filters by contextTypes and records the filter', async () => {
+    chrome._state.contexts = [
+      { contextType: 'BACKGROUND' },
+      { contextType: 'TAB', documentUrl: 'chrome-extension://test-extension-id/options/options.html' },
+      { contextType: 'POPUP' },
+    ];
+
+    expect(await chrome.runtime.getContexts({ contextTypes: ['POPUP'] })).toEqual([{ contextType: 'POPUP' }]);
+    expect(await chrome.runtime.getContexts({ contextTypes: ['BACKGROUND', 'TAB'] })).toHaveLength(2);
+    expect(await chrome.runtime.getContexts({})).toHaveLength(3);
+    expect(chrome._state.getContextsCalls).toEqual([{ contextTypes: ['POPUP'] }, { contextTypes: ['BACKGROUND', 'TAB'] }, {}]);
+  });
+
+  it('action.openPopup and tabs.create are recorded', async () => {
+    await chrome.action.openPopup();
+    expect(chrome._state.openedPopups).toBe(1);
+    expect(await chrome.tabs.create({ url: 'chrome://extensions/shortcuts' })).toEqual({ id: 1001, url: 'chrome://extensions/shortcuts' });
+    expect(chrome._state.createdTabs).toEqual([{ url: 'chrome://extensions/shortcuts' }]);
+  });
+
   it('a held get resolves with the data from call time', async () => {
     await chrome.storage.local.set({ a: 1, b: 1 });
     const held = chrome._holdGet(keys => keys.includes('a'));

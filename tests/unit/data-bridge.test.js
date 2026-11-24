@@ -158,6 +158,73 @@ describe('lib/data-bridge applyData', () => {
       .toEqual({ storageSkipped: false, cookiesApplied: false, storageApplied: false, sharedStorageApplied: false });
     expect(chrome._state.cookies.some(c => c.domain === 'a.com')).toBe(false);
   });
+
+  it('interactive: false never calls permissions.request and leaves the cookies alone without the permission', async () => {
+    chrome.permissions.request = vi.fn().mockResolvedValue(true);
+    const types = { cookies: true, localStorage: false, sessionStorage: false, indexedDB: false };
+    const snapshot = { cookies: [{ name: 'a', value: '1', domain: 'a.com', path: '/' }] };
+
+    expect(await applyData(1, A_COM, snapshot, types, 'a.com', { interactive: false }))
+      .toEqual({ storageSkipped: false, cookiesApplied: false, storageApplied: false, sharedStorageApplied: false });
+    expect(chrome.permissions.request).not.toHaveBeenCalled();
+    expect(chrome._state.cookies.some(c => c.domain === 'a.com')).toBe(false);
+
+    chrome._state.grantedOrigins.add('*://a.com/*');
+    expect(await applyData(1, A_COM, snapshot, types, 'a.com', { interactive: false })).toMatchObject({ cookiesApplied: true });
+    expect(chrome.permissions.request).not.toHaveBeenCalled();
+    expect(chrome._state.cookies.some(c => c.domain === 'a.com')).toBe(true);
+  });
+});
+
+describe('lib/data-bridge origin option', () => {
+  const types = { cookies: false, localStorage: true, sessionStorage: false, indexedDB: false };
+
+  it('sends the origin with the read and the write only when given', async () => {
+    chrome.tabs.sendMessage = vi.fn().mockResolvedValue({ success: true });
+
+    await collectData(1, HOST, types, { origin: 'https://example.com' });
+    await applyData(1, HOST, { localStorage: { a: '1' } }, types, 'example.com', { origin: 'https://example.com' });
+    expect(chrome.tabs.sendMessage).toHaveBeenNthCalledWith(1, 1, expect.objectContaining({ type: 'getStorageData', origin: 'https://example.com' }));
+    expect(chrome.tabs.sendMessage).toHaveBeenNthCalledWith(2, 1, expect.objectContaining({ type: 'setStorageData', origin: 'https://example.com' }));
+
+    await collectData(1, HOST, types);
+    await applyData(1, HOST, { localStorage: { a: '1' } }, types);
+    expect(chrome.tabs.sendMessage.mock.calls[2][1]).not.toHaveProperty('origin');
+    expect(chrome.tabs.sendMessage.mock.calls[3][1]).not.toHaveProperty('origin');
+  });
+
+  it('a page refusing the origin drops the read and fails the write', async () => {
+    chrome.tabs.sendMessage = vi.fn().mockResolvedValue({ error: 'origin mismatch' });
+    expect(await collectData(1, HOST, types, { origin: 'https://example.com' })).toEqual({});
+    await expect(applyData(1, HOST, { localStorage: { a: '1' } }, types, 'example.com', { origin: 'https://example.com' }))
+      .rejects.toThrow('origin mismatch');
+  });
+});
+
+describe('lib/data-bridge collectData strict', () => {
+  const types = { cookies: false, localStorage: true, sessionStorage: false, indexedDB: false };
+
+  it('returns what the page sends', async () => {
+    chrome.tabs.sendMessage = vi.fn().mockResolvedValue({ localStorage: { a: '1' } });
+    expect(await collectData(1, HOST, types, { strict: true })).toEqual({ localStorage: { a: '1' } });
+  });
+
+  it.each([
+    ['reports an error', () => Promise.resolve({ error: 'read failed' }), 'read failed'],
+    ['does not answer', () => Promise.resolve(undefined), 'page not read'],
+    ['cannot be reached', () => Promise.reject(new Error('Receiving end does not exist.')), 'Receiving end does not exist.'],
+  ])('throws when the page %s, where the default leaves the page out', async (_label, reply, message) => {
+    chrome.tabs.sendMessage = vi.fn(reply);
+    await expect(collectData(1, HOST, types, { strict: true })).rejects.toThrow(message);
+    expect(await collectData(1, HOST, types)).toEqual({});
+  });
+
+  it('does not ask the page when no page type is enabled', async () => {
+    chrome.tabs.sendMessage = vi.fn().mockRejectedValue(new Error('Receiving end does not exist.'));
+    const none = { cookies: false, localStorage: false, sessionStorage: false, indexedDB: false };
+    expect(await collectData(1, HOST, none, { strict: true })).toEqual({});
+    expect(chrome.tabs.sendMessage).not.toHaveBeenCalled();
+  });
 });
 
 describe('lib/data-bridge clearData', () => {

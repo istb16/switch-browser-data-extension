@@ -151,7 +151,56 @@ test('a load that wrote cookies on a form POST result loads the tab again withou
   await expect(site.locator('h1')).toHaveText('signed in as: alice');
 });
 
-test('clearing the site\'s data signs out, and the undo bar signs back in', async ({ context, extensionId }) => {
+async function serviceWorker(context) {
+  return context.serviceWorkers()[0] ?? context.waitForEvent('serviceworker');
+}
+
+// Playwright cannot press an extension's shortcut, so the command event is fired
+// inside the service worker, with the tab Chrome would pass.
+async function pressSwitchPrevious(context, page) {
+  const worker = await serviceWorker(context);
+  await worker.evaluate(async url => {
+    const tab = (await chrome.tabs.query({})).find(t => t.url === url);
+    chrome.commands.onCommand.dispatch('switch-previous', tab);
+  }, page.url());
+}
+
+test('the switch-previous command flips between two accounts in the service worker, without sending a form again', async ({ context, extensionId }) => {
+  await context.request.get(`${TEST_PAGE_ORIGIN}/post/reset`);
+  const site = await context.newPage();
+  await site.goto(loginUrl('alice'));
+  const popup = await openPopupFor(context, extensionId, site);
+  await saveAs(popup, 'alice');
+  await site.goto(loginUrl('bob'));
+  await expect(site.locator('h1')).toHaveText('signed in as: bob');
+  await saveAs(popup, 'bob');
+  await popup.close();
+
+  await markPage(site);
+  await pressSwitchPrevious(context, site);
+  await expect.poll(() => wasLoadedAgain(site), { timeout: 15_000 }).toBe(true);
+  await expect(site.locator('h1')).toHaveText('signed in as: alice');
+
+  const options = await context.newPage();
+  await options.goto(`chrome-extension://${extensionId}/options/options.html`);
+  expect(await storageGet(options, 'activeSnapshots')).toEqual({ localhost: 'alice' });
+  expect(await storageGet(options, 'previousSnapshots')).toEqual({ localhost: { host: 'localhost', name: 'bob' } });
+  await options.close();
+
+  // Back to bob from a form POST result: the tab is loaded again by GET.
+  await site.goto(`${TEST_PAGE_ORIGIN}/post/`);
+  await site.locator('button').click();
+  await expect(site.locator('h1')).toHaveText('posted 1');
+  await markPage(site);
+  await pressSwitchPrevious(context, site);
+  await expect.poll(() => wasLoadedAgain(site), { timeout: 15_000 }).toBe(true);
+  await expect(site.locator('form')).toBeVisible();
+  expect(await (await context.request.get(`${TEST_PAGE_ORIGIN}/post/count`)).text()).toBe('1');
+  await site.goto(`${TEST_PAGE_ORIGIN}/cookies/`);
+  await expect(site.locator('h1')).toHaveText('signed in as: bob');
+});
+
+test('clearing the site\'s data signs out, and the undo bar signs back in',async ({ context, extensionId }) => {
   const site = await context.newPage();
   await site.goto(loginUrl('alice'));
 

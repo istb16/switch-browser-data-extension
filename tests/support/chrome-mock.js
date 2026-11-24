@@ -8,7 +8,9 @@ function event() {
   return {
     addListener(fn) { listeners.push(fn); },
     removeListener(fn) { listeners.splice(listeners.indexOf(fn), 1); },
-    dispatch(...args) { listeners.forEach(fn => fn(...args)); },
+    // Returns what the listeners returned, so tests can await async ones.
+    dispatch(...args) { return listeners.map(fn => fn(...args)); },
+    hasListeners() { return listeners.length > 0; },
   };
 }
 
@@ -41,6 +43,10 @@ export function createChromeMock() {
     badgeDefaultBackground: undefined,
     badgeDefaultTextColor: undefined,
     grantedOrigins: new Set(),
+    commands: [],
+    contexts: [],
+    getContextsCalls: [],
+    openedPopups: 0,
     uiLanguage: 'ja',
     manifest: { version: '1.0.1' },
   };
@@ -183,6 +189,15 @@ export function createChromeMock() {
       onStartup: event(),
       getManifest() { return clone(state.manifest); },
       getURL(path) { return `chrome-extension://test-extension-id/${path.replace(/^\//, '')}`; },
+      async getContexts(filter = {}) {
+        state.getContextsCalls.push(clone(filter));
+        return clone(state.contexts).filter(c => !filter.contextTypes || filter.contextTypes.includes(c.contextType));
+      },
+    },
+
+    commands: {
+      onCommand: event(),
+      async getAll() { return clone(state.commands); },
     },
 
     extension: {
@@ -190,6 +205,7 @@ export function createChromeMock() {
     },
 
     action: {
+      async openPopup() { state.openedPopups++; },
       async setBadgeText({ tabId, text }) { state.badges[tabId] = text; },
       // A call without a tabId sets the default every tab not given its own colour shows.
       async setBadgeBackgroundColor({ tabId, color }) {

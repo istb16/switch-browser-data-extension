@@ -2696,4 +2696,200 @@ describe('popup/popup.js', () => {
       });
     });
   });
+
+  describe('a notice left by the shortcut', () => {
+    const WRITTEN = new Date('2024-01-01T00:00:00.000Z').getTime();
+    const notice = (more = {}) => ({ tabId: 1, host: 'example.com', key: 'shortcut_no_previous', until: WRITTEN + 60_000, ...more });
+    const stored = async () => (await chrome.storage.local.get('commandNotice')).commandNotice;
+    const isShown = () => !$('statusMsg').classList.contains('hidden');
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('shows a notice for this tab and removes it', async () => {
+      await chrome.storage.local.set({ commandNotice: notice() });
+      vi.setSystemTime(WRITTEN + 59_000);
+      await loadPopup('https://example.com/');
+
+      expect(isShown()).toBe(true);
+      expect($('statusMsg').className).toContain('error');
+      expect($('statusMsg').textContent).toBe('ショートカットで切り替える前のスナップショットがありません');
+      expect(await stored()).toBeUndefined();
+    });
+
+    it('removes an expired notice without showing it', async () => {
+      await chrome.storage.local.set({ commandNotice: notice() });
+      vi.setSystemTime(WRITTEN + 61_000);
+      await loadPopup('https://example.com/');
+
+      expect(isShown()).toBe(false);
+      expect(await stored()).toBeUndefined();
+    });
+
+    it('leaves another tab\'s valid notice in place', async () => {
+      await chrome.storage.local.set({ commandNotice: notice({ tabId: 2 }) });
+      vi.setSystemTime(WRITTEN + 1_000);
+      await loadPopup('https://example.com/');
+
+      expect(isShown()).toBe(false);
+      expect(await stored()).toEqual(notice({ tabId: 2 }));
+    });
+
+    it('ignores a notice with an unknown key, and removes it', async () => {
+      await chrome.storage.local.set({ commandNotice: notice({ key: 'status_loaded' }) });
+      vi.setSystemTime(WRITTEN + 1_000);
+      await loadPopup('https://example.com/');
+
+      expect(isShown()).toBe(false);
+      expect(await stored()).toBeUndefined();
+    });
+
+    it('shows the notice on a page the popup cannot serve, before choosing its panel', async () => {
+      await chrome.storage.local.set({ commandNotice: notice({ key: 'unavailable', host: null }) });
+      vi.setSystemTime(WRITTEN + 1_000);
+      await loadPopup('chrome-extension://abcdefghijklmnop/options/options.html');
+
+      expect($('permissionPanel').classList.contains('hidden')).toBe(false);
+      expect(isShown()).toBe(true);
+      expect($('statusMsg').textContent).toBe('このページでは使用できません');
+    });
+
+    it.each([
+      'shortcut_needs_backup',
+      'shortcut_no_previous',
+      'shortcut_page_unreachable',
+      'shortcut_backup_failed',
+      'error_load_failed',
+    ])('shows %s in its own words', async key => {
+      const { MESSAGES } = await import('../../lib/i18n.js');
+      await chrome.storage.local.set({ commandNotice: notice({ key }) });
+      vi.setSystemTime(WRITTEN + 1_000);
+      await loadPopup('https://example.com/');
+
+      expect(MESSAGES.ja[key]).toEqual(expect.any(String));
+      expect(isShown()).toBe(true);
+      expect($('statusMsg').textContent).toBe(MESSAGES.ja[key]);
+    });
+
+    it('removes a notice for the site the tab has since left without showing it', async () => {
+      await chrome.storage.local.set({ commandNotice: notice({ host: 'other.test' }) });
+      vi.setSystemTime(WRITTEN + 1_000);
+      await loadPopup('https://example.com/');
+
+      expect(isShown()).toBe(false);
+      expect(await stored()).toBeUndefined();
+    });
+
+    it('shows a notice on another page of the same site', async () => {
+      await chrome.storage.local.set({ commandNotice: notice() });
+      vi.setSystemTime(WRITTEN + 1_000);
+      await loadPopup('http://example.com/elsewhere?x=1');
+
+      expect(isShown()).toBe(true);
+    });
+  });
+
+  describe('recording the previous snapshot', () => {
+    const sid = value => ({ name: 'sid', value, domain: 'example.com', path: '/', secure: true, httpOnly: true, sameSite: 'lax' });
+    const previous = async () => (await chrome.storage.local.get('previousSnapshots')).previousSnapshots?.['example.com'];
+    const ref = name => ({ host: 'example.com', name });
+
+    beforeEach(async () => {
+      chrome._state.cookies = [sid('page')];
+      await setSnapshots({ 'example.com': {
+        first:  snap('2024-01-01T00:00:00.000Z', { cookies: [sid('a')], localStorage: { a: '1' } }),
+        second: snap('2024-01-01T00:00:00.000Z', { cookies: [sid('b')], localStorage: { b: '2' } }),
+      } });
+      await setActiveSnapshots({ 'example.com': 'first' });
+    });
+
+    it('a load, an undo and a save under a new name record the previous snapshot', async () => {
+      await loadPopup('https://example.com/');
+
+      row('second').querySelector('.snapshot__main').click();
+      await settle();
+      expect(await previous()).toEqual(ref('first'));
+
+      $('undoBtn').click();
+      await settle();
+      expect((await getActiveSnapshots())['example.com']).toBe('first');
+      expect(await previous()).toEqual(ref('second'));
+
+      $('saveBtn').click();
+      $('newSnapshotName').value = 'third';
+      $('confirmSaveBtn').click();
+      await settle();
+      expect((await getActiveSnapshots())['example.com']).toBe('third');
+      expect(await previous()).toEqual(ref('first'));
+    });
+
+    it('a partial load of another snapshot records the previous without types', async () => {
+      await loadPopup('https://example.com/');
+
+      row('second').querySelector('.actions-menu [data-action="load-partial"]').click();
+      await settle();
+      document.querySelector('dialog .tk3-btn-confirm').click();
+      await settle();
+
+      expect((await getActiveSnapshots())['example.com']).toEqual({ host: 'example.com', name: 'second', types: ['cookies'] });
+      expect(await previous()).toEqual(ref('first'));
+    });
+
+    it('overwriting the active snapshot keeps previous', async () => {
+      await chrome.storage.local.set({ previousSnapshots: { 'example.com': ref('second') } });
+      await loadPopup('https://example.com/');
+
+      row('first').querySelector('.actions-menu [data-action="overwrite"]').click();
+      await settle();
+      document.querySelector('.tk3-btn-confirm').click();
+      await settle();
+
+      expect((await getSnapshots())['example.com'].first.localStorage).toEqual({ current: '1' });
+      expect(await previous()).toEqual(ref('second'));
+    });
+
+    it('a partial overwrite of the partly active snapshot keeps previous', async () => {
+      await setActiveSnapshots({ 'example.com': { host: 'example.com', name: 'first', types: ['cookies'] } });
+      await chrome.storage.local.set({ previousSnapshots: { 'example.com': ref('second') } });
+      await loadPopup('https://example.com/');
+
+      row('first').querySelector('.actions-menu [data-action="overwrite"]').click();
+      await settle();
+      document.querySelector('.tk3-btn-confirm').click();
+      await settle();
+
+      expect((await getSnapshots())['example.com'].first.cookies.map(c => c.value)).toEqual(['page']);
+      expect(await previous()).toEqual(ref('second'));
+    });
+
+    it('clearing the site keeps previous, and so does undoing the clear', async () => {
+      await chrome.storage.local.set({ previousSnapshots: { 'example.com': ref('second') } });
+      const base = chrome.tabs.sendMessage;
+      chrome.tabs.sendMessage = vi.fn(async (tabId, message) => {
+        if (message.type === 'clearStorageData') {
+          pageData = {};
+          return { success: true, blockedIndexedDB: [] };
+        }
+        return base(tabId, message);
+      });
+      await loadPopup('https://example.com/');
+
+      $('clearSiteBtn').click();
+      await settle();
+      document.querySelector('.tk3-btn-confirm').click();
+      await settle();
+      expect((await getActiveSnapshots())['example.com']).toBeUndefined();
+      expect(await previous()).toEqual(ref('second'));
+
+      $('undoBtn').click();
+      await settle();
+      expect((await getActiveSnapshots())['example.com']).toBe('first');
+      expect(await previous()).toEqual(ref('second'));
+    });
+  });
 });

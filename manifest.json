@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "__MSG_name__",
-  "version": "2.0.11",
+  "version": "2.0.13",
   "default_locale": "ja",
   "description": "__MSG_description__",
   "permissions": ["cookies", "storage", "unlimitedStorage", "tabs"],
@@ -25,6 +25,9 @@
       "suggested_key": {
         "default": "Alt+Shift+S"
       }
+    },
+    "switch-previous": {
+      "description": "__MSG_command_switch_previous__"
     }
   },
   "content_scripts": [

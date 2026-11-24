@@ -1,5 +1,25 @@
 import { describe, it, expect } from 'vitest';
-import { isWithin, toCookieScope } from '../../lib/domain.js';
+import { isWithin, toCookieScope, httpHostOf } from '../../lib/domain.js';
+
+describe('lib/domain httpHostOf', () => {
+  it('returns the lowercase host name of an http(s) URL, without the port', () => {
+    expect(httpHostOf('https://example.com/app?x=1#y')).toBe('example.com');
+    expect(httpHostOf('http://a.com:8080/x')).toBe('a.com');
+    expect(httpHostOf('https://APP.Example.COM/')).toBe('app.example.com');
+    expect(httpHostOf('http://[::1]:3000/')).toBe('[::1]');
+  });
+
+  it('returns null for other schemes and for what is not a URL', () => {
+    expect(httpHostOf('file:///C:/page.html')).toBeNull();
+    expect(httpHostOf('chrome://extensions/')).toBeNull();
+    expect(httpHostOf('chrome-extension://abc/popup/popup.html')).toBeNull();
+    expect(httpHostOf('about:blank')).toBeNull();
+    expect(httpHostOf('not a url')).toBeNull();
+    expect(httpHostOf('')).toBeNull();
+    expect(httpHostOf(undefined)).toBeNull();
+    expect(httpHostOf(null)).toBeNull();
+  });
+});
 
 describe('lib/domain isWithin', () => {
   it('holds for the base itself and its subdomains', () => {

@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { IDBFactory } from 'fake-indexeddb';
 import { loadGlobalScript } from '../support/load-script.js';
 
+const PAGE_ORIGIN = 'https://example.com';
+
 describe('content/content-script (non-module message router)', () => {
   let onMessage;
 
@@ -19,7 +21,7 @@ describe('content/content-script (non-module message router)', () => {
     let listener;
     const chromeStub = { runtime: { onMessage: { addListener: fn => { listener = fn; } } } };
 
-    loadGlobalScript('content/content-script.js', { chrome: chromeStub, localStorageHandler, sessionStorageHandler, indexedDBHandler, storageDigest }, []);
+    loadGlobalScript('content/content-script.js', { chrome: chromeStub, location: { origin: PAGE_ORIGIN }, localStorageHandler, sessionStorageHandler, indexedDBHandler, storageDigest }, []);
     onMessage = (message, sendResponse) => listener(message, {}, sendResponse);
   });
 
@@ -93,6 +95,38 @@ describe('content/content-script (non-module message router)', () => {
     });
 
     expect(result.error).toBeTruthy();
+  });
+
+  it('refuses getStorageData and setStorageData for another origin, without reading or writing', () => {
+    localStorage.setItem('kept', '1');
+    const types = { localStorage: true, sessionStorage: false, indexedDB: false };
+    const replies = [];
+
+    const keepGet = onMessage({ type: 'getStorageData', types, origin: 'https://other.example' }, r => replies.push(r));
+    const keepSet = onMessage({ type: 'setStorageData', data: { localStorage: { fresh: 'y' } }, types, origin: 'https://other.example' }, r => replies.push(r));
+
+    expect(keepGet).toBe(false);
+    expect(keepSet).toBe(false);
+    expect(replies).toEqual([{ error: expect.any(String) }, { error: expect.any(String) }]);
+    expect(localStorage.getItem('kept')).toBe('1');
+    expect(localStorage.getItem('fresh')).toBeNull();
+  });
+
+  it('reads and writes as before with a matching origin or none', async () => {
+    const types = { localStorage: true, sessionStorage: false, indexedDB: false };
+    localStorage.setItem('a', '1');
+
+    expect(await sendAndAwait({ type: 'getStorageData', types, origin: PAGE_ORIGIN })).toEqual({ localStorage: { a: '1' } });
+    expect(await sendAndAwait({ type: 'setStorageData', data: { localStorage: { b: '2' } }, types, origin: PAGE_ORIGIN })).toEqual({ success: true });
+    expect(localStorage.getItem('b')).toBe('2');
+    expect(await sendAndAwait({ type: 'setStorageData', data: { localStorage: { c: '3' } }, types })).toEqual({ success: true });
+    expect(await sendAndAwait({ type: 'getStorageData', types })).toEqual({ localStorage: { c: '3' } });
+  });
+
+  it('checks the origin only on the read and write messages', () => {
+    let reply;
+    onMessage({ type: 'ping', origin: 'https://other.example' }, r => { reply = r; });
+    expect(reply).toEqual({ ok: true });
   });
 
   it('ignores unknown message types and does not keep the channel open', () => {
