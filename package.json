@@ -11,6 +11,6 @@
     "@playwright/test": "^1.65.1",
     "fake-indexeddb": "^6.2.8",
     "jsdom": "^31.0.1",
-    "vitest": "^5.1.0"
+    "vitest": "^5.1.1"
   }
 }
